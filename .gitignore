@@ -1,0 +1,18 @@
+# Node dependencies & build output
+node_modules
+dist
+dist-ssr
+dist-electron
+*.local
+
+# Python cache & venv
+__pycache__
+*.py[cod]
+*$py.class
+.venv
+venv
+
+# System and IDE
+.DS_Store
+.vscode
+.idea
