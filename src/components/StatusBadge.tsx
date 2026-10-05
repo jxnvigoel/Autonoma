@@ -20,34 +20,34 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
     status?.status === "ready" && status.ollama_online && !status.model_ready;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900/80 text-xs">
+    <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-brand-border bg-brand-card text-xs text-brand-headline font-medium shadow-sm transition-colors duration-200">
       {isChecking || isStarting ? (
-        <span className="flex items-center gap-1.5 text-slate-400">
+        <span className="flex items-center gap-1.5 text-brand-body">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
           </span>
-          {isStarting ? "Starting Python Engine..." : "Checking Engine..."}
+          {isStarting ? "Starting Engine..." : "Checking Engine..."}
         </span>
       ) : isReady ? (
-        <span className="flex items-center gap-1.5 text-emerald-400">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]"></span>
+        <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
           <span>
-            Engine & Llama Active {status.version ? `(v${status.version})` : ""}
+            Engine Ready {status.version ? `(v${status.version})` : ""}
           </span>
         </span>
       ) : isModelMissing ? (
-        <span className="flex items-center gap-1.5 text-amber-400">
+        <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
           <span className="h-2 w-2 rounded-full bg-amber-500"></span>
           <span>Model Missing</span>
         </span>
       ) : isOllamaDown ? (
-        <span className="flex items-center gap-1.5 text-rose-400">
+        <span className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
           <span className="h-2 w-2 rounded-full bg-rose-500"></span>
           <span>Ollama Offline</span>
         </span>
       ) : (
-        <span className="flex items-center gap-1.5 text-rose-400">
+        <span className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
           <span className="h-2 w-2 rounded-full bg-rose-500"></span>
           <span>Engine Error</span>
         </span>
@@ -58,7 +58,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
           onClick={onRefresh}
           disabled={isChecking}
           title="Re-check Engine status"
-          className="ml-1 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+          className="ml-1 text-brand-body hover:text-brand-headline transition-colors cursor-pointer"
         >
           <svg
             className={`w-3.5 h-3.5 ${isChecking ? "animate-spin" : ""}`}
@@ -78,3 +78,5 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
     </div>
   );
 };
+
+export default StatusBadge;
