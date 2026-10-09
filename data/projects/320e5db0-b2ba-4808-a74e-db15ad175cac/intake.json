@@ -1,0 +1,8 @@
+{
+  "project_name": "DevPulse",
+  "description": "A lightweight macOS desktop tool for remote software engineers to track deep work focus blocks, mute distraction notifications automatically, and summarize daily git commits into an async standup report.",
+  "target_users": "Solo remote software developers and engineering team leads.",
+  "timeline": "6 weeks for v1 MVP",
+  "budget": "$6,000 build budget, under $40/month operating cost",
+  "created_at": "2026-10-09T15:49:40.147837+00:00"
+}

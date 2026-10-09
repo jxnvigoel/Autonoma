@@ -1,0 +1,44 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hi there,\n\nI'm so excited to be working with you on the DevPulse project. I understand that you're looking to build a lightweight macOS desktop tool that will help remote software engineers stay focused on their work, minimize distractions, and get a quick summary of their daily progress through an async standup report. That sounds like a really valuable tool for your team!\n\nMy goal is to help you turn this idea into a clear, testable plan that the rest of the team can build from. To do that, I'll be asking some questions to clarify the requirements and make sure we're on the same page. Before I dive in, I want to make sure I have your permission to start asking questions. Mind if I ask a few questions to get started?",
+    "answer": "Yes, absolutely! Mind if we start? Let's do it.",
+    "round": 1,
+    "timestamp": "2026-10-09T15:49:46.000579+00:00"
+  },
+  {
+    "id": "Q-002",
+    "question": "Here is the response:\n\nTo clarify, you're saying you're excited to work on the DevPulse project and want to build a lightweight macOS desktop tool to help remote software engineers stay focused and get a quick summary of their daily progress through an async standup report.\n\nLet's get started! I have a few questions to help me understand your goals and requirements. Here are my first three questions:\n\n* Can you tell me more about what you mean by \"stay focused\" on the tool? Is it about blocking out distractions or setting specific work goals?\n* How often do you think the tool should send an async standup report, and what kind of information should it include?\n* Are there any specific features or functionalities you envision for the tool that would help remote software engineers work more efficiently?",
+    "answer": "It should detect active IDE windows (like VS Code, IntelliJ) and terminal sessions. When in a focus block, it can enable macOS Do Not Disturb via system script. We expect about 500-1000 daily active users initially.",
+    "round": 2,
+    "timestamp": "2026-10-09T15:49:52.696281+00:00"
+  },
+  {
+    "id": "Q-003",
+    "question": "Here's my response to the client's new response:\n\nSo, to summarize, you'd like the tool to detect when the user is in a focus block (e.g., when an IDE window or terminal session is active) and enable macOS Do Not Disturb via system script. That's a great way to minimize distractions. To help me better understand, I have a few questions:\n\n* What's the typical duration of a focus block? Is it a fixed time or variable?\n* How will the tool handle users who don't have an active IDE window or terminal session?\n* Are there any specific data or metrics you'd like the tool to collect or report during the focus block?",
+    "answer": "For the standup report, it can read local git log from configured repo paths and use a local LLM or simple template to format into: Done Today, In Progress, Blockers. It must run 100% locally with zero cloud leakage of code.",
+    "round": 3,
+    "timestamp": "2026-10-09T15:49:58.725287+00:00"
+  },
+  {
+    "id": "Q-004",
+    "question": "To clarify, you'd like the tool to detect when the user is in a focus block (e.g., when an IDE window or terminal session is active) and enable macOS Do Not Disturb via system script. That's a great way to minimize distractions.\n\nHere are my next questions to help further understand your goals and requirements:\n\n* Can you elaborate on what you mean by \"100% locally with zero cloud leakage of code\" for the standup report's local LLM or template? How will this be achieved?\n* What's the typical duration of a focus block? Is it a fixed time or variable?\n* How will the tool handle users who don't have an active IDE window or terminal session?",
+    "answer": "Data should be stored in SQLite locally on the user's Mac. Users should be able to export reports as Markdown or copy directly to clipboard for Slack.",
+    "round": 4,
+    "timestamp": "2026-10-09T15:50:05.517465+00:00"
+  },
+  {
+    "id": "Q-005",
+    "question": "I'd like to summarize what you just shared with me in my own words: You're looking to store data in SQLite locally on the user's Mac, and you want to be able to export reports in Markdown or copy them directly to clipboard for Slack.\n\nWith that in mind, I have a few questions to help further understand your goals and requirements. Here are my next three questions:\n\n* What's the typical duration of a focus block? Is it a fixed time or variable?\n* How will the tool handle users who don't have an active IDE window or terminal session?\n* Can you elaborate on the specific data or metrics you'd like the tool to collect or report during the focus block?",
+    "answer": "For v1, Must-Have is focus timer with macOS DND, local git commit parser, and markdown standup generator. Slack integration and team dashboards can wait for v2.",
+    "round": 5,
+    "timestamp": "2026-10-09T16:08:06.414213+00:00"
+  },
+  {
+    "id": "Q-006",
+    "question": "Here's my response to the client's new response:\n\nTo summarize, you've clarified that the Must-Have features for v1 are a focus timer with macOS Do Not Disturb (DND), a local git commit parser, and a markdown standup generator. I understand that Slack integration and team dashboards can wait for v2.\n\nHere are my next questions to help further understand your goals and requirements:\n\n* Can you elaborate on the typical duration of a focus block? Is it a fixed time or variable?\n* How will the tool handle users who don't have an active IDE window or terminal session?\n* What's the typical number of daily git commits you expect the tool to parse?",
+    "answer": "Success metric is at least 80% of beta users generating daily standup reports 4+ days a week and latency under 1 second for generating reports.",
+    "round": 6,
+    "timestamp": "2026-10-09T16:24:31.191774+00:00"
+  }
+]

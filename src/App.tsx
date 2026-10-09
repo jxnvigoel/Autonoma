@@ -2,11 +2,12 @@ import React, { useEffect, useState, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Header } from "./components/Header";
 import { AnimatedAIChat } from "./components/ui/animated-ai-chat";
+import { CodeEditor } from "./pages/CodeEditor";
 import { Splash } from "./pages/Splash";
 import { Landing } from "./pages/Landing";
 import { checkEngineStatus, EngineStatus } from "./lib/engine";
 
-export type AppScreen = "splash" | "landing" | "chat";
+export type AppScreen = "splash" | "landing" | "chat" | "editor";
 
 export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<AppScreen>("splash");
@@ -74,17 +75,39 @@ export const App: React.FC = () => {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25, ease: "easeOut" }}
-          className="min-h-screen bg-brand-bg text-brand-headline flex flex-col font-sans transition-colors duration-200"
+          className="h-screen bg-brand-bg text-brand-headline flex flex-col font-sans transition-colors duration-200 overflow-hidden"
         >
           <Header
             status={status}
             isChecking={isChecking}
             onRefreshStatus={refreshStatus}
             onBackToLanding={() => setCurrentScreen("landing")}
+            activeScreen="chat"
+            onOpenChat={() => setCurrentScreen("chat")}
+            onOpenEditor={() => setCurrentScreen("editor")}
           />
-          <main className="flex-1 flex flex-col bg-brand-bg transition-colors duration-200">
+          <main className="flex-1 flex bg-brand-bg transition-colors duration-200 overflow-hidden">
             <AnimatedAIChat />
           </main>
+        </motion.div>
+      )}
+
+      {currentScreen === "editor" && (
+        <motion.div
+          key="editor-screen"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="w-full h-full"
+        >
+          <CodeEditor
+            status={status}
+            isCheckingStatus={isChecking}
+            onRefreshStatus={refreshStatus}
+            onBackToLanding={() => setCurrentScreen("landing")}
+            onOpenChat={() => setCurrentScreen("chat")}
+          />
         </motion.div>
       )}
     </AnimatePresence>
@@ -92,3 +115,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+

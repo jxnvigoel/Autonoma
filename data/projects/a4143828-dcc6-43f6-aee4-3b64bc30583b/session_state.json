@@ -1,0 +1,24 @@
+{
+  "checklist_covered": [],
+  "checklist_missing": [
+    "problem",
+    "personas",
+    "journeys",
+    "requirements",
+    "data",
+    "integrations",
+    "timeline_budget",
+    "scope",
+    "success_metric"
+  ],
+  "round": 0,
+  "ready_for_requirements": false,
+  "messages": [
+    {
+      "id": "4735f47b-0397-4f9e-85aa-ae90f587ced8",
+      "role": "assistant",
+      "content": "Hi there, thanks for bringing your Food Ordering Website project to our team. I'm Rachel, and I'll be your Business Analyst for this project.\n\nWe'll work together to turn your idea into a clear plan that the rest of the team can build from. I'll ask some questions to help us get started, and I'll make sure to summarize our conversation back to you before we move forward.\n\nMind if I ask a few questions to get started?",
+      "timestamp": "2026-10-08T12:48:01.132613+00:00"
+    }
+  ]
+}

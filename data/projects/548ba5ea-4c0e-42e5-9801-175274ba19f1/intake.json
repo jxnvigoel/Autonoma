@@ -1,0 +1,8 @@
+{
+  "project_name": "GitSnap CLI",
+  "description": "A developer CLI tool that creates instant branch visualizer diagrams and formats automated pull request summaries from local commits.",
+  "target_users": "Software engineers and DevOps leads.",
+  "timeline": "3 weeks",
+  "budget": "$2,000",
+  "created_at": "2026-10-09T15:13:28.382142+00:00"
+}

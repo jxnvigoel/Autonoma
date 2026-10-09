@@ -1,0 +1,8 @@
+{
+  "project_name": "IronPulse Gym Manager",
+  "description": "A high-capacity boutique gym scheduling and member check-in platform with dynamic class capacity limits, QR code turnstile access, and trainer payouts.",
+  "target_users": "Gym owners, personal trainers, and gym members.",
+  "timeline": "8 weeks for MVP",
+  "budget": "$12,000 build budget, under $150/month operating cost",
+  "created_at": "2026-10-09T15:13:09.357746+00:00"
+}

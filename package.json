@@ -5,18 +5,22 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "compile:electron": "esbuild electron/main.ts --bundle --platform=node --target=node18 --outfile=dist-electron/main.cjs --external:electron && esbuild electron/preload.ts --bundle --platform=node --target=node18 --outfile=dist-electron/preload.cjs --external:electron",
+    "compile:electron": "esbuild electron/main.ts --bundle --platform=node --target=node18 --outfile=dist-electron/main.cjs --external:electron --external:node-pty && esbuild electron/preload.ts --bundle --platform=node --target=node18 --outfile=dist-electron/preload.cjs --external:electron",
     "dev:vite": "vite",
     "dev:electron": "npm run compile:electron && wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "dev": "concurrently -k -n vite,electron -c blue,green \"npm run dev:vite\" \"npm run dev:electron\"",
     "build": "tsc && vite build && npm run compile:electron",
     "preview": "vite preview",
-    "engine": "python3 engine/main.py"
+    "engine": "python3 engine/main.py",
+    "postinstall": "node -e \"const fs = require('fs'), path = require('path'); const p = path.join('node_modules', 'node-pty', 'prebuilds'); if (fs.existsSync(p)) { fs.readdirSync(p).forEach(d => { const helper = path.join(p, d, 'spawn-helper'); if (fs.existsSync(helper)) { try { fs.chmodSync(helper, 0o755); } catch(e){} } }); }\""
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^14.0.0",
     "lucide-react": "^1.51.0",
+    "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^3.7.0"
