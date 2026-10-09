@@ -6,6 +6,7 @@ import { CodeEditor } from "./pages/CodeEditor";
 import { Splash } from "./pages/Splash";
 import { Landing } from "./pages/Landing";
 import { checkEngineStatus, EngineStatus } from "./lib/engine";
+import { useConversation } from "./context/ConversationContext";
 
 export type AppScreen = "splash" | "landing" | "chat" | "editor";
 
@@ -13,6 +14,12 @@ export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<AppScreen>("splash");
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(true);
+  const { newSession } = useConversation();
+
+  const handleStartFromLanding = useCallback(() => {
+    newSession();
+    setCurrentScreen("chat");
+  }, [newSession]);
 
   const refreshStatus = useCallback(async () => {
     setIsChecking(true);
@@ -60,7 +67,7 @@ export const App: React.FC = () => {
           className="w-full h-full"
         >
           <Landing
-            onStart={() => setCurrentScreen("chat")}
+            onStart={handleStartFromLanding}
             status={status}
             isCheckingStatus={isChecking}
             onRefreshStatus={refreshStatus}

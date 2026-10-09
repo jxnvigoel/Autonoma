@@ -49,27 +49,11 @@ const ConversationContext = createContext<ConversationContextType | undefined>(
   undefined
 );
 
-const SESSION_STORAGE_KEY = "autonoma_ba_session_id";
-const INTAKE_STORAGE_KEY = "autonoma_ba_intake";
-
 export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    return localStorage.getItem(SESSION_STORAGE_KEY) || null;
-  });
-
-  const [intakeData, setIntakeData] = useState<IntakeFormData | null>(() => {
-    const raw = localStorage.getItem(INTAKE_STORAGE_KEY);
-    if (raw) {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [intakeData, setIntakeData] = useState<IntakeFormData | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<BASessionSummary[]>([]);
@@ -85,24 +69,6 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [isFetchingRequirements, setIsFetchingRequirements] =
     useState<boolean>(false);
-
-  // Sync session ID to localStorage
-  useEffect(() => {
-    if (sessionId) {
-      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
-    } else {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    }
-  }, [sessionId]);
-
-  // Sync intake data to localStorage
-  useEffect(() => {
-    if (intakeData) {
-      localStorage.setItem(INTAKE_STORAGE_KEY, JSON.stringify(intakeData));
-    } else {
-      localStorage.removeItem(INTAKE_STORAGE_KEY);
-    }
-  }, [intakeData]);
 
   const refreshSessions = useCallback(async () => {
     setIsLoadingSessions(true);
@@ -146,12 +112,15 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  // Initial load of sessions list and current session data
+  // Initial load of sessions list on startup
   useEffect(() => {
-    refreshSessions();
-    if (sessionId) {
-      selectSession(sessionId);
+    try {
+      localStorage.removeItem("autonoma_ba_session_id");
+      localStorage.removeItem("autonoma_ba_intake");
+    } catch {
+      // Ignore
     }
+    refreshSessions();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startSession = useCallback(
@@ -162,8 +131,6 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       setMessages([]);
       setReadyForRequirements(false);
       setRequirementsContent(null);
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-      localStorage.removeItem(INTAKE_STORAGE_KEY);
 
       setIsSending(true);
       setError(null);
@@ -287,8 +254,6 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     setReadyForRequirements(false);
     setRequirementsContent(null);
     setError(null);
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-    localStorage.removeItem(INTAKE_STORAGE_KEY);
     refreshSessions();
   }, [refreshSessions]);
 

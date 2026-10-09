@@ -1,0 +1,16 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hello and welcome to our project intake session for the DevPulse Focus Tracker!\n\nI'm [Your Name], your Business Analyst specifically assigned to this project, and I'm excited to work with you to turn your idea into a clear and testable plan. It sounds like you're envisioning a lightweight macOS menu bar app that helps software developers track their deep work focus blocks and mute notifications, which will be especially useful for remote workers.\n\nMy goal for this session is to ask some questions to help us understand the specifics of your idea and to turn it into a clear plan that the rest of the team can build from. Before we get started, I want to make sure we have your permission to move forward. Mind if I ask a few questions to get started?",
+    "answer": "Yes, please ask your questions!",
+    "round": 1,
+    "timestamp": "2026-10-09T17:49:38.092536+00:00"
+  },
+  {
+    "id": "Q-002",
+    "question": "I'd like to confirm that you're excited to move forward with turning your idea into a clear plan. That sounds like a great starting point for our project intake session.\n\nTo get started, I have a few questions to help us understand the specifics of your idea. Here are my questions for now:\n\n1. What do you mean by \"deep work focus blocks\" - how do you envision this feature tracking working for users?\n2. Are there any specific types of notifications that you'd like to be muted, or would you like to be able to customize which notifications are muted?\n3. How do you envision the app's user interface working - would it be a simple menu bar item, or a more comprehensive app with multiple features?",
+    "answer": "The focus blocks are usually 25 to 50 minutes long.",
+    "round": 2,
+    "timestamp": "2026-10-09T17:49:43.912509+00:00"
+  }
+]
