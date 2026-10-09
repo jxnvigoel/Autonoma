@@ -122,7 +122,7 @@ export function AnimatedAIChat() {
   const [attachments, setAttachments] = useState<string[]>([]);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null);
+  const [, setEngineStatus] = useState<EngineStatus | null>(null);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   const [showRequirementsModal, setShowRequirementsModal] = useState(false);
@@ -138,11 +138,11 @@ export function AnimatedAIChat() {
     readyForRequirements,
     requirementsContent,
     startSession,
+    selectSession,
     sendMessage,
     fetchRequirements,
     newSession,
     clearHistory,
-    refreshHistory,
   } = useConversation();
 
   const commandPaletteRef = useRef<HTMLDivElement>(null);
@@ -191,7 +191,6 @@ export function AnimatedAIChat() {
         setEngineError(res.message);
       } else {
         setEngineError(null);
-        refreshHistory();
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -205,18 +204,16 @@ export function AnimatedAIChat() {
     } finally {
       setIsCheckingStatus(false);
     }
-  }, [refreshHistory]);
+  }, []);
 
   // Poll until engine is ready on startup
   useEffect(() => {
     probeEngine();
     const interval = setInterval(() => {
-      if (!engineStatus || engineStatus.status === "starting") {
-        probeEngine();
-      }
-    }, 2500);
+      probeEngine();
+    }, 4000);
     return () => clearInterval(interval);
-  }, [probeEngine, engineStatus]);
+  }, [probeEngine]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -350,6 +347,7 @@ export function AnimatedAIChat() {
               )}
               <IntakeForm
                 onSubmit={startSession}
+                onSelectSession={selectSession}
                 isLoading={isSending}
                 error={displayError}
               />
@@ -361,7 +359,10 @@ export function AnimatedAIChat() {
             <span className="text-xs font-medium">Loading session conversation...</span>
           </div>
         ) : (
-          <div className="min-h-full flex-1 flex flex-col w-full items-center p-4 sm:p-6 relative overflow-y-auto">
+          <div
+            key={sessionId || "active-session-view"}
+            className="min-h-full flex-1 flex flex-col w-full items-center p-4 sm:p-6 relative overflow-y-auto"
+          >
             <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col relative z-10">
               {/* Active Session Header / Status Ribbon */}
               <div className="flex items-center justify-between pb-3 mb-2 border-b border-brand-border text-xs text-brand-body transition-colors duration-200">

@@ -14,7 +14,6 @@ import {
   getBaRequirements,
   getBaSessions,
   getBaSession,
-  getConversation,
   clearConversation as apiClearConversation,
   sendChatMessage as apiSendChatMessage,
 } from "../lib/engine";
@@ -76,8 +75,8 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [sessions, setSessions] = useState<BASessionSummary[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState<boolean>(false);
   const [isLoadingSession, setIsLoadingSession] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSending, setIsSending] = useState<boolean>(false);
+  const isLoading = isLoadingSessions || isLoadingSession || isSending;
   const [error, setError] = useState<string | null>(null);
   const [readyForRequirements, setReadyForRequirements] =
     useState<boolean>(false);
@@ -118,8 +117,14 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const selectSession = useCallback(async (targetSessionId: string) => {
+    if (!targetSessionId) return;
     setIsLoadingSession(true);
     setError(null);
+    // Reset previous messages and requirements immediately
+    setMessages([]);
+    setReadyForRequirements(false);
+    setRequirementsContent(null);
+
     try {
       const data = await getBaSession(targetSessionId);
       setSessionId(data.session_id);
@@ -151,10 +156,17 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const startSession = useCallback(
     async (intake: IntakeFormData) => {
-      setIsSending(true);
-      setError(null);
+      // Immediately reset all session state so no previous session data bleeds in
+      setSessionId(null);
+      setIntakeData(null);
+      setMessages([]);
       setReadyForRequirements(false);
       setRequirementsContent(null);
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      localStorage.removeItem(INTAKE_STORAGE_KEY);
+
+      setIsSending(true);
+      setError(null);
 
       try {
         const res = await startBaSession(intake);
@@ -294,20 +306,8 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [sessionId]);
 
   const refreshHistory = useCallback(async () => {
-    if (!sessionId) {
-      setIsLoading(true);
-      try {
-        const history = await getConversation();
-        setMessages(history);
-      } catch {
-        // Backend starting or offline
-      } finally {
-        setIsLoading(false);
-      }
-    } else {
-      refreshSessions();
-    }
-  }, [sessionId, refreshSessions]);
+    await refreshSessions();
+  }, [refreshSessions]);
 
   return (
     <ConversationContext.Provider

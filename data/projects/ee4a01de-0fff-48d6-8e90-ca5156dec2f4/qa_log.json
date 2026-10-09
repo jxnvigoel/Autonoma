@@ -1,0 +1,16 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hi there, thanks for introducing me to the DevPulse Focus Tracker project! I'm excited to help you turn your idea into a clear plan that the rest of the team can build from. From what I understand, you're looking to create a lightweight macOS menu bar app that helps software developers track their deep work focus blocks and mute notifications. That sounds like a great tool for remote workers and engineers to stay focused and productive.\n\nBefore we dive in, I want to make sure I have the green light to start asking questions to help us get started. Mind if I ask a few questions to get started?",
+    "answer": "Yes, please ask your questions!",
+    "round": 1,
+    "timestamp": "2026-10-09T17:00:35.893409+00:00"
+  },
+  {
+    "id": "Q-002",
+    "question": "To confirm, you'd like to proceed with the discovery phase, and we'll start by asking some clarifying questions to better understand your requirements. From what you've shared so far, it sounds like you're looking to create a menu bar app that helps software developers stay focused and productive during their work sessions. Is that a correct understanding of your project's purpose?\n\nHere are my next questions:\n\n1. What kind of notifications do you want to mute in the app, and how will you determine which notifications to mute?\n2. How will you measure a developer's \"deep work focus block\" in the app, and what triggers will you use to mark the start and end of such a block?\n3. Are there any specific features or functionalities you envision for the app's user interface, beyond the menu bar?",
+    "answer": "The focus blocks are usually 25 to 50 minutes long.",
+    "round": 2,
+    "timestamp": "2026-10-09T17:00:41.975955+00:00"
+  }
+]
