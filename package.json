@@ -36,6 +36,7 @@
     "electron": "^44.5.1",
     "esbuild": "^0.21.5",
     "postcss": "^8.4.49",
+    "puppeteer-core": "^25.13.0",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",

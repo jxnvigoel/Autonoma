@@ -50,6 +50,63 @@ export interface BARequirementsResponse {
   content: string;
 }
 
+export type AgentLiveStatus = "idle" | "working" | "waiting-on-you" | "done";
+
+export interface PMStartResponse {
+  session_id: string;
+  message: string;
+  prd_content: string;
+  already_started?: boolean;
+}
+
+export interface PMMessageResponse {
+  session_id: string;
+  message: string;
+  prd_content: string;
+  round: number;
+}
+
+export interface PMSessionDetail {
+  session_id: string;
+  project_name: string;
+  started: boolean;
+  status: AgentLiveStatus;
+  messages: ChatMessage[];
+  prd_content?: string | null;
+  round: number;
+  can_start: boolean;
+}
+
+export interface OfficeAgentInfo {
+  id: "ba" | "pm" | "architect" | "engineer" | "qa";
+  role: string;
+  abbr: string;
+  status: AgentLiveStatus;
+  has_output: boolean;
+  output_name: string;
+  output_type: string;
+  message_count: number;
+  qa_count?: number;
+  ready_for_handoff?: boolean;
+  can_start?: boolean;
+}
+
+export interface OfficeStatusResponse {
+  session_id: string;
+  project_name: string;
+  description: string;
+  target_users: string;
+  timeline: string;
+  budget: string;
+  agents: {
+    ba: OfficeAgentInfo;
+    pm: OfficeAgentInfo;
+    architect: OfficeAgentInfo;
+    engineer: OfficeAgentInfo;
+    qa: OfficeAgentInfo;
+  };
+}
+
 export interface BASessionSummary {
   session_id: string;
   project_name: string;
@@ -317,3 +374,109 @@ export async function sendChatMessage(prompt: string, model?: string): Promise<C
     throw new Error(`Failed to send message to Python engine: ${String(err)}`);
   }
 }
+
+/**
+ * Starts a new PM session for a completed BA session
+ */
+export async function startPmSession(sessionId: string): Promise<PMStartResponse> {
+  if (!sessionId) {
+    throw new Error("sessionId is required to start PM session");
+  }
+
+  const res = await fetch(`${ENGINE_BASE_URL}/pm/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ session_id: sessionId.trim() }),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    const detail = errData?.detail || `HTTP ${res.status}: ${res.statusText}`;
+    throw new Error(detail);
+  }
+
+  const data: PMStartResponse = await res.json();
+  return data;
+}
+
+/**
+ * Sends a message in an active PM session
+ */
+export async function sendPmMessage(
+  sessionId: string,
+  message: string
+): Promise<PMMessageResponse> {
+  if (!sessionId) {
+    throw new Error("sessionId is required");
+  }
+  if (!message || !message.trim()) {
+    throw new Error("Message cannot be empty");
+  }
+
+  const res = await fetch(`${ENGINE_BASE_URL}/pm/message`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      session_id: sessionId.trim(),
+      message: message.trim(),
+    }),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    const detail = errData?.detail || `HTTP ${res.status}: ${res.statusText}`;
+    throw new Error(detail);
+  }
+
+  const data: PMMessageResponse = await res.json();
+  return data;
+}
+
+/**
+ * Fetches current PM session state, conversation history, and PRD content
+ */
+export async function getPmSession(sessionId: string): Promise<PMSessionDetail> {
+  if (!sessionId) {
+    throw new Error("sessionId is required");
+  }
+
+  const res = await fetch(`${ENGINE_BASE_URL}/pm/session/${sessionId.trim()}`, {
+    method: "GET",
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    const detail = errData?.detail || `HTTP ${res.status}: ${res.statusText}`;
+    throw new Error(detail);
+  }
+
+  const data: PMSessionDetail = await res.json();
+  return data;
+}
+
+/**
+ * Fetches real live status for all project agents in a given session
+ */
+export async function getOfficeStatus(sessionId: string): Promise<OfficeStatusResponse> {
+  if (!sessionId) {
+    throw new Error("sessionId is required");
+  }
+
+  const res = await fetch(`${ENGINE_BASE_URL}/office/status/${sessionId.trim()}`, {
+    method: "GET",
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    const detail = errData?.detail || `HTTP ${res.status}: ${res.statusText}`;
+    throw new Error(detail);
+  }
+
+  const data: OfficeStatusResponse = await res.json();
+  return data;
+}
+

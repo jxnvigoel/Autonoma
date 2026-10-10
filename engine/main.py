@@ -771,6 +771,26 @@ def get_ba_session(session_id: str):
     }
 
 
+# Initialize PM agent module and routes
+try:
+    from pm import init_pm_routes
+except ImportError:
+    try:
+        from engine.pm import init_pm_routes
+    except ImportError:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from pm import init_pm_routes
+
+init_pm_routes(
+    main_app=app,
+    get_session_dir_fn=get_session_dir,
+    load_json_fn=load_json,
+    save_json_fn=save_json,
+    query_ollama_fn=query_ollama,
+    data_projects_dir=DATA_PROJECTS_DIR,
+)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("ENGINE_PORT", 8765))
     logger.info(f"Starting Autonoma Python Engine on http://127.0.0.1:{port}")

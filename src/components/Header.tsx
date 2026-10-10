@@ -1,5 +1,4 @@
-import React from "react";
-import { MessageSquare, Code2 } from "lucide-react";
+import { MessageSquare, Code2, Building2, FolderOpen } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { ThemeToggle } from "./ThemeToggle";
 import { EngineStatus } from "../lib/engine";
@@ -10,7 +9,9 @@ interface HeaderProps {
   isChecking: boolean;
   onRefreshStatus: () => void;
   onBackToLanding?: () => void;
-  activeScreen?: "chat" | "editor" | "landing";
+  activeScreen?: "office" | "chat" | "editor" | "landing" | "projects" | "intake";
+  onOpenProjects?: () => void;
+  onOpenOffice?: () => void;
   onOpenChat?: () => void;
   onOpenEditor?: () => void;
 }
@@ -21,6 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   onRefreshStatus,
   onBackToLanding,
   activeScreen,
+  onOpenProjects,
+  onOpenOffice,
   onOpenChat,
   onOpenEditor,
 }) => {
@@ -55,8 +58,23 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Workspace Screen Switcher */}
-        {(onOpenChat || onOpenEditor) && (
+        {(onOpenOffice || onOpenChat || onOpenEditor) && (
           <nav className="hidden md:flex items-center p-1 rounded-xl bg-brand-subtle/70 border border-brand-border text-xs font-medium">
+            {onOpenOffice && (
+              <button
+                type="button"
+                onClick={onOpenOffice}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer",
+                  activeScreen === "office"
+                    ? "bg-brand-card text-brand-accent font-semibold shadow-xs"
+                    : "text-brand-body hover:text-brand-headline"
+                )}
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Virtual Office</span>
+              </button>
+            )}
             {onOpenChat && (
               <button
                 type="button"
@@ -69,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
               >
                 <MessageSquare className="w-3.5 h-3.5" />
-                <span>Chat</span>
+                <span>BA Discovery</span>
               </button>
             )}
             {onOpenEditor && (
@@ -92,6 +110,17 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-3">
+        {onOpenProjects && (
+          <button
+            type="button"
+            onClick={onOpenProjects}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-card hover:bg-brand-subtle border border-brand-border text-xs font-medium text-brand-headline transition-colors duration-200 cursor-pointer shadow-xs"
+            title="Switch project workspace"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-brand-accent" />
+            <span className="hidden sm:inline">Projects</span>
+          </button>
+        )}
         {onBackToLanding && (
           <button
             onClick={onBackToLanding}

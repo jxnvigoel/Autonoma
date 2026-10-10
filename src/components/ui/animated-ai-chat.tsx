@@ -20,6 +20,9 @@ import {
   Briefcase,
   Trash2,
   PanelLeft,
+  ArrowRight,
+  Building2,
+  FolderOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -28,7 +31,6 @@ import {
 } from "@/lib/engine";
 import { useConversation } from "@/context/ConversationContext";
 import { MessageBubble, TypingDots } from "@/components/chat/MessageBubble";
-import { IntakeForm } from "@/components/chat/IntakeForm";
 import { RequirementsModal } from "@/components/chat/RequirementsModal";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 
@@ -117,7 +119,17 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 );
 Textarea.displayName = "Textarea";
 
-export function AnimatedAIChat() {
+interface AnimatedAIChatProps {
+  onNavigateToOffice?: () => void;
+  onNavigateToProjects?: () => void;
+  onNavigateToIntake?: () => void;
+}
+
+export function AnimatedAIChat({
+  onNavigateToOffice,
+  onNavigateToProjects,
+  onNavigateToIntake,
+}: AnimatedAIChatProps = {}) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
@@ -127,6 +139,7 @@ export function AnimatedAIChat() {
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   const [showRequirementsModal, setShowRequirementsModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isSendingToPM, setIsSendingToPM] = useState(false);
 
   const {
     sessionId,
@@ -137,10 +150,10 @@ export function AnimatedAIChat() {
     error: contextError,
     readyForRequirements,
     requirementsContent,
-    startSession,
-    selectSession,
     sendMessage,
     fetchRequirements,
+    startPm,
+    setActiveOfficeAgent,
     newSession,
     clearHistory,
   } = useConversation();
@@ -321,6 +334,21 @@ export function AnimatedAIChat() {
 
   const displayError = engineError || contextError;
 
+  const handleSendToPM = async () => {
+    setIsSendingToPM(true);
+    try {
+      await startPm();
+      setActiveOfficeAgent("pm");
+      if (onNavigateToOffice) {
+        onNavigateToOffice();
+      }
+    } catch {
+      // Error handled in context
+    } finally {
+      setIsSendingToPM(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex w-full h-full overflow-hidden bg-brand-bg text-brand-headline transition-colors duration-200">
       {/* Left Claude-style Sidebar */}
@@ -332,25 +360,39 @@ export function AnimatedAIChat() {
       {/* Main Content Area: Intake Form or Active Session Chat */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         {!sessionId ? (
-          <div className="flex-1 overflow-y-auto">
-            <div className="relative">
-              {!sidebarOpen && (
-                <button
-                  type="button"
-                  onClick={() => setSidebarOpen(true)}
-                  className="absolute top-4 left-4 z-20 p-2 text-brand-body hover:text-brand-headline rounded-lg bg-brand-card/80 backdrop-blur-md border border-brand-border shadow-xs hover:bg-brand-subtle transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-medium"
-                  title="Open conversations sidebar"
-                >
-                  <PanelLeft className="w-4 h-4" />
-                  <span>Conversations</span>
-                </button>
-              )}
-              <IntakeForm
-                onSubmit={startSession}
-                onSelectSession={selectSession}
-                isLoading={isSending}
-                error={displayError}
-              />
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <div className="max-w-md w-full bg-brand-card border border-brand-border rounded-2xl p-8 shadow-card flex flex-col items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-brand-accent/10 border border-brand-accent/20 flex items-center justify-center text-brand-accent">
+                <Briefcase className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold text-brand-headline">No Active Project</h3>
+                <p className="text-xs text-brand-body leading-relaxed">
+                  Select an existing project or initialize a new project brief to begin your Business Analyst discovery session.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 mt-2 w-full">
+                {onNavigateToProjects && (
+                  <button
+                    type="button"
+                    onClick={onNavigateToProjects}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-brand-accent hover:bg-brand-accent-hover text-brand-accent-text text-xs font-semibold shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    <span>Project Selector</span>
+                  </button>
+                )}
+                {onNavigateToIntake && (
+                  <button
+                    type="button"
+                    onClick={onNavigateToIntake}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-brand-subtle hover:bg-brand-border/60 text-brand-headline text-xs font-semibold border border-brand-border transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>New Project</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ) : isLoadingSession ? (
@@ -387,6 +429,18 @@ export function AnimatedAIChat() {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  {onNavigateToOffice && (
+                    <button
+                      type="button"
+                      onClick={onNavigateToOffice}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-accent hover:bg-brand-accent-hover text-brand-accent-text transition-colors cursor-pointer text-xs font-medium shadow-2xs"
+                      title="Open Virtual Office floor"
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>Virtual Office</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={newSession}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-subtle hover:bg-brand-subtle-hover text-brand-headline border border-brand-border transition-colors cursor-pointer text-xs font-medium"
@@ -429,14 +483,37 @@ export function AnimatedAIChat() {
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={handleViewRequirements}
-                      className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer shrink-0"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>View Requirements</span>
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleViewRequirements}
+                        className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>View Requirements</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSendToPM}
+                        disabled={isSendingToPM}
+                        className="px-3.5 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                        title="Hand off requirements to Product Manager in Virtual Office"
+                      >
+                        {isSendingToPM ? (
+                          <>
+                            <LoaderIcon className="w-3.5 h-3.5 animate-spin" />
+                            <span>Starting PM...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Send to PM</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>

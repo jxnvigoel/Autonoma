@@ -383,7 +383,7 @@ export const Landing: React.FC<LandingProps> = ({
             onClick={onStart}
             className="text-brand-accent hover:underline font-semibold transition-colors cursor-pointer flex items-center gap-1"
           >
-            <span>Launch Chat Screen</span>
+            <span>Get Started</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>

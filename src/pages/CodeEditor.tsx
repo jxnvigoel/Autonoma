@@ -33,6 +33,8 @@ interface CodeEditorProps {
   isCheckingStatus: boolean;
   onRefreshStatus: () => void;
   onBackToLanding: () => void;
+  onOpenProjects?: () => void;
+  onOpenOffice?: () => void;
   onOpenChat: () => void;
 }
 
@@ -75,6 +77,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   isCheckingStatus,
   onRefreshStatus,
   onBackToLanding,
+  onOpenProjects,
+  onOpenOffice,
   onOpenChat,
 }) => {
   const [rootFolderPath, setRootFolderPath] = useState<string>("");
@@ -266,6 +270,8 @@ export default App;`,
         onRefreshStatus={onRefreshStatus}
         onBackToLanding={onBackToLanding}
         activeScreen="editor"
+        onOpenProjects={onOpenProjects}
+        onOpenOffice={onOpenOffice}
         onOpenChat={onOpenChat}
         onOpenEditor={() => {}}
       />
