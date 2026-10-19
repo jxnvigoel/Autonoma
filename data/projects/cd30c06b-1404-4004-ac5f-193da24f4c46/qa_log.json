@@ -1,0 +1,30 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hi there, welcome to the DocuPulse Reader project intake session!\n\nI'm [Your Name], your Business Analyst specifically assigned to work with you on this project. I'm excited to help turn your vision into a clear plan that the rest of the team can build from.\n\nSo, I understand that you're looking to build an offline document reader and smart snippet organizer for research scientists, with tag-based search and local citation export capabilities. That sounds like a fantastic tool for the biomedical research community!\n\nBefore we dive into the nitty-gritty details, I want to make sure I have a good grasp of your requirements. Can I ask for your permission to begin by asking a few questions to get started?",
+    "answer": "Yes, please go ahead. Let's start the discovery.",
+    "round": 1,
+    "timestamp": "2026-10-17T20:00:25.687558+00:00"
+  },
+  {
+    "id": "Q-002",
+    "question": "Let's get started with the discovery.\n\nJust to make sure I understand correctly, you're looking to build an offline document reader and smart snippet organizer for research scientists, with tag-based search and local citation export capabilities, which sounds like a fantastic tool for the biomedical research community.\n\nTo get started, I'd like to ask a few questions to clarify some aspects of your project. Here are my first three questions:\n\n1. What kind of documents do you envision being read by the offline document reader? For example, research articles, theses, or something else?\n2. How do you envision the tag-based search working? Will it be based on keywords, tags, or something else?\n3. What kind of data do you plan to export locally, and how will that be used by the researchers?",
+    "answer": "The core problem is that biomedical scientists waste hours manually copying snippets across PDF research papers into disconnected text files, and struggle to format bibliography citations for lab reports.",
+    "round": 2,
+    "timestamp": "2026-10-17T20:00:32.066164+00:00"
+  },
+  {
+    "id": "Q-003",
+    "question": "Here's my response:\n\nI understand that the core problem is indeed that biomedical scientists waste hours manually copying snippets across PDF research papers into disconnected text files, and struggle to format bibliography citations for lab reports.\n\nTo clarify, I'd like to ask a few questions to better understand the scope of the project. Here are my first three questions:\n\n1. How many research papers do you think a typical scientist would work with in a given year?\n2. What kind of tags or keywords do you envision being used for search, and how would they be created and maintained?\n3. Would the local citation export feature be limited to a specific type of citation style, such as APA or MLA?",
+    "answer": "Key requirements: 1) Local document reader with smart highlight snippet tagging (Must Have), 2) One-click local bibliography citation export in BibTeX and Markdown formats (Must Have), 3) All documents and notes stored locally in SQLite with zero cloud uploads for proprietary research data privacy (Must Have), 4) Search latency under 1 second for 5,000 snippets (NFR). Cloud team sync is strictly deferred to v2.",
+    "round": 3,
+    "timestamp": "2026-10-17T20:00:37.864334+00:00"
+  },
+  {
+    "id": "Q-004",
+    "question": "To summarize, you've clarified that the core problem is biomedical scientists wasting hours manually copying snippets across PDF research papers into disconnected text files and struggling to format bibliography citations for lab reports. You've also identified key requirements: a local document reader with smart highlight snippet tagging, one-click local bibliography citation export in BibTeX and Markdown formats, all documents and notes stored locally in SQLite with zero cloud uploads, and search latency under 1 second for 5,000 snippets. The cloud team sync is strictly deferred to v2.\n\nBefore we dive deeper into the details, I have a few more questions to clarify some aspects of your project. Here are my next three questions:\n\n1. How many research papers do you think a typical scientist would work with in a given year?\n2. What kind of tags or keywords do you envision being used for search, and how would they be created and maintained?\n3. Would the local citation export feature be limited to a specific type of citation style, such as APA or MLA?",
+    "answer": "Target timeline is strictly 8 weeks. MVP build budget is $6,000 with zero monthly running costs. Success metric: 80% of lab scientists exporting at least 5 citation summaries per week. Please finalize requirements.md.",
+    "round": 4,
+    "timestamp": "2026-10-17T20:00:45.992207+00:00"
+  }
+]

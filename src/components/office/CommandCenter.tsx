@@ -13,12 +13,18 @@ import {
   FileCheck,
   FileText,
   AlertCircle,
+  CheckCircle2,
+  Lock,
+  Cpu,
+  Palette,
 } from "lucide-react";
 import { AgentRoleKey, AgentPixelAvatar } from "./AgentAvatars";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { MessageBubble, TypingDots } from "../chat/MessageBubble";
 import { PRDViewer } from "./PRDViewer";
 import { BAOutputViewer } from "./BAOutputViewer";
+import { ArchitectOutputViewer } from "./ArchitectOutputViewer";
+import { DesignerOutputViewer } from "./DesignerOutputViewer";
 import { useConversation } from "../../context/ConversationContext";
 import { AgentLiveStatus } from "../../lib/engine";
 
@@ -43,11 +49,27 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     sendMessage: sendBaMessage,
     pmMessages,
     prdContent,
+    estimateData,
     pmStarted,
     isPmSending,
     pmError,
+    architectureContent,
+    schemaContent,
+    openapiContent,
+    architectState,
+    gate1State,
+    isArchitectGenerating,
+    isGate1Approving,
+    appFlowContent,
+    designBriefContent,
+    designerState,
+    isDesignerGenerating,
+    generateDesignerArtifacts,
     startPm,
     sendPm,
+    approveGate1,
+    requestGate1Changes,
+    generateArchitectArtifacts,
     officeStatus,
   } = useConversation();
 
@@ -58,6 +80,9 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 
   const isBA = activeAgent === "ba";
   const isPM = activeAgent === "pm";
+  const isArchitect = activeAgent === "architect";
+  const isDesigner = activeAgent === "designer";
+  const gate1Approved = Boolean(officeStatus?.gate1?.approved || gate1State?.approved);
 
   const currentMessages = isBA ? baMessages : pmMessages;
   const isAgentThinking = isBA ? isBaSending : isPmSending;
@@ -81,11 +106,20 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
       outputTitle: "Live Product Requirement Document",
     },
     architect: {
-      role: "Software Architect",
+      role: "Solution Architect",
       abbr: "ARCH",
-      status: "idle" as AgentLiveStatus,
+      status: (officeStatus?.agents?.architect?.status ||
+        (architectureContent ? "done" : gate1Approved ? "waiting-on-you" : "idle")) as AgentLiveStatus,
       description: "System architecture, component diagrams, and API contracts",
       outputTitle: "Architecture Blueprint",
+    },
+    designer: {
+      role: "UI/UX Designer",
+      abbr: "DES",
+      status: (officeStatus?.agents?.designer?.status ||
+        (appFlowContent ? "done" : gate1Approved ? "waiting-on-you" : "idle")) as AgentLiveStatus,
+      description: "App flow diagrams, screen states, user journeys, and WCAG 2.2 AA visual tokens",
+      outputTitle: "App Flow & Design Brief",
     },
     engineer: {
       role: "Software Engineer",
@@ -169,27 +203,53 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
           <button
             type="button"
             onClick={() => onSwitchAgent("ba")}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
               isBA
                 ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
                 : "text-brand-body hover:text-brand-headline"
             }`}
           >
             <FileCheck className="w-3.5 h-3.5 text-blue-500" />
-            <span>Business Analyst</span>
+            <span>BA</span>
           </button>
 
           <button
             type="button"
             onClick={() => onSwitchAgent("pm")}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
               isPM
                 ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
                 : "text-brand-body hover:text-brand-headline"
             }`}
           >
             <FileText className="w-3.5 h-3.5 text-purple-500" />
-            <span>Product Manager</span>
+            <span>PM</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSwitchAgent("architect")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              isArchitect
+                ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
+                : "text-brand-body hover:text-brand-headline"
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Architect</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSwitchAgent("designer")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              isDesigner
+                ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
+                : "text-brand-body hover:text-brand-headline"
+            }`}
+          >
+            <Palette className="w-3.5 h-3.5 text-cyan-500" />
+            <span>Designer</span>
           </button>
         </div>
 
@@ -291,6 +351,163 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
             </div>
           )}
 
+          {/* PM Gate 1 Action Banner */}
+          {isPM && prdContent && (
+            <div className={`mx-4 mt-3 p-3.5 rounded-xl border text-xs space-y-2 ${
+              gate1Approved
+                ? "border-emerald-500/30 bg-emerald-500/10"
+                : "border-purple-500/30 bg-purple-500/10"
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className={`font-bold flex items-center gap-1.5 ${
+                  gate1Approved
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : "text-purple-700 dark:text-purple-300"
+                }`}>
+                  {gate1Approved ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <Sparkles className="w-4 h-4" />}
+                  <span>{gate1Approved ? "Gate 1 Approved: Client PRD Sign-off Complete" : "Gate 1: Client PRD Sign-off"}</span>
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold ${
+                  gate1Approved
+                    ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+                    : "bg-purple-500/20 text-purple-700 dark:text-purple-300"
+                }`}>
+                  {gate1Approved ? "UNLOCKED" : "ACTION REQUIRED"}
+                </span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                {gate1Approved
+                  ? "PRD scope, non-goals, and assumptions are approved. Solution Architecture design (Stage 3) is unlocked."
+                  : "Review the PRD, scope, non-goals, and assumptions. Approve to unlock Solution Architecture design, or request changes via the BA."}
+              </p>
+              {!gate1Approved && (
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => approveGate1()}
+                    disabled={isGate1Approving}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isGate1Approving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>Approve PRD at Gate 1</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const feedback = prompt("What changes or clarifications are needed?");
+                      if (feedback) requestGate1Changes(feedback);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-brand-border bg-brand-card hover:bg-brand-subtle text-brand-headline font-medium text-xs transition-colors cursor-pointer"
+                  >
+                    Request Changes
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Architect Workstation Banner */}
+          {isArchitect && !gate1Approved && (
+            <div className="m-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-300">
+                <Lock className="w-4 h-4" />
+                <span>Stage 3 Locked: Gate 1 Client Approval Required</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                Handbook rule: The client must approve the PRD, scope, non-goals, and assumptions at Gate 1 before the Solution Architect can start the technical design.
+              </p>
+              <button
+                type="button"
+                onClick={() => onSwitchAgent("pm")}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Open PM View to Review Gate 1</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {isArchitect && gate1Approved && !architectureContent && (
+            <div className="m-4 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-300">
+                <Sparkles className="w-4 h-4" />
+                <span>Gate 1 Approved: Ready for Solution Architecture</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                The PRD is signed off. The Architect will generate the Technical Requirements Document (TRD), ADRs, OpenAPI 3.0 contract, SQLite schema with DDL, and run code-level validators.
+              </p>
+              <button
+                type="button"
+                onClick={() => generateArchitectArtifacts()}
+                disabled={isArchitectGenerating}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isArchitectGenerating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Designing Architecture & Running Validators...</span>
+                  </>
+                ) : (
+                  <>
+                    <Cpu className="w-3.5 h-3.5" />
+                    <span>Generate Architecture Blueprints (Stage 3)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Designer Workstation Banner */}
+          {isDesigner && !gate1Approved && (
+            <div className="m-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-300">
+                <Lock className="w-4 h-4" />
+                <span>Stage 3 Locked: Gate 1 Client Approval Required</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                Handbook rule: The client must approve the PRD, scope, non-goals, and assumptions at Gate 1 before the UI/UX Designer can begin app flows and design briefs.
+              </p>
+              <button
+                type="button"
+                onClick={() => onSwitchAgent("pm")}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Open PM View to Review Gate 1</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {isDesigner && gate1Approved && !appFlowContent && (
+            <div className="m-4 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-cyan-700 dark:text-cyan-300">
+                <Sparkles className="w-4 h-4" />
+                <span>Gate 1 Approved: Ready for UI/UX Design</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                The PRD is signed off. The Designer will synthesize user journeys into screen state diagrams, comprehensive app flow (Appendix A.4), WCAG 2.2 AA design brief (Appendix A.5), and automated code validators.
+              </p>
+              <button
+                type="button"
+                onClick={() => generateDesignerArtifacts()}
+                disabled={isDesignerGenerating}
+                className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isDesignerGenerating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Synthesizing Flows & Calculating WCAG Tokens...</span>
+                  </>
+                ) : (
+                  <>
+                    <Palette className="w-3.5 h-3.5" />
+                    <span>Generate UI/UX Blueprints (Stage 3)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Error Banner */}
           {pmError && isPM && (
             <div className="m-4 p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">
@@ -305,10 +522,22 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               <div className="h-full flex flex-col items-center justify-center text-center p-6 text-brand-body">
                 <Briefcase className="w-8 h-8 opacity-30 mb-2" />
                 <p className="text-xs font-semibold text-brand-headline">
-                  No messages yet with {agentMeta.role}
+                  {isArchitect
+                    ? "Solution Architecture Command Center"
+                    : isDesigner
+                    ? "UI/UX Design Studio Command Center"
+                    : `No messages yet with ${agentMeta.role}`}
                 </p>
                 <p className="text-[11px] mt-1 max-w-xs">
-                  {isPM
+                  {isArchitect
+                    ? architectureContent
+                      ? "Architecture blueprints and API contracts generated. Review documents in the right pane."
+                      : "Gate 1 approved. Click 'Generate Architecture Blueprints' above to produce technical designs."
+                    : isDesigner
+                    ? appFlowContent
+                      ? "App flows and design brief generated. Review documents and WCAG contrast audit in the right pane."
+                      : "Gate 1 approved. Click 'Generate UI/UX Blueprints' above to produce user journeys and design brief."
+                    : isPM
                     ? "Click 'Initialize PM & Draft PRD' or ask a question to begin."
                     : "Type a response below to talk with your Business Analyst."}
                 </p>
@@ -352,9 +581,11 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     handleSendMessage();
                   }
                 }}
-                disabled={isAgentThinking || (isPM && !pmStarted)}
+                disabled={isAgentThinking || (isPM && !pmStarted) || ((isArchitect || isDesigner) && !gate1Approved)}
                 placeholder={
-                  isPM && !pmStarted
+                  (isArchitect || isDesigner) && !gate1Approved
+                    ? "Approve Gate 1 before sending messages to Stage 3 agents..."
+                    : isPM && !pmStarted
                     ? "Initialize PM first to start conversation..."
                     : `Message ${agentMeta.role}... (Enter to send, Shift+Enter for newline)`
                 }
@@ -367,7 +598,8 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                 disabled={
                   isAgentThinking ||
                   !inputMessage.trim() ||
-                  (isPM && !pmStarted)
+                  (isPM && !pmStarted) ||
+                  ((isArchitect || isDesigner) && !gate1Approved)
                 }
                 className="ml-2 p-2 rounded-lg bg-brand-accent hover:bg-brand-accent-hover text-brand-accent-text transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                 title="Send Message"
@@ -398,6 +630,30 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               content={prdContent}
               projectName={intakeData?.projectName}
               isUpdating={isPmSending}
+              estimateData={estimateData}
+            />
+          ) : isArchitect ? (
+            <ArchitectOutputViewer
+              architectureContent={architectureContent || ""}
+              schemaContent={schemaContent || ""}
+              openapiContent={openapiContent || ""}
+              validationResults={architectState?.validation}
+              judgeVerdict={architectState?.judge_verdict}
+              projectName={intakeData?.projectName}
+              isGenerating={isArchitectGenerating}
+              onGenerate={() => generateArchitectArtifacts()}
+              canStart={gate1Approved && !architectureContent}
+            />
+          ) : isDesigner ? (
+            <DesignerOutputViewer
+              appFlowContent={appFlowContent || ""}
+              designBriefContent={designBriefContent || ""}
+              validationResults={designerState?.validation || designerState?.validation_results}
+              judgeVerdict={designerState?.judge_verdict}
+              projectName={intakeData?.projectName}
+              isGenerating={isDesignerGenerating}
+              onGenerate={() => generateDesignerArtifacts()}
+              canStart={gate1Approved && !appFlowContent}
             />
           ) : (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-brand-card rounded-2xl border border-brand-border">
@@ -406,7 +662,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                 {agentMeta.outputTitle}
               </h3>
               <p className="text-xs text-brand-body mt-1 max-w-sm">
-                This agent workstation will unlock in the next pipeline phase once the PRD is signed off.
+                This agent workstation will unlock in the next pipeline phase once the architecture is verified.
               </p>
             </div>
           )}
@@ -417,3 +673,4 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 };
 
 export default CommandCenter;
+

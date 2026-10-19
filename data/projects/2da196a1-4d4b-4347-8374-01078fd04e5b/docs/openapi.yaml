@@ -1,0 +1,894 @@
+openapi: 3.0.3
+info:
+  title: BioVault Lab Specimen Tracker Local REST API
+  version: 1.0.0
+  description: Internal API contract for BioVault Lab Specimen Tracker workflows.
+    Single source of truth for frontend and backend components.
+  contact:
+    name: Solution Architecture Team
+servers:
+- url: http://127.0.0.1:8765
+  description: Local desktop application loopback server
+paths:
+  /api/v1/specimens:
+    post:
+      summary: Check in incoming specimen [F-001, AC-001]
+      description: Accessions incoming clinical bio-specimen vial with accession number
+        and generates 2D barcode payload [F-001, AC-001]. Cites [API-001].
+      operationId: accessionSpecimen
+      tags:
+      - F-001
+      - specimens
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpecimenCreateRequest'
+      responses:
+        '201':
+          description: Specimen accessioned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecimenRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '409':
+          $ref: '#/components/responses/409Conflict'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query specimens [F-001, AC-001, NFR-01]
+      description: Query accessioned specimens by status, accession number, or storage
+        unit in < 1.5 s [NFR-01]. Cites [API-001].
+      operationId: listSpecimens
+      tags:
+      - F-001
+      - specimens
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - accessioned
+          - in_storage
+          - transferred
+          - disposed
+      - name: storage_unit_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of accessioned specimens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecimenListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/specimens/{id}/barcode:
+    get:
+      summary: Fetch 2D barcode payload [F-001, AC-001]
+      description: Retrieves generated 2D DataMatrix/QR payload for specimen label
+        printing [F-001]. Cites [API-002].
+      operationId: getSpecimenBarcode
+      tags:
+      - F-001
+      - specimens
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Specimen barcode record and print data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarcodeRecord'
+        '404':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    post:
+      summary: Print or regenerate barcode label [F-001, AC-001]
+      description: Generates printable 2D barcode label with laboratory checksum [F-001].
+        Cites [API-002].
+      operationId: printSpecimenBarcode
+      tags:
+      - F-001
+      - specimens
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarcodePrintRequest'
+      responses:
+        '201':
+          description: Barcode printed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarcodeRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/cold-storage/readings:
+    post:
+      summary: Log temperature reading [F-002, AC-003]
+      description: Records periodic temperature reading from cold storage sensor and
+        evaluates excursion [F-002, AC-003]. Cites [API-003].
+      operationId: recordTemperatureReading
+      tags:
+      - F-002
+      - temperature-logs
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemperatureReadingCreateRequest'
+      responses:
+        '201':
+          description: Reading recorded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemperatureReadingRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: Query temperature telemetry history [F-002, AC-003]
+      description: Lists time-series temperature readings for storage unit [F-002,
+        AC-003]. Cites [API-003].
+      operationId: listTemperatureReadings
+      tags:
+      - F-002
+      - temperature-logs
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: unit_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: is_excursion
+        in: query
+        required: false
+        schema:
+          type: integer
+          enum:
+          - 0
+          - 1
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+      responses:
+        '200':
+          description: List of temperature readings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemperatureReadingListResponse'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/cold-storage/excursions:
+    get:
+      summary: List temperature excursions [F-002, AC-003, AC-004]
+      description: Lists out-of-specification temperature excursion incidents [F-002,
+        AC-004]. Cites [API-004].
+      operationId: listTemperatureExcursions
+      tags:
+      - F-002
+      - temperature-logs
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: unit_id
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of excursion incidents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExcursionListResponse'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    post:
+      summary: Acknowledge temperature excursion [F-002, AC-004]
+      description: Records formal managerial sign-off and corrective action notes
+        for an excursion [F-002, AC-004]. Cites [API-004].
+      operationId: acknowledgeTemperatureExcursion
+      tags:
+      - F-002
+      - temperature-logs
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExcursionAcknowledgeRequest'
+      responses:
+        '200':
+          description: Excursion acknowledged with corrective action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExcursionRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/custody/transfers:
+    post:
+      summary: Initiate specimen custodial transfer [F-003, AC-005]
+      description: Creates custodial handoff record with digital signature confirmation
+        [F-003, AC-005]. Cites [API-005].
+      operationId: initiateCustodyTransfer
+      tags:
+      - F-003
+      - custody-transfers
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustodyTransferCreateRequest'
+      responses:
+        '201':
+          description: Custodial transfer initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustodyTransferRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: Query chain-of-custody transfer history [F-003, AC-005]
+      description: Retrieves sequential chain of custody transfers for a bio-specimen
+        [F-003, AC-005]. Cites [API-005].
+      operationId: listCustodyTransfers
+      tags:
+      - F-003
+      - custody-transfers
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: specimen_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+      responses:
+        '200':
+          description: Chain of custody log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustodyTransferListResponse'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/custody/transfers/{id}/sign:
+    post:
+      summary: Digital confirmation of specimen receipt [F-003, AC-005, AC-006]
+      description: Recipient cryptographically signs and confirms physical transfer
+        receipt [F-003, AC-006]. Cites [API-006].
+      operationId: signCustodyTransfer
+      tags:
+      - F-003
+      - custody-transfers
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustodyTransferSignRequest'
+      responses:
+        '200':
+          description: Custodial sign-off completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustodyTransferRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/audit/reports/export:
+    post:
+      summary: Compile and export regulatory audit report [F-004, AC-007, AC-008]
+      description: Compiles tamper-evident PDF or structured CSV audit export for
+        CLIA/HIPAA inspection in < 1.5 s [F-004, AC-007, NFR-01]. Cites [API-007].
+      operationId: exportAuditReport
+      tags:
+      - F-004
+      - audit-reports
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditExportRequest'
+      responses:
+        '201':
+          description: Inspection report exported to local filesystem
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditExportRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/audit/logs:
+    get:
+      summary: Query system audit trail [F-004, AC-007]
+      description: Retrieves local tamper-evident audit trail entries [F-004, AC-007].
+        Cites [API-008].
+      operationId: listAuditLogs
+      tags:
+      - F-004
+      - audit-reports
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: action
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+      responses:
+        '200':
+          description: List of system audit logs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/health/live:
+    get:
+      summary: Liveness check
+      description: Returns operational status of desktop engine and database subsystem.
+        Cites [API-009].
+      operationId: getLiveness
+      tags:
+      - System
+      responses:
+        '200':
+          description: System is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+components:
+  securitySchemes:
+    LocalRoleAuth:
+      type: apiKey
+      in: header
+      name: X-Client-Role
+      description: Active local user role header verified by local middleware.
+  schemas:
+    ProblemDetails:
+      type: object
+      description: Standard RFC 9457 Problem Details error format
+      required:
+      - type
+      - title
+      - status
+      - detail
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://autonoma.local/errors/validation
+        title:
+          type: string
+          example: Validation Error
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: Required input field is missing or invalid.
+        instance:
+          type: string
+          example: /api/v1/resource/req-102
+    SpecimenCreateRequest:
+      type: object
+      required:
+      - accession_number
+      - patient_ref
+      - sample_type
+      - collected_at
+      properties:
+        accession_number:
+          type: string
+          example: ACC-2026-00412
+        patient_ref:
+          type: string
+          example: PT-90214-X
+        sample_type:
+          type: string
+          enum:
+          - blood
+          - plasma
+          - serum
+          - tissue
+          - urine
+          - biopsy
+          - swab
+        storage_unit_id:
+          type: string
+          example: unit-freezer-01
+        collected_at:
+          type: string
+          format: date-time
+    SpecimenRecord:
+      type: object
+      required:
+      - specimen_id
+      - accession_number
+      - patient_ref
+      - sample_type
+      - status
+      - created_at
+      properties:
+        specimen_id:
+          type: string
+          format: uuid
+        accession_number:
+          type: string
+        patient_ref:
+          type: string
+        sample_type:
+          type: string
+        storage_unit_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - accessioned
+          - in_storage
+          - transferred
+          - disposed
+        collected_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    SpecimenListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpecimenRecord'
+        total_count:
+          type: integer
+    BarcodeRecord:
+      type: object
+      required:
+      - barcode_id
+      - specimen_id
+      - barcode_format
+      - barcode_payload
+      - printed_at
+      properties:
+        barcode_id:
+          type: string
+          format: uuid
+        specimen_id:
+          type: string
+        barcode_format:
+          type: string
+          enum:
+          - datamatrix
+          - qr
+          - code128
+        barcode_payload:
+          type: string
+          example: BV-ACC202600412-BM4
+        printed_at:
+          type: string
+          format: date-time
+    BarcodePrintRequest:
+      type: object
+      required:
+      - barcode_format
+      properties:
+        barcode_format:
+          type: string
+          enum:
+          - datamatrix
+          - qr
+          - code128
+          default: datamatrix
+    TemperatureReadingCreateRequest:
+      type: object
+      required:
+      - unit_id
+      - temperature_celsius
+      properties:
+        unit_id:
+          type: string
+          example: freezer-01
+        temperature_celsius:
+          type: number
+          format: float
+          example: -81.4
+    TemperatureReadingRecord:
+      type: object
+      required:
+      - reading_id
+      - unit_id
+      - temperature_celsius
+      - is_excursion
+      - recorded_at
+      properties:
+        reading_id:
+          type: string
+          format: uuid
+        unit_id:
+          type: string
+        temperature_celsius:
+          type: number
+        is_excursion:
+          type: integer
+          enum:
+          - 0
+          - 1
+        recorded_at:
+          type: string
+          format: date-time
+    TemperatureReadingListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemperatureReadingRecord'
+        total_count:
+          type: integer
+    ExcursionRecord:
+      type: object
+      required:
+      - excursion_id
+      - unit_id
+      - peak_temp_celsius
+      - duration_minutes
+      - created_at
+      properties:
+        excursion_id:
+          type: string
+          format: uuid
+        unit_id:
+          type: string
+        peak_temp_celsius:
+          type: number
+        duration_minutes:
+          type: integer
+        acknowledged_by:
+          type: string
+        acknowledged_at:
+          type: string
+          format: date-time
+        resolution_notes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ExcursionAcknowledgeRequest:
+      type: object
+      required:
+      - excursion_id
+      - resolution_notes
+      properties:
+        excursion_id:
+          type: string
+        resolution_notes:
+          type: string
+          example: Door was ajar during restocking; temperature normalized within
+            12 minutes.
+    ExcursionListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExcursionRecord'
+        total_count:
+          type: integer
+    CustodyTransferCreateRequest:
+      type: object
+      required:
+      - specimen_id
+      - receiving_user_id
+      - destination_lab
+      properties:
+        specimen_id:
+          type: string
+        receiving_user_id:
+          type: string
+        destination_lab:
+          type: string
+          example: Cytology Analysis Laboratory
+    CustodyTransferRecord:
+      type: object
+      required:
+      - transfer_id
+      - specimen_id
+      - releasing_user_id
+      - receiving_user_id
+      - destination_lab
+      - digital_signature
+      - transferred_at
+      properties:
+        transfer_id:
+          type: string
+          format: uuid
+        specimen_id:
+          type: string
+        releasing_user_id:
+          type: string
+        receiving_user_id:
+          type: string
+        destination_lab:
+          type: string
+        digital_signature:
+          type: string
+        transferred_at:
+          type: string
+          format: date-time
+    CustodyTransferSignRequest:
+      type: object
+      required:
+      - digital_confirmation
+      properties:
+        digital_confirmation:
+          type: string
+          example: Confirmed physical specimen integrity and vial seal upon receipt.
+    CustodyTransferListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustodyTransferRecord'
+        total_count:
+          type: integer
+    AuditExportRequest:
+      type: object
+      required:
+      - export_format
+      properties:
+        export_format:
+          type: string
+          enum:
+          - pdf
+          - csv
+        include_excursions:
+          type: boolean
+          default: true
+        include_custody:
+          type: boolean
+          default: true
+    AuditExportRecord:
+      type: object
+      required:
+      - export_id
+      - user_id
+      - export_format
+      - file_path
+      - checksum_sha256
+      - record_count
+      - exported_at
+      properties:
+        export_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        export_format:
+          type: string
+        file_path:
+          type: string
+        checksum_sha256:
+          type: string
+        record_count:
+          type: integer
+        exported_at:
+          type: string
+          format: date-time
+    AuditLogRecord:
+      type: object
+      required:
+      - log_id
+      - action
+      - entity_type
+      - entity_id
+      - user_id
+      - timestamp
+      properties:
+        log_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        user_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    AuditLogListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogRecord'
+        total_count:
+          type: integer
+  responses:
+    400BadRequest:
+      description: Invalid input syntax or missing required parameters (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    401Unauthorized:
+      description: Missing or unauthenticated user session context (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    403Forbidden:
+      description: Active persona role lacks permission to execute requested operation
+        (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    409Conflict:
+      description: State conflict or concurrency lock on target record (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    422ValidationError:
+      description: Semantic validation failure on request payload (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    500InternalError:
+      description: Unexpected internal application or database error (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

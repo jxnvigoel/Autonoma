@@ -1,0 +1,112 @@
+{
+  "role": "ba",
+  "artifact": "docs/requirements.md",
+  "pass_threshold": 20,
+  "max_total": 24,
+  "criteria": [
+    {
+      "id": "fr_nfr_traceability",
+      "name": "FR and NFR Traceability to Discovery Q&A",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every FR- and NFR- cites at least one valid Q- from qa_log.json. Every requirement directly traces to client statements.",
+      "scale": {
+        "3": "100% of FRs and NFRs cite valid [Q-###] sources that explicitly support the requirement.",
+        "2": "All FRs and NFRs cite sources, but 1 citation points to general context rather than specific Q-.",
+        "1": "One or more FRs or NFRs lack citations [Q-###].",
+        "0": "No requirements cite sources or citations are fabricated."
+      }
+    },
+    {
+      "id": "fr_nfr_classification",
+      "name": "Strict ISO/IEC 29148 FR vs NFR Classification",
+      "max": 3,
+      "must_pass": true,
+      "description": "Strict separation: FRs contain only user workflows/capabilities. Latency, performance, local storage, security, and offline constraints are filed as NFRs. No user features filed as NFRs.",
+      "scale": {
+        "3": "Flawless classification: zero technical, latency, storage, or offline constraints misfiled in FR; zero functional capabilities misfiled in NFR.",
+        "2": "Minor boundary ambiguity in 1 item, but no clear misclassification.",
+        "1": "1 performance/storage constraint misfiled as FR, or 1 functional capability misfiled as NFR.",
+        "0": "Widespread misclassification between functional and non-functional requirements."
+      }
+    },
+    {
+      "id": "testable_requirements",
+      "name": "Unambiguous and Testable Requirements",
+      "max": 3,
+      "must_pass": true,
+      "description": "No vague qualitative words left ('fast', 'secure', 'many users', 'intuitive'). Every quality has a concrete number, measurable benchmark, or explicit yes/no test per ISO 29148.",
+      "scale": {
+        "3": "All requirements are verifiable, atomic, and quantified with concrete numbers or objective yes/no tests.",
+        "2": "Nearly all requirements quantified; 1 requirement has slightly broad wording.",
+        "1": "Contains vague terms ('fast', 'seamless', 'scalable') without numbers or objective tests.",
+        "0": "Mostly vague, unmeasurable requirements."
+      }
+    },
+    {
+      "id": "persona_grounding_and_needs",
+      "name": "Persona Grounding and 5 Whys Needs",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every FR- traces to a stated persona (P-#) and documents the need behind it (5 Whys). Zero invented roles or boilerplate personas.",
+      "scale": {
+        "3": "Personas are 100% grounded in client discovery with context and tech comfort. Every FR- lists persona and root need.",
+        "2": "Personas grounded, but 1-2 FRs have brief need descriptions.",
+        "1": "Missing persona linkage on some FRs or contains unstated/invented roles.",
+        "0": "Personas invented or entirely missing from requirements."
+      }
+    },
+    {
+      "id": "user_journeys",
+      "name": "End-to-End User Journeys (J-)",
+      "max": 3,
+      "must_pass": false,
+      "description": "Main user journeys (J-#) documented step-by-step from start to finish with clear outcomes and citations.",
+      "scale": {
+        "3": "Complete end-to-end user journeys with step -> step -> outcome flow and valid Q- citations.",
+        "2": "Journeys present with start-to-finish flow, but 1 journey lacks explicit outcome step.",
+        "1": "Journeys incomplete or fragmented.",
+        "0": "No user journeys documented."
+      }
+    },
+    {
+      "id": "conflict_and_assumption_handling",
+      "name": "Conflict, Assumption, and Open Question Handling",
+      "max": 3,
+      "must_pass": true,
+      "description": "Conflicts between answers raised as OQ- citing conflicting Q-s. Unstated or estimated items recorded as ASM- with reason and risk. No silent resolution.",
+      "scale": {
+        "3": "Rigorous conflict/gap handling: conflicts raised with dual citations; assumptions explicitly stated with reason and risk; zero silent assumptions.",
+        "2": "Assumptions recorded, but minor omission in risk explanation.",
+        "1": "Unstated items presented as client facts without ASM- or OQ- designation.",
+        "0": "Silent resolution of conflicts or rampant unflagged assumptions."
+      }
+    },
+    {
+      "id": "scope_timeline_budget_fit",
+      "name": "Scope, Timeline, and Budget Feasibility",
+      "max": 3,
+      "must_pass": false,
+      "description": "Scope fits stated timeline and budget with MoSCoW prioritization. Items outside v1 boundary explicitly categorized in Won't (v1) with client rationale.",
+      "scale": {
+        "3": "Realistic MoSCoW prioritization; clear Won't (v1) table with reasons; timeline and budget constraints cited.",
+        "2": "Prioritization clear, but Won't table has brief justifications.",
+        "1": "Prioritization lacks clear boundary between v1 and later scope.",
+        "0": "No prioritization or budget/timeline alignment."
+      }
+    },
+    {
+      "id": "discovery_completeness",
+      "name": "Discovery Checklist Completeness",
+      "max": 3,
+      "must_pass": false,
+      "description": "Coverage of Handbook 4.2.5 checklist: problem, personas, journeys, data ownership/retention, integrations, compliance, success definition in client's own words.",
+      "scale": {
+        "3": "Comprehensive coverage of all checklist areas including data retention, integrations, compliance, and client success quote.",
+        "2": "Most areas covered; 1 minor area (e.g. retention policy) not explicitly probed.",
+        "1": "Multiple major discovery areas missing (e.g. data ownership, success metrics).",
+        "0": "Superficial discovery covering only basic features."
+      }
+    }
+  ]
+}

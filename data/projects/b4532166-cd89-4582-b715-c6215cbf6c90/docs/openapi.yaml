@@ -1,0 +1,1051 @@
+openapi: 3.0.3
+info:
+  title: BioVault Lab Local REST API
+  version: 1.0.0
+  description: Internal API contract for BioVault Lab local desktop inspection and
+    export workflows. Single source of truth for frontend and backend components.
+  contact:
+    name: Solution Architecture Team
+servers:
+- url: http://127.0.0.1:8765
+  description: Local desktop application loopback server
+paths:
+  /api/v1/specimen-check-in-with-2:
+    post:
+      summary: Create and execute Specimen check-in with 2D barcode generation
+      description: Execution and record ingestion endpoint supporting Specimen check-in
+        with 2D barcode generation [F-001]. Cites [API-001].
+      operationId: create_specimen_check_in_with_2_1
+      tags:
+      - F-001
+      - specimen_check_in_with_2
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpecimenCheckInWith2dBarcodeCreateRequest'
+      responses:
+        '201':
+          description: Specimen check-in with 2D barcode generation processed and
+            stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecimenCheckInWith2dBarcodeRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for Specimen check-in with 2D barcode generation
+      description: Query and filter records supporting Specimen check-in with 2D barcode
+        generation [F-001] with latency < 1.0 s [NFR-01]. Cites [API-001].
+      operationId: list_specimen_check_in_with_2_1
+      tags:
+      - F-001
+      - specimen_check_in_with_2
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Specimen check-in with 2D barcode generation records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecimenCheckInWith2dBarcodeListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/cold-storage-temperature:
+    post:
+      summary: Create and execute Cold-storage temperature excursion logging
+      description: Execution and record ingestion endpoint supporting Cold-storage
+        temperature excursion logging [F-002]. Cites [API-002].
+      operationId: create_cold_storage_temperature_2
+      tags:
+      - F-002
+      - cold_storage_temperature
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ColdStorageTemperatureExcursCreateRequest'
+      responses:
+        '201':
+          description: Cold-storage temperature excursion logging processed and stored
+            successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ColdStorageTemperatureExcursRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for Cold-storage temperature excursion logging
+      description: Query and filter records supporting Cold-storage temperature excursion
+        logging [F-002] with latency < 1.0 s [NFR-01]. Cites [API-002].
+      operationId: list_cold_storage_temperature_2
+      tags:
+      - F-002
+      - cold_storage_temperature
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Cold-storage temperature excursion logging records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ColdStorageTemperatureExcursListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/custodial-transfer-sign-:
+    post:
+      summary: Create and execute Custodial transfer sign-off with digital confirmation
+      description: Execution and record ingestion endpoint supporting Custodial transfer
+        sign-off with digital confirmation [F-003]. Cites [API-003].
+      operationId: create_custodial_transfer_sign__3
+      tags:
+      - F-003
+      - custodial_transfer_sign_
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustodialTransferSignOffWithCreateRequest'
+      responses:
+        '201':
+          description: Custodial transfer sign-off with digital confirmation processed
+            and stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustodialTransferSignOffWithRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for Custodial transfer sign-off with digital
+        confirmation
+      description: Query and filter records supporting Custodial transfer sign-off
+        with digital confirmation [F-003] with latency < 1.0 s [NFR-01]. Cites [API-003].
+      operationId: list_custodial_transfer_sign__3
+      tags:
+      - F-003
+      - custodial_transfer_sign_
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Custodial transfer sign-off with digital confirmation
+            records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustodialTransferSignOffWithListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/pdf-csv-regulatory-inspe:
+    post:
+      summary: Create and execute PDF/CSV regulatory inspection audit export
+      description: Execution and record ingestion endpoint supporting PDF/CSV regulatory
+        inspection audit export [F-004]. Cites [API-004].
+      operationId: create_pdf_csv_regulatory_inspe_4
+      tags:
+      - F-004
+      - pdf_csv_regulatory_inspe
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PdfCsvRegulatoryInspectionAuCreateRequest'
+      responses:
+        '201':
+          description: PDF/CSV regulatory inspection audit export processed and stored
+            successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PdfCsvRegulatoryInspectionAuRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for PDF/CSV regulatory inspection audit export
+      description: Query and filter records supporting PDF/CSV regulatory inspection
+        audit export [F-004] with latency < 1.0 s [NFR-01]. Cites [API-004].
+      operationId: list_pdf_csv_regulatory_inspe_4
+      tags:
+      - F-004
+      - pdf_csv_regulatory_inspe
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of PDF/CSV regulatory inspection audit export records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PdfCsvRegulatoryInspectionAuListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/barcode-scanning-and-spe:
+    post:
+      summary: Create and execute Barcode scanning and specimen search must respond
+        in under 1.5 seconds
+      description: Execution and record ingestion endpoint supporting Barcode scanning
+        and specimen search must respond in under 1.5 seconds [F-005]. Cites [API-005].
+      operationId: create_barcode_scanning_and_spe_5
+      tags:
+      - F-005
+      - barcode_scanning_and_spe
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarcodeScanningAndSpecimenSeCreateRequest'
+      responses:
+        '201':
+          description: Barcode scanning and specimen search must respond in under
+            1.5 seconds processed and stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarcodeScanningAndSpecimenSeRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for Barcode scanning and specimen search must
+        respond in under 1.5 seconds
+      description: Query and filter records supporting Barcode scanning and specimen
+        search must respond in under 1.5 seconds [F-005] with latency < 1.0 s [NFR-01].
+        Cites [API-005].
+      operationId: list_barcode_scanning_and_spe_5
+      tags:
+      - F-005
+      - barcode_scanning_and_spe
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Barcode scanning and specimen search must respond in
+            under 1.5 seconds records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarcodeScanningAndSpecimenSeListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/freezer-temperature-devi:
+    post:
+      summary: Create and execute Freezer temperature deviation must not exceed 5
+        degrees Celsius
+      description: Execution and record ingestion endpoint supporting Freezer temperature
+        deviation must not exceed 5 degrees Celsius [F-006]. Cites [API-006].
+      operationId: create_freezer_temperature_devi_6
+      tags:
+      - F-006
+      - freezer_temperature_devi
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FreezerTemperatureDeviationMCreateRequest'
+      responses:
+        '201':
+          description: Freezer temperature deviation must not exceed 5 degrees Celsius
+            processed and stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreezerTemperatureDeviationMRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for Freezer temperature deviation must not exceed
+        5 degrees Celsius
+      description: Query and filter records supporting Freezer temperature deviation
+        must not exceed 5 degrees Celsius [F-006] with latency < 1.0 s [NFR-01]. Cites
+        [API-006].
+      operationId: list_freezer_temperature_devi_6
+      tags:
+      - F-006
+      - freezer_temperature_devi
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Freezer temperature deviation must not exceed 5 degrees
+            Celsius records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreezerTemperatureDeviationMListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/the-software-must-be-abl:
+    post:
+      summary: Create and execute The software must be able to display a minimum of
+        6 colors on a high contrast background
+      description: Execution and record ingestion endpoint supporting The software
+        must be able to display a minimum of 6 colors on a high contrast background
+        [F-007]. Cites [API-007].
+      operationId: create_the_software_must_be_abl_7
+      tags:
+      - F-007
+      - the_software_must_be_abl
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TheSoftwareMustBeAbleToDisplCreateRequest'
+      responses:
+        '201':
+          description: The software must be able to display a minimum of 6 colors
+            on a high contrast background processed and stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TheSoftwareMustBeAbleToDisplRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and query records for The software must be able to display a minimum
+        of 6 colors on a high contrast background
+      description: Query and filter records supporting The software must be able to
+        display a minimum of 6 colors on a high contrast background [F-007] with latency
+        < 1.0 s [NFR-01]. Cites [API-007].
+      operationId: list_the_software_must_be_abl_7
+      tags:
+      - F-007
+      - the_software_must_be_abl
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of The software must be able to display a minimum of 6
+            colors on a high contrast background records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TheSoftwareMustBeAbleToDisplListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/health/live:
+    get:
+      summary: Liveness check
+      description: Returns operational status of desktop engine and database subsystem.
+        Cites [API-008].
+      operationId: getLiveness
+      tags:
+      - System
+      responses:
+        '200':
+          description: System is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+components:
+  securitySchemes:
+    LocalRoleAuth:
+      type: apiKey
+      in: header
+      name: X-Client-Role
+      description: Active local user role header verified by local middleware.
+  schemas:
+    ProblemDetails:
+      type: object
+      description: Standard RFC 9457 Problem Details error format
+      required:
+      - type
+      - title
+      - status
+      - detail
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://autonoma.local/errors/validation
+        title:
+          type: string
+          example: Validation Error
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: Required input field is missing or invalid.
+        instance:
+          type: string
+          example: /api/v1/resource/req-102
+    SpecimenCheckInWith2dBarcodeCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for Specimen check-in with 2D barcode generation
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for Specimen check-in with 2D barcode generation.
+    SpecimenCheckInWith2dBarcodeRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for Specimen check-in with 2D barcode generation
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SpecimenCheckInWith2dBarcodeListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpecimenCheckInWith2dBarcodeRecord'
+        total_count:
+          type: integer
+          example: 12
+    ColdStorageTemperatureExcursCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for Cold-storage temperature excursion logging
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for Cold-storage temperature excursion logging.
+    ColdStorageTemperatureExcursRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for Cold-storage temperature excursion logging
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ColdStorageTemperatureExcursListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ColdStorageTemperatureExcursRecord'
+        total_count:
+          type: integer
+          example: 12
+    CustodialTransferSignOffWithCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for Custodial transfer sign-off with digital confirmation
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for Custodial transfer sign-off with digital
+            confirmation.
+    CustodialTransferSignOffWithRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for Custodial transfer sign-off with digital confirmation
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CustodialTransferSignOffWithListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustodialTransferSignOffWithRecord'
+        total_count:
+          type: integer
+          example: 12
+    PdfCsvRegulatoryInspectionAuCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for PDF/CSV regulatory inspection audit export
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for PDF/CSV regulatory inspection audit
+            export.
+    PdfCsvRegulatoryInspectionAuRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for PDF/CSV regulatory inspection audit export
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    PdfCsvRegulatoryInspectionAuListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PdfCsvRegulatoryInspectionAuRecord'
+        total_count:
+          type: integer
+          example: 12
+    BarcodeScanningAndSpecimenSeCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for Barcode scanning and specimen search must respond in
+            under 1.5 seconds
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for Barcode scanning and specimen search
+            must respond in under 1.5 seconds.
+    BarcodeScanningAndSpecimenSeRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for Barcode scanning and specimen search must respond in
+            under 1.5 seconds
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    BarcodeScanningAndSpecimenSeListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BarcodeScanningAndSpecimenSeRecord'
+        total_count:
+          type: integer
+          example: 12
+    FreezerTemperatureDeviationMCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for Freezer temperature deviation must not exceed 5 degrees
+            Celsius
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for Freezer temperature deviation must not
+            exceed 5 degrees Celsius.
+    FreezerTemperatureDeviationMRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for Freezer temperature deviation must not exceed 5 degrees
+            Celsius
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    FreezerTemperatureDeviationMListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FreezerTemperatureDeviationMRecord'
+        total_count:
+          type: integer
+          example: 12
+    TheSoftwareMustBeAbleToDisplCreateRequest:
+      type: object
+      required:
+      - name
+      - details
+      properties:
+        name:
+          type: string
+          example: Sample for The software must be able to display a minimum of 6
+            colors on a high contrast background
+        status:
+          type: string
+          enum:
+          - active
+          - pending
+          - completed
+          default: active
+        details:
+          type: string
+          example: Operational parameters for The software must be able to display
+            a minimum of 6 colors on a high contrast background.
+    TheSoftwareMustBeAbleToDisplRecord:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Sample for The software must be able to display a minimum of 6
+            colors on a high contrast background
+        status:
+          type: string
+          example: active
+        details:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    TheSoftwareMustBeAbleToDisplListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TheSoftwareMustBeAbleToDisplRecord'
+        total_count:
+          type: integer
+          example: 12
+  responses:
+    400BadRequest:
+      description: Invalid input syntax or missing required parameters (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    401Unauthorized:
+      description: Missing or unauthenticated user session context (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    403Forbidden:
+      description: Active persona role lacks permission to execute requested operation
+        (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    409Conflict:
+      description: State conflict or concurrency lock on target record (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    422ValidationError:
+      description: Semantic validation failure on request payload (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    500InternalError:
+      description: Unexpected internal application or database error (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

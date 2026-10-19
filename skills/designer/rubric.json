@@ -1,0 +1,112 @@
+{
+  "role": "designer",
+  "artifact": "docs/app-flow.md",
+  "pass_threshold": 20,
+  "max_total": 24,
+  "criteria": [
+    {
+      "id": "feature_and_journey_coverage",
+      "name": "Feature and Acceptance Criteria Journey Coverage",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every Must-have F- has an explicit user journey (J-##); every AC- is covered in a journey step or screen state with step-by-step user interaction flow.",
+      "scale": {
+        "3": "100% of Must-have features mapped to detailed user journeys covering happy paths, input errors, and system failures with explicit AC- citations.",
+        "2": "All features have journeys, but 1-2 AC citations are missing from journey steps.",
+        "1": "One or more Must-have features lack a corresponding user journey.",
+        "0": "No user journeys defined or features completely unmapped."
+      }
+    },
+    {
+      "id": "screen_states_completeness",
+      "name": "Five Screen States Completeness",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every screen explicitly specifies all 5 states: Loading (skeleton), Empty (explanation + CTA), Populated, Error (plain message + retry), and No Permission.",
+      "scale": {
+        "3": "All screens define all 5 states with concrete user feedback, skeleton loaders, and actionable recovery buttons.",
+        "2": "All screens define states, but 1 screen has brief or generic empty/error descriptions.",
+        "1": "Some screens omit one or more required states (e.g. missing no-permission or loading state).",
+        "0": "Screen states omitted or only populated state defined."
+      }
+    },
+    {
+      "id": "wcag_contrast_and_accessibility",
+      "name": "WCAG 2.2 AA Contrast and Keyboard Accessibility",
+      "max": 3,
+      "must_pass": true,
+      "description": "Color contrast ratios measured mathematically and pass WCAG 2.2 AA (>= 4.5:1 for normal text, >= 3:1 for large text/components). Keyboard navigation and visible focus defined.",
+      "scale": {
+        "3": "All text and token pairs mathematically measured and pass WCAG 2.2 AA (>= 4.5:1). Keyboard tab order, visible focus rings, and shortcuts documented.",
+        "2": "All pairs pass contrast, but keyboard navigation details are brief.",
+        "1": "One or more color pairs fail WCAG 2.2 AA contrast (< 4.5:1), or contrast ratios are claimed without measurement.",
+        "0": "Fails contrast standards or accessibility is completely ignored."
+      }
+    },
+    {
+      "id": "component_and_design_tokens",
+      "name": "Design Tokens and Component Specifications",
+      "max": 3,
+      "must_pass": false,
+      "description": "Cohesive design tokens defined (colors, typography, spacing, radius, shadows) for light and dark themes; all components have defined styles, zero 'TBD'.",
+      "scale": {
+        "3": "Complete token system with light and dark themes, concrete hex values, typography scale, and full component interaction states (hover, focus, disabled, loading).",
+        "2": "Tokens defined, but minor omissions in component loading/disabled states.",
+        "1": "Contains placeholders ('TBD', generic tokens) or lacks dark theme tokens.",
+        "0": "No design tokens or component specifications."
+      }
+    },
+    {
+      "id": "grounding_and_persona_citations",
+      "name": "Grounding and Persona Citations",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every screen cites a persona (P-##) from the PRD. Zero invented screens, zero foreign project domain terms, and zero ungrounded numbers.",
+      "scale": {
+        "3": "100% grounded in project PRD personas and requirements. Every screen cites authorized P-## roles. Zero cross-project contamination.",
+        "2": "Grounded with valid personas, but 1 screen has ambiguous persona citation.",
+        "1": "Contains ungrounded screens, screens lacking persona citations, or foreign project terms.",
+        "0": "Invented personas, screens not in PRD, or heavy cross-project contamination."
+      }
+    },
+    {
+      "id": "navigation_and_hierarchy",
+      "name": "Navigation Hierarchy and 2-Click Rule",
+      "max": 3,
+      "must_pass": false,
+      "description": "Key actions reachable within 2 clicks of home screen. Top bar, sidebar, and footer/status navigation clearly structured with active states.",
+      "scale": {
+        "3": "Clear visual hierarchy; key workflows reachable within 2 clicks; comprehensive top bar, sidebar, and status navigation rules.",
+        "2": "Clear navigation, but 1 secondary action requires 3 clicks without domain justification.",
+        "1": "Navigation structure ambiguous or key actions buried.",
+        "0": "No navigation hierarchy documented."
+      }
+    },
+    {
+      "id": "responsive_design_and_layout",
+      "name": "Responsive Breakpoints and Layout Constraints",
+      "max": 3,
+      "must_pass": false,
+      "description": "Layout rules defined across standard breakpoints (< 640px, 640-1024px, > 1024px) with maximum content reading widths and grid gutters.",
+      "scale": {
+        "3": "Detailed responsive layout rules across all three breakpoints with content max-widths and drawer/collapse behaviors.",
+        "2": "Breakpoints covered, but tablet view details are brief.",
+        "1": "Only desktop layout defined; mobile/tablet omitted.",
+        "0": "No responsive layout rules."
+      }
+    },
+    {
+      "id": "traceability_to_api_and_tables",
+      "name": "Traceability to API Endpoints and Schema Tables",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every screen and journey maps to corresponding Architect API endpoints (API-###) and database tables (TBL-###).",
+      "scale": {
+        "3": "Seamless technical alignment: every screen, form, and journey step cites the exact API-### endpoints and TBL-### tables it interacts with.",
+        "2": "Most screens map to APIs, but 1 endpoint citation is omitted.",
+        "1": "Screens disconnected from technical architecture contracts.",
+        "0": "Zero technical traceability to APIs or database schema."
+      }
+    }
+  ]
+}

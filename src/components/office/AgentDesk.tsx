@@ -12,6 +12,7 @@ import {
   Code2,
   Layers,
   ShieldCheck,
+  Palette,
   Lock,
 } from "lucide-react";
 
@@ -25,6 +26,8 @@ interface AgentDeskProps {
   messageCount?: number;
   isSelected?: boolean;
   isUnlocked?: boolean;
+  provider?: string;
+  model?: string;
   onClick: () => void;
 }
 
@@ -37,6 +40,8 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
   outputName,
   isSelected = false,
   isUnlocked = true,
+  provider,
+  model,
   onClick,
 }) => {
   const isWorking = status === "working";
@@ -68,6 +73,12 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
       monitorColor: "#10B981",
       icon: <Layers className="w-3.5 h-3.5 text-emerald-500" />,
       deskAccent: "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+    },
+    designer: {
+      glow: "hover:border-cyan-500/80 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]",
+      monitorColor: "#06B6D4",
+      icon: <Palette className="w-3.5 h-3.5 text-cyan-500" />,
+      deskAccent: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
     },
     engineer: {
       glow: "hover:border-rose-500/80 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.3)]",
@@ -121,6 +132,23 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
           </span>
         )}
       </div>
+
+      {/* Model & Provider Badge */}
+      {provider && model && (
+        <div className="w-full flex items-center justify-between px-1 mb-1 text-[9px] font-mono text-brand-body">
+          <span className="flex items-center gap-1">
+            {provider.toLowerCase() === "groq" ? (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-xs" />
+            ) : (
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+            )}
+            <span className="font-semibold text-brand-headline">{provider === "groq" ? "Groq" : "Ollama"}</span>
+          </span>
+          <span className="truncate max-w-[125px] bg-brand-subtle px-1.5 py-0.5 rounded border border-brand-border/60">
+            {model.includes("/") ? model.split("/")[1] : model}
+          </span>
+        </div>
+      )}
 
       {/* Desk Visual Scene */}
       <div className="relative my-2 flex flex-col items-center justify-center w-full py-2">

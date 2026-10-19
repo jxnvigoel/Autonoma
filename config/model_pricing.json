@@ -1,0 +1,46 @@
+{
+  "currency": "USD",
+  "pricing_unit": "per_1m_tokens",
+  "rates": {
+    "openai/gpt-oss-120b": {
+      "input_per_million": 0.15,
+      "output_per_million": 0.60,
+      "description": "OpenAI open weights 120B model on Groq LPU"
+    },
+    "qwen/qwen3.8-27b": {
+      "input_per_million": 0.20,
+      "output_per_million": 0.20,
+      "description": "Alibaba Cloud Qwen 3.8 27B on Groq LPU"
+    },
+    "openai/gpt-oss-20b": {
+      "input_per_million": 0.075,
+      "output_per_million": 0.30,
+      "description": "OpenAI open weights 20B fast inference model on Groq LPU"
+    },
+    "llama-3.3-70b-versatile": {
+      "input_per_million": 0.59,
+      "output_per_million": 0.79,
+      "description": "Meta Llama 3.3 70B on Groq"
+    },
+    "llama-3.1-8b-instant": {
+      "input_per_million": 0.05,
+      "output_per_million": 0.08,
+      "description": "Meta Llama 3.1 8B instant on Groq"
+    },
+    "mixtral-8x7b-32768": {
+      "input_per_million": 0.24,
+      "output_per_million": 0.24,
+      "description": "Mistral 8x7B MoE on Groq"
+    },
+    "default_cloud": {
+      "input_per_million": 0.20,
+      "output_per_million": 0.50,
+      "description": "Default cloud model pricing"
+    },
+    "ollama": {
+      "input_per_million": 0.0,
+      "output_per_million": 0.0,
+      "description": "Local offline execution (Zero cloud fees)"
+    }
+  }
+}

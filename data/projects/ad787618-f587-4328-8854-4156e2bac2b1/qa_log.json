@@ -1,0 +1,30 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hello!\n\nI'm Rachel, excited to be working with you as your dedicated Business Analyst for the TaskSync Studio project. I understand that you're looking to build a focused desktop task manager that meets the needs of solo remote software engineers and tech leads. You want to achieve this with a local SQLite storage, automated daily standup markdown export, and distraction blocking timer, all within a 6-week timeline and a budget of $5,000 for the build, with monthly operating costs under $30.\n\nI'm here to help you turn your specific idea into a clear, testable plan that the rest of the team can build from. Before we dive in, I'd like to get your permission to begin. Can you mind if I ask a few questions to get started?",
+    "answer": "Yes, please go ahead. Let's start the discovery.",
+    "round": 1,
+    "timestamp": "2026-10-16T10:49:57.865615+00:00"
+  },
+  {
+    "id": "Q-002",
+    "question": "Here's my response:\n\n\"Thanks, Rachel, I've got it - you're excited to work with me to turn your idea into a clear plan for TaskSync Studio. You want to build a focused desktop task manager for solo remote software engineers and tech leads, with features like local SQLite storage, automated daily standup markdown export, and distraction blocking timer, all within a tight 6-week timeline and budget of $5,000 with monthly operating costs under $30.\"\n\n\"I'm here to ask some questions to get started. Can you help me understand what kind of 'distraction blocking timer' you have in mind? Is it more of a Pomodoro timer, or something that blocks social media or email notifications? What's the goal of this feature, and how does it fit into your workflow?\"\n\n\"What do you mean by 'automated daily standup markdown export'? Are you looking for a way to generate a report that summarizes your daily progress, or is this more about sharing your accomplishments with a team or colleague?\"\n\n\"How many users do you expect to have on the platform, and what's the typical size of the team you'll be managing?\"",
+    "answer": "The core problem is that remote engineers lose focus switching between Jira, Slack, and manual notes, and forget what they built when writing daily standups. They need a distraction-free timer and a one-click local git commit parser that summarizes their work.",
+    "round": 2,
+    "timestamp": "2026-10-16T10:50:06.043008+00:00"
+  },
+  {
+    "id": "Q-003",
+    "question": "Here's my response:\n\n\"I understand that remote engineers lose focus switching between Jira, Slack, and manual notes, and forget what they built when writing daily standups. They need a distraction-free timer and a one-click local git commit parser that summarizes their work. Can you help me clarify what you mean by 'distraction-free timer'? Is it more of a Pomodoro timer, or something that blocks social media or email notifications? Are you looking for a way to generate a report that summarizes your daily progress, or is this more about sharing your accomplishments with a team or colleague?\"\n\nNext question: How many users do you expect to have on the platform, and what's the typical size of the team you'll be managing?\n\nThe goal of the platform is to support a small team of remote developers, so we need to understand the scale of the users.",
+    "answer": "Key requirements: 1) Focus timer with macOS DND integration (Must Have), 2) Local git log commit parser that generates markdown standup summaries (Must Have), 3) All data stored locally in SQLite with zero cloud dependencies for total privacy (Must Have), 4) Latency under 1 second (NFR), 5) Support 500-1000 daily active users in future. Cloud sync is strictly deferred to v2 (Won't Have for v1).",
+    "round": 3,
+    "timestamp": "2026-10-16T10:50:13.265082+00:00"
+  },
+  {
+    "id": "Q-004",
+    "question": "Here's my response to the client's new response:\n\n\"I understand that the key requirements are clear. You want a focus timer with macOS DND integration, a local git log commit parser that generates markdown standup summaries, all data stored locally in SQLite with zero cloud dependencies for total privacy, latency under 1 second, and support for 500-1000 daily active users in the future. You're also setting the stage for cloud sync to be deferred to v2.\"\n\nHere are my next questions:\n\n1. Can you provide more context on what you mean by 'local git log commit parser'? Is it a plugin or a native feature that parses the git log and generates markdown summaries?\n2. What's the typical daily workflow of a remote developer who will be using this platform? Are they working on individual tasks, or do they have multiple projects ongoing?\n3. How will you measure the success of this platform in supporting your team's productivity and workflow?",
+    "answer": "Target timeline is strictly 6 weeks. Team size is 1 engineer and 1 designer. Success metric is 85% of engineers generating daily standup reports at least 4 days a week. That covers all my requirements, please finalize requirements.md.",
+    "round": 4,
+    "timestamp": "2026-10-16T10:50:21.591580+00:00"
+  }
+]

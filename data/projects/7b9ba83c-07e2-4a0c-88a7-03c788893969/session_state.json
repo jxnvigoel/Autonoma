@@ -1,0 +1,17 @@
+{
+  "checklist_covered": [],
+  "checklist_missing": [
+    "problem",
+    "personas",
+    "journeys",
+    "requirements",
+    "data",
+    "integrations",
+    "timeline_budget",
+    "scope",
+    "success_metric"
+  ],
+  "round": 0,
+  "ready_for_requirements": false,
+  "messages": []
+}

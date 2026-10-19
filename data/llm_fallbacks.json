@@ -1,0 +1,112 @@
+[
+  {
+    "timestamp": "2026-10-18T10:14:48.653959+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "qwen/qwen3.8-27b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on input tokens per minute (ITPM): Limit 7000, Requested 7714, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 133
+  },
+  {
+    "timestamp": "2026-10-18T10:22:42.169463+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "qwen/qwen3.8-27b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on input tokens per minute (ITPM): Limit 7000, Requested 9871, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 156
+  },
+  {
+    "timestamp": "2026-10-18T12:41:46.552515+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "qwen/qwen3.8-27b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on input tokens per minute (ITPM): Limit 7000, Requested 13636, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 177
+  },
+  {
+    "timestamp": "2026-10-18T13:00:46.984756+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "qwen/qwen3.8-27b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on input tokens per minute (ITPM): Limit 7000, Requested 8848, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 147
+  },
+  {
+    "timestamp": "2026-10-18T13:07:25.732543+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "qwen/qwen3.8-27b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq HTTP 429: {\"error\":{\"message\":\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on output tokens per minute (OTPM): Limit 1000, Requested 1474. The request's expected output tokens exceed the enforced limit; reduce max_tokens (or the request's expected output) and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 17528
+  },
+  {
+    "timestamp": "2026-10-18T13:12:37.777131+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "openai/gpt-oss-20b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-20b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 11037, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 112
+  },
+  {
+    "timestamp": "2026-10-18T13:14:23.253526+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "openai/gpt-oss-20b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-20b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9677, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 152
+  },
+  {
+    "timestamp": "2026-10-18T13:20:48.018479+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "openai/gpt-oss-20b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-20b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8181, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 94
+  },
+  {
+    "timestamp": "2026-10-19T16:49:42.133229+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "openai/gpt-oss-20b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-20b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9107, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 125
+  },
+  {
+    "timestamp": "2026-10-19T16:53:11.686835+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "openai/gpt-oss-20b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-20b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8230, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 212
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "project_name": "DocuPulse Reader",
+  "version": "1.0.0",
+  "seats": [
+    {
+      "seat_id": "SEAT-01",
+      "role": "Frontend / Desktop UI Engineer",
+      "count": 1,
+      "tier": "high",
+      "responsibilities": "Desktop interface construction, WCAG 2.2 AA accessibility compliance [NFR-05], user interaction workflows",
+      "work_items": [
+        "F-001",
+        "F-002",
+        "F-003",
+        "F-004",
+        "ADR-002"
+      ]
+    },
+    {
+      "seat_id": "SEAT-02",
+      "role": "Backend / Database Engineer",
+      "count": 1,
+      "tier": "high",
+      "responsibilities": "Embedded SQLite schema implementation, B-tree indexing optimization [NFR-01], report compilation pipeline",
+      "work_items": [
+        "F-001",
+        "F-002",
+        "F-003",
+        "F-004",
+        "ADR-001",
+        "ADR-003"
+      ]
+    },
+    {
+      "seat_id": "SEAT-03",
+      "role": "QA & Test Engineer",
+      "count": 1,
+      "tier": "medium",
+      "responsibilities": "Automated verification of all Given/When/Then acceptance criteria (AC-001 to AC-008), unhappy path recovery testing, offline disconnect testing",
+      "work_items": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "NFR-04"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,343 @@
+openapi: 3.0.3
+info:
+  title: SiteAudit Pro Local REST API
+  version: 1.0.0
+  description: Internal API contract for SiteAudit Pro desktop inspection and export
+    workflows. Single source of truth for frontend and backend components.
+  contact:
+    name: Solution Architecture Team
+servers:
+- url: http://127.0.0.1:8765/api/v1
+  description: Local desktop application loopback server
+paths:
+  /inspections/deficiencies:
+    post:
+      summary: Record checklist item and tag safety deficiency
+      description: Logs an inspection checklist item with structured hazard deficiency
+        tagging [F-001]. Cites [API-001].
+      operationId: createDeficiencyTag
+      tags:
+      - Deficiencies
+      - F-001
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeficiencyCreateRequest'
+      responses:
+        '201':
+          description: Deficiency logged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeficiencyRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: List and filter logged deficiencies
+      description: Searches and filters inspection records with query response latency
+        under 1.0 s [NFR-01]. Supports [F-001]. Cites [API-002].
+      operationId: listDeficiencies
+      tags:
+      - Deficiencies
+      - F-001
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: severity
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - open
+          - in_progress
+          - resolved
+          - certified
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Filtered list of deficiency records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeficiencyListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /punchlists/export:
+    post:
+      summary: Export compiled punch-list report
+      description: Executes one-click punch-list report compilation and export into
+        CSV or formatted print-ready text [F-002]. Cites [API-003].
+      operationId: exportPunchlist
+      tags:
+      - Punchlists
+      - F-002
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PunchlistExportRequest'
+      responses:
+        '200':
+          description: Punch-list compiled and exported successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PunchlistExportResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '409':
+          $ref: '#/components/responses/409Conflict'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /health/live:
+    get:
+      summary: Liveness check
+      description: Returns operational status of desktop engine and database subsystem.
+        Cites [API-004].
+      operationId: getLiveness
+      tags:
+      - System
+      responses:
+        '200':
+          description: System is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+components:
+  securitySchemes:
+    LocalRoleAuth:
+      type: apiKey
+      in: header
+      name: X-Client-Role
+      description: Active local user role header (Civil Engineer or Construction Safety
+        Inspector) verified by local middleware.
+  schemas:
+    ProblemDetails:
+      type: object
+      description: Standard RFC 9457 Problem Details error format
+      required:
+      - type
+      - title
+      - status
+      - detail
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://autonoma.local/errors/validation
+        title:
+          type: string
+          example: Validation Error
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: Required field 'location' is missing.
+        instance:
+          type: string
+          example: /api/v1/inspections/deficiencies/req-89a1
+    DeficiencyCreateRequest:
+      type: object
+      required:
+      - location
+      - severity
+      - notes
+      properties:
+        location:
+          type: string
+          example: Basement Pillar B-4
+        severity:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+          example: high
+        category:
+          type: string
+          example: Structural Concrete Crack
+        notes:
+          type: string
+          example: Transverse stress fracture observed on northwest footing.
+        photo_ref:
+          type: string
+          nullable: true
+          example: photo_1042_footing.jpg
+    DeficiencyRecord:
+      type: object
+      required:
+      - id
+      - location
+      - severity
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        location:
+          type: string
+          example: Basement Pillar B-4
+        severity:
+          type: string
+          example: high
+        category:
+          type: string
+          example: Structural Concrete Crack
+        notes:
+          type: string
+        status:
+          type: string
+          example: open
+        created_at:
+          type: string
+          format: date-time
+    DeficiencyListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeficiencyRecord'
+        total_count:
+          type: integer
+          example: 142
+        next_cursor:
+          type: string
+          nullable: true
+    PunchlistExportRequest:
+      type: object
+      required:
+      - format
+      - export_path
+      properties:
+        format:
+          type: string
+          enum:
+          - csv
+          - text
+          example: csv
+        export_path:
+          type: string
+          example: ~/Documents/SiteAudit_PunchList_2026-10-17.csv
+        include_resolved:
+          type: boolean
+          default: false
+    PunchlistExportResponse:
+      type: object
+      required:
+      - success
+      - exported_records_count
+      - output_file
+      properties:
+        success:
+          type: boolean
+          example: true
+        exported_records_count:
+          type: integer
+          example: 18
+        output_file:
+          type: string
+          example: /Users/inspector/Documents/SiteAudit_PunchList_2026-10-17.csv
+        compiled_at:
+          type: string
+          format: date-time
+  responses:
+    400BadRequest:
+      description: Invalid input syntax or parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    401Unauthorized:
+      description: Authentication missing or invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    403Forbidden:
+      description: Permission denied for active role
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    409Conflict:
+      description: Resource state conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    422ValidationError:
+      description: Semantic validation failure on request payload
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    500InternalError:
+      description: Internal server execution failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

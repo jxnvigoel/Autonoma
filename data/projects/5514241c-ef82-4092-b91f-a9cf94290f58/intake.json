@@ -1,0 +1,8 @@
+{
+  "project_name": "SiteAudit Pro",
+  "description": "A local offline construction site inspection and hazard log tool for civil engineers and safety inspectors with structured deficiency tagging, offline photo-note organization, and one-click compliance punch-list export.",
+  "target_users": "Civil engineers, construction safety inspectors",
+  "timeline": "7 weeks for v1 MVP",
+  "budget": "$7,500 MVP build budget, zero monthly subscription costs",
+  "created_at": "2026-10-17T07:16:40.430130+00:00"
+}

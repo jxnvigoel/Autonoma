@@ -1,4 +1,4 @@
-import { MessageSquare, Code2, Building2, FolderOpen } from "lucide-react";
+import { MessageSquare, Code2, Building2, FolderOpen, Sliders } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { ThemeToggle } from "./ThemeToggle";
 import { EngineStatus } from "../lib/engine";
@@ -14,6 +14,7 @@ interface HeaderProps {
   onOpenOffice?: () => void;
   onOpenChat?: () => void;
   onOpenEditor?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -26,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenOffice,
   onOpenChat,
   onOpenEditor,
+  onOpenSettings,
 }) => {
   return (
     <header className="border-b border-brand-border bg-brand-bg/95 backdrop-blur-sm px-6 py-3 flex items-center justify-between sticky top-0 z-30 transition-colors duration-200">
@@ -131,8 +133,25 @@ export const Header: React.FC<HeaderProps> = ({
         )}
         <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-brand-card border border-brand-border text-xs text-brand-body font-medium shadow-sm transition-colors duration-200">
           <span className="text-brand-body">Model:</span>
-          <span className="font-semibold text-brand-headline">llama3.2:3b</span>
+          <span className="font-semibold text-brand-headline">
+            {status?.active_generator_model
+              ? status.active_generator_model.includes("/")
+                ? status.active_generator_model.split("/")[1]
+                : status.active_generator_model
+              : "gpt-oss-120b"}
+          </span>
         </div>
+        {onOpenSettings && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-brand-card hover:bg-brand-subtle border border-brand-border text-xs text-brand-headline font-medium shadow-xs transition-colors cursor-pointer"
+            title="LLM Provider & Model Routing"
+          >
+            <Sliders className="w-3.5 h-3.5 text-brand-accent" />
+            <span className="hidden md:inline">LLM</span>
+          </button>
+        )}
         <StatusBadge
           status={status}
           isChecking={isChecking}

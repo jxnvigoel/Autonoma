@@ -1,0 +1,102 @@
+{
+  "session_id": "e14de6c5-a612-43d5-ab60-1013dfcf71b5",
+  "status": "review_failed",
+  "generated_at": "2026-10-17T17:48:24.003331+00:00",
+  "artifacts": {
+    "architecture": "docs/architecture.md",
+    "openapi": "docs/openapi.yaml",
+    "schema": "docs/schema.md",
+    "team_plan": "docs/team-plan.json",
+    "adrs": [
+      "docs/adr/ADR-001.md",
+      "docs/adr/ADR-002.md",
+      "docs/adr/ADR-003.md",
+      "docs/adr/ADR-004.md"
+    ]
+  },
+  "validation": {
+    "all_passed": true,
+    "openapi_valid": true,
+    "openapi_errors": [],
+    "schema_valid": true,
+    "schema_errors": [],
+    "traceability_valid": true,
+    "traceability_errors": [],
+    "errors": [],
+    "checks_count": 3,
+    "passed_count": 3
+  },
+  "judge_verdict": {
+    "artifact": "docs/architecture.md",
+    "rubric": "skills/architect/rubric.json",
+    "scores": [
+      {
+        "criterion": "nfr_coverage",
+        "score": 3,
+        "max": 3,
+        "evidence": "Found 5/5 PRD NFRs addressed in architecture.",
+        "fix": ""
+      },
+      {
+        "criterion": "capacity_and_scaling",
+        "score": 3,
+        "max": 3,
+        "evidence": "Capacity estimate includes formulas and Little's Law arithmetic selecting Tier T0 per Chapter 17.",
+        "fix": ""
+      },
+      {
+        "criterion": "adr_tradeoffs_and_alternatives",
+        "score": 3,
+        "max": 3,
+        "evidence": "Cited 4 ADRs with alternatives considered and tradeoffs documented.",
+        "fix": ""
+      },
+      {
+        "criterion": "traceability_f_to_endpoints_and_tables",
+        "score": 3,
+        "max": 3,
+        "evidence": "Mapped 4/4 features to API endpoints and schema tables.",
+        "fix": ""
+      },
+      {
+        "criterion": "api_design_and_auth",
+        "score": 3,
+        "max": 3,
+        "evidence": "API summary defines endpoints with auth rules and RFC 9457 error status codes.",
+        "fix": ""
+      },
+      {
+        "criterion": "security_stride",
+        "score": 3,
+        "max": 3,
+        "evidence": "STRIDE threat model covers entry points with concrete mitigations.",
+        "fix": ""
+      },
+      {
+        "criterion": "hallucination_and_grounding",
+        "score": 1,
+        "max": 3,
+        "evidence": "Detected 1 unsupported claims/defects.",
+        "fix": "Remove over-engineered technologies, ungrounded numbers, or invalid citations"
+      },
+      {
+        "criterion": "walking_skeleton_and_team_plan",
+        "score": 3,
+        "max": 3,
+        "evidence": "Walking skeleton and HR team plan defined.",
+        "fix": ""
+      }
+    ],
+    "unsupported_claims": [
+      {
+        "section": "3. Tech Stack",
+        "text": "*Dependencies & Package Versions*: Proposed target, UNVERIFIED: React 18.x, Type",
+        "reason": "Contradictory claim: Package versions marked both UNVERIFIED and verified in the same specification"
+      }
+    ],
+    "total": 22,
+    "max": 24,
+    "pass": false,
+    "verdict_summary": "Architecture FAILED Judge audit (22/24). Unsupported claims: 1. Must-pass failed: True."
+  }
+}

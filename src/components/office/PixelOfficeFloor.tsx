@@ -2,9 +2,9 @@ import React from "react";
 import { AgentDesk } from "./AgentDesk";
 import { AgentRoleKey } from "./AgentAvatars";
 import { AgentLiveStatus } from "../../lib/engine";
-import { Sparkles, Coffee, Cpu, ShieldCheck } from "lucide-react";
+import { Sparkles, Coffee, Cpu, ShieldCheck, Cloud, HardDrive, AlertTriangle, Sliders } from "lucide-react";
 
-interface OfficeDeskData {
+export interface OfficeDeskData {
   roleKey: AgentRoleKey;
   roleName: string;
   roleAbbr: string;
@@ -13,6 +13,8 @@ interface OfficeDeskData {
   outputName?: string;
   messageCount?: number;
   isUnlocked: boolean;
+  provider?: string;
+  model?: string;
 }
 
 interface PixelOfficeFloorProps {
@@ -20,6 +22,10 @@ interface PixelOfficeFloorProps {
   selectedAgentId: AgentRoleKey | null;
   onSelectAgent: (roleKey: AgentRoleKey) => void;
   projectName?: string;
+  onOpenSettings?: () => void;
+  isLocalOnly?: boolean;
+  isCloudActive?: boolean;
+  groqConfigured?: boolean;
 }
 
 export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
@@ -27,6 +33,10 @@ export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
   selectedAgentId,
   onSelectAgent,
   projectName = "Active Project",
+  onOpenSettings,
+  isLocalOnly = false,
+  isCloudActive = true,
+  groqConfigured = true,
 }) => {
   return (
     <div className="relative flex-1 w-full h-full overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col items-center justify-start select-none">
@@ -64,28 +74,54 @@ export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
             </div>
           </div>
 
-          {/* Quick Environment Perks */}
-          <div className="flex items-center gap-2 text-xs text-brand-body">
-            <span className="flex items-center gap-1 bg-brand-subtle/70 px-2.5 py-1 rounded-lg border border-brand-border text-[11px]">
+          {/* Quick Environment Perks & Privacy Status */}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-brand-body">
+            {/* Privacy / Cloud Status Indicator */}
+            {isLocalOnly ? (
+              <span className="flex items-center gap-1.5 bg-slate-500/15 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-lg border border-slate-500/30 text-[11px] font-mono font-medium">
+                <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+                <span>Local-Only (Ollama)</span>
+              </span>
+            ) : isCloudActive && groqConfigured ? (
+              <span className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 rounded-lg border border-emerald-500/30 text-[11px] font-mono font-medium">
+                <Cloud className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+                <span>Cloud API (Groq) Active</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 px-2.5 py-1 rounded-lg border border-rose-500/30 text-[11px] font-mono font-medium">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+                <span>Groq Key Missing</span>
+              </span>
+            )}
+
+            {/* Settings Trigger Button */}
+            {onOpenSettings && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-brand-subtle hover:bg-brand-card border border-brand-border text-xs font-semibold text-brand-headline transition-colors cursor-pointer shadow-xs"
+              >
+                <Sliders className="w-3.5 h-3.5 text-brand-accent" />
+                <span>LLM Settings</span>
+              </button>
+            )}
+
+            <span className="hidden sm:flex items-center gap-1 bg-brand-subtle/70 px-2.5 py-1 rounded-lg border border-brand-border text-[11px]">
               <Coffee className="w-3.5 h-3.5 text-amber-600" />
               <span>Studio Breakroom</span>
-            </span>
-            <span className="flex items-center gap-1 bg-brand-subtle/70 px-2.5 py-1 rounded-lg border border-brand-border text-[11px]">
-              <Cpu className="w-3.5 h-3.5 text-blue-500" />
-              <span>100% Local Multi-Agent</span>
             </span>
           </div>
         </div>
 
-        {/* Phase 1 Primary Active Pod (BA & PM Workstations) */}
+        {/* Stage 1 & 2 Pod: Discovery & Product Planning (BA & PM) */}
         <div className="w-full space-y-3">
           <div className="flex items-center justify-between px-1">
             <span className="text-xs font-bold uppercase tracking-wider text-brand-accent flex items-center gap-1.5 font-mono">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Discovery & Product Planning Pod (Active)</span>
+              <span>Stage 1 & 2: Discovery & Product Planning Pod (Active)</span>
             </span>
             <span className="text-[10px] text-brand-body font-mono">
-              Click desk to open Command Center
+              Click desk to inspect outputs & chat
             </span>
           </div>
 
@@ -104,27 +140,29 @@ export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
                   messageCount={desk.messageCount}
                   isSelected={selectedAgentId === desk.roleKey}
                   isUnlocked={desk.isUnlocked}
+                  provider={desk.provider}
+                  model={desk.model}
                   onClick={() => onSelectAgent(desk.roleKey)}
                 />
               ))}
           </div>
         </div>
 
-        {/* Phase 2 Engineering & Quality Pod (Architect, Engineer, QA) */}
+        {/* Stage 3 Pod: Technical Architecture & UX Design (Parallel per Handbook 2.7.4) */}
         <div className="w-full space-y-3 pt-4">
           <div className="flex items-center justify-between px-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-brand-body/80 flex items-center gap-1.5 font-mono">
-              <ShieldCheck className="w-3.5 h-3.5 text-brand-body" />
-              <span>Engineering & QA Pod (Pipeline)</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 font-mono">
+              <Cpu className="w-3.5 h-3.5" />
+              <span>Stage 3: Technical Architecture & UI/UX Design Pod (Parallel)</span>
             </span>
-            <span className="text-[10px] text-brand-body/60 font-mono">
-              Unlocks after PRD sign-off
+            <span className="text-[10px] text-brand-body font-mono">
+              Unlocks after Gate 1 PRD approval
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full">
             {desks
-              .filter((d) => d.roleKey !== "ba" && d.roleKey !== "pm")
+              .filter((d) => d.roleKey === "architect" || d.roleKey === "designer")
               .map((desk) => (
                 <AgentDesk
                   key={desk.roleKey}
@@ -137,6 +175,43 @@ export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
                   messageCount={desk.messageCount}
                   isSelected={selectedAgentId === desk.roleKey}
                   isUnlocked={desk.isUnlocked}
+                  provider={desk.provider}
+                  model={desk.model}
+                  onClick={() => onSelectAgent(desk.roleKey)}
+                />
+              ))}
+          </div>
+        </div>
+
+        {/* Stage 4 & 5 Pod: Implementation & Quality Assurance (Engineer & QA) */}
+        <div className="w-full space-y-3 pt-4">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-brand-body/80 flex items-center gap-1.5 font-mono">
+              <ShieldCheck className="w-3.5 h-3.5 text-brand-body" />
+              <span>Stage 4 & 5: Implementation & QA Pod (Pipeline)</span>
+            </span>
+            <span className="text-[10px] text-brand-body/60 font-mono">
+              Unlocks after Architecture & Design verification
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full">
+            {desks
+              .filter((d) => d.roleKey === "engineer" || d.roleKey === "qa")
+              .map((desk) => (
+                <AgentDesk
+                  key={desk.roleKey}
+                  roleKey={desk.roleKey}
+                  roleName={desk.roleName}
+                  roleAbbr={desk.roleAbbr}
+                  status={desk.status}
+                  hasOutput={desk.hasOutput}
+                  outputName={desk.outputName}
+                  messageCount={desk.messageCount}
+                  isSelected={selectedAgentId === desk.roleKey}
+                  isUnlocked={desk.isUnlocked}
+                  provider={desk.provider}
+                  model={desk.model}
                   onClick={() => onSelectAgent(desk.roleKey)}
                 />
               ))}

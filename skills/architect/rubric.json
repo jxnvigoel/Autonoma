@@ -1,0 +1,112 @@
+{
+  "role": "architect",
+  "artifact": "docs/architecture.md",
+  "pass_threshold": 20,
+  "max_total": 24,
+  "criteria": [
+    {
+      "id": "nfr_coverage",
+      "name": "NFR Coverage & Technical Mechanisms",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every NFR- from the PRD is addressed by an explicit named architectural mechanism in architecture.md, or reported as not met with an engineering rationale.",
+      "scale": {
+        "3": "100% of NFR-s cited and addressed with concrete technical mechanisms.",
+        "2": "All NFRs covered, but minor lack of detail in one mechanism.",
+        "1": "One or more NFRs from the PRD omitted or unaddressed.",
+        "0": "No NFRs addressed or cited."
+      }
+    },
+    {
+      "id": "capacity_and_scaling",
+      "name": "Capacity Estimation & Arithmetic",
+      "max": 3,
+      "must_pass": true,
+      "description": "Capacity numbers (peak requests/s, storage per year, connections) are calculated from cited PRD numbers with clear arithmetic shown per Chapter 17, selecting a scale tier (T0-T5).",
+      "scale": {
+        "3": "Complete arithmetic shown from cited inputs; valid formulas for Peak RPS, storage growth, and scale tier selection.",
+        "2": "Arithmetic shown but minor calculation or rounding discrepancy.",
+        "1": "Numbers stated without showing arithmetic from cited inputs.",
+        "0": "Capacity estimate missing or completely invented."
+      }
+    },
+    {
+      "id": "adr_tradeoffs_and_alternatives",
+      "name": "Architecture Decision Records (ADRs) & Tradeoffs",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every major technical decision has an ADR (ADR-###) comparing at least two real alternatives against constraints, citing the driving NFR- and explaining why alternatives lost.",
+      "scale": {
+        "3": "All ADRs include context citing NFR-, at least two real options with tradeoffs, decision, and consequences.",
+        "2": "ADRs present with alternatives, but one tradeoff description is brief.",
+        "1": "ADRs lack real alternative comparisons or lack NFR- citations.",
+        "0": "ADRs missing or decisions made without rationales."
+      }
+    },
+    {
+      "id": "traceability_f_to_endpoints_and_tables",
+      "name": "Feature to API & Schema Traceability",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every feature (F-###) maps to at least one endpoint (API-###) in openapi.yaml and at least one database table (TBL-###) in schema.md.",
+      "scale": {
+        "3": "100% of features map directly to corresponding endpoints and tables with explicit ID citations.",
+        "2": "All features mapped, but minor citation formatting discrepancy.",
+        "1": "One or more features missing an endpoint or table mapping.",
+        "0": "No feature-to-endpoint or feature-to-table mappings."
+      }
+    },
+    {
+      "id": "api_design_and_auth",
+      "name": "API Design Standards & Error Handling",
+      "max": 3,
+      "must_pass": true,
+      "description": "REST endpoints use plural nouns, explicit authentication and authorization rules, and RFC 9457 Problem Details error models (400, 401, 403, 404, 409, 422, 500).",
+      "scale": {
+        "3": "Endpoints specify auth rules, standard REST conventions, and comprehensive error schemas.",
+        "2": "Endpoints specified with auth, but minor error status code omissions.",
+        "1": "Missing auth rules or missing error status schemas.",
+        "0": "Non-compliant API design or missing contracts."
+      }
+    },
+    {
+      "id": "security_stride",
+      "name": "Security Architecture & STRIDE Threat Model",
+      "max": 3,
+      "must_pass": true,
+      "description": "STRIDE threat model (T-##) covers all application entry points with concrete, verifiable mitigations (authentication, authorization, encryption, rate limiting).",
+      "scale": {
+        "3": "Comprehensive STRIDE model covering spoofing, tampering, repudiation, information disclosure, DoS, elevation of privilege.",
+        "2": "Threat model present, but 1-2 threats have generic mitigations.",
+        "1": "Threat model missing key STRIDE categories or entry points.",
+        "0": "Security section missing or purely generic."
+      }
+    },
+    {
+      "id": "hallucination_and_grounding",
+      "name": "Grounding & Evidence Verification",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every technical choice, cited constraint, and number is strictly grounded in the PRD or verified discovery log. Zero unprompted tech stack choices without an ADR citing an NFR-.",
+      "scale": {
+        "3": "Zero unsupported claims; all cited IDs exist and support the statements; all dependencies verified.",
+        "2": "Minor citation typo, but all claims grounded.",
+        "1": "Contains ungrounded claims or tech choices without ADR justification.",
+        "0": "Major hallucinations or invented numbers."
+      }
+    },
+    {
+      "id": "walking_skeleton_and_team_plan",
+      "name": "Build Order & HR Team Plan",
+      "max": 3,
+      "must_pass": false,
+      "description": "Specifies a thin, testable walking skeleton for early build validation, and provides an HR team plan with role allocations citing F- and ADR-.",
+      "scale": {
+        "3": "Clear walking skeleton defined end-to-end, plus structured team plan with role counts and work attribution.",
+        "2": "Walking skeleton and team plan present, but attribution lacks detail.",
+        "1": "Walking skeleton vague or team plan omitted.",
+        "0": "Both walking skeleton and team plan missing."
+      }
+    }
+  ]
+}

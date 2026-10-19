@@ -1,0 +1,154 @@
+{
+  "project_name": "DocuPulse Reader",
+  "session_id": "cd30c06b-1404-4004-ac5f-193da24f4c46",
+  "generated_at": "2026-10-17T20:02:07.179382+00:00",
+  "model": "llama3.2:3b",
+  "model_pricing": {
+    "provider": "ollama",
+    "is_local": true,
+    "price_per_1k_tokens_usd": 0.0,
+    "notes": "Local models cost $0 but still count tokens because tokens represent execution time on local hardware."
+  },
+  "ledger_metadata": {
+    "source": "seed_default",
+    "description": "Historical averages ledger initialized with starting default baseline rates. Rates automatically recalibrate as completed project runs accrue in llm_calls table.",
+    "db_path": "/Users/janvi/Desktop/Autonoma/data/office.db"
+  },
+  "formula": "tokens(stage) = Σ historical_avg_tokens(role, artifact or story_points); total = Σ tokens(stage) × 1.20 (20% rework buffer); cost_usd = Σ tokens(role) × price(model)",
+  "stories_by_size": {
+    "small": 3,
+    "medium": 0,
+    "large": 0,
+    "total_stories": 3
+  },
+  "stages": [
+    {
+      "stage_id": "STAGE-01",
+      "stage": "Requirements Discovery",
+      "role": "Business Analyst (BA)",
+      "planned_artifacts": [
+        "docs/requirements.md"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 3500,
+      "subtotal_tokens": 3500,
+      "rate_source": "seed_default"
+    },
+    {
+      "stage_id": "STAGE-02",
+      "stage": "Product Planning",
+      "role": "Product Manager (PM)",
+      "planned_artifacts": [
+        "docs/prd.md",
+        "docs/estimate.json"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 5598,
+      "subtotal_tokens": 5598,
+      "rate_source": "historical_ledger"
+    },
+    {
+      "stage_id": "STAGE-03",
+      "stage": "System Architecture",
+      "role": "Solution Architect",
+      "planned_artifacts": [
+        "docs/architecture.md",
+        "ADR records"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 2868,
+      "subtotal_tokens": 2868,
+      "rate_source": "historical_ledger"
+    },
+    {
+      "stage_id": "STAGE-04",
+      "stage": "UI/UX Design",
+      "role": "UI/UX Designer",
+      "planned_artifacts": [
+        "docs/design_system.md",
+        "wireframes"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 2800,
+      "subtotal_tokens": 2800,
+      "rate_source": "seed_default"
+    },
+    {
+      "stage_id": "STAGE-05",
+      "stage": "Sprint Planning",
+      "role": "Scrum Master",
+      "planned_artifacts": [
+        "sprint_plan.json",
+        "story_backlog"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 2200,
+      "subtotal_tokens": 2200,
+      "rate_source": "seed_default"
+    },
+    {
+      "stage_id": "STAGE-06",
+      "stage": "Implementation",
+      "role": "Software Engineers",
+      "planned_artifacts": [
+        "3 User Stories (3S / 0M / 0L)"
+      ],
+      "unit_type": "stories",
+      "unit_count": 3,
+      "historical_rate_per_unit": 1800,
+      "subtotal_tokens": 5400,
+      "rate_source": "seed_default"
+    },
+    {
+      "stage_id": "STAGE-07",
+      "stage": "Code Review",
+      "role": "Tech Lead",
+      "planned_artifacts": [
+        "3 Pull Request Reviews"
+      ],
+      "unit_type": "reviews",
+      "unit_count": 3,
+      "historical_rate_per_unit": 1500,
+      "subtotal_tokens": 4500,
+      "rate_source": "seed_default"
+    },
+    {
+      "stage_id": "STAGE-08",
+      "stage": "Quality Assurance",
+      "role": "QA Engineer",
+      "planned_artifacts": [
+        "docs/test_plan.md",
+        "test_execution_report"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 2600,
+      "subtotal_tokens": 2600,
+      "rate_source": "seed_default"
+    },
+    {
+      "stage_id": "STAGE-09",
+      "stage": "Deployment & DevOps",
+      "role": "DevOps Engineer",
+      "planned_artifacts": [
+        "deploy_manifests",
+        "dockerfile"
+      ],
+      "unit_type": "artifact",
+      "unit_count": 1,
+      "historical_rate_per_unit": 1800,
+      "subtotal_tokens": 1800,
+      "rate_source": "seed_default"
+    }
+  ],
+  "subtotal_tokens": 31266,
+  "rework_buffer_percentage": 20,
+  "rework_buffer_tokens": 6253,
+  "total_estimated_tokens": 37519,
+  "estimated_cost_usd": 0.0
+}

@@ -1,0 +1,737 @@
+openapi: 3.0.3
+info:
+  title: DocuPulse Reader Local REST API
+  version: 1.0.0
+  description: Internal API contract for DocuPulse Reader workflows. Single source
+    of truth for frontend and backend components.
+  contact:
+    name: Solution Architecture Team
+servers:
+- url: http://127.0.0.1:8765
+  description: Local desktop application loopback server
+paths:
+  /api/v1/allow-users-search:
+    post:
+      summary: Create record for Allow users to search documents by tags
+      description: Execution and ingestion endpoint supporting Allow users to search
+        documents by tags [F-001]. Cites [API-001].
+      operationId: create_allow-users-search_1
+      tags:
+      - F-001
+      - allow-users-search
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AllowUsersToSearchDocumentsBCreateRequest'
+      responses:
+        '201':
+          description: Allow users to search documents by tags record saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllowUsersToSearchDocumentsBRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: Query records for Allow users to search documents by tags
+      description: Query and filter records supporting Allow users to search documents
+        by tags [F-001]. Cites [API-001].
+      operationId: list_allow-users-search_1
+      tags:
+      - F-001
+      - allow-users-search
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Allow users to search documents by tags records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllowUsersToSearchDocumentsBListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/allow-users-search/process:
+    post:
+      summary: Process operations for Allow users to search documents by tags
+      description: Specific transaction execution supporting Allow users to search
+        documents by tags [F-001]. Cites [API-005].
+      operationId: process_allow-users-search_1
+      tags:
+      - F-001
+      - allow-users-search
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              properties:
+                action:
+                  type: string
+      responses:
+        '200':
+          description: Operation processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllowUsersToSearchDocumentsBRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/document-reader:
+    post:
+      summary: Create record for Enable users to organize snippets in a smart snippet
+        organizer
+      description: Execution and ingestion endpoint supporting Enable users to organize
+        snippets in a smart snippet organizer [F-002]. Cites [API-002].
+      operationId: create_document-reader_2
+      tags:
+      - F-002
+      - document-reader
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnableUsersToOrganizeSnippetCreateRequest'
+      responses:
+        '201':
+          description: Enable users to organize snippets in a smart snippet organizer
+            record saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnableUsersToOrganizeSnippetRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: Query records for Enable users to organize snippets in a smart snippet
+        organizer
+      description: Query and filter records supporting Enable users to organize snippets
+        in a smart snippet organizer [F-002]. Cites [API-002].
+      operationId: list_document-reader_2
+      tags:
+      - F-002
+      - document-reader
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Enable users to organize snippets in a smart snippet
+            organizer records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnableUsersToOrganizeSnippetListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/document-reader/process:
+    post:
+      summary: Process operations for Enable users to organize snippets in a smart
+        snippet organizer
+      description: Specific transaction execution supporting Enable users to organize
+        snippets in a smart snippet organizer [F-002]. Cites [API-006].
+      operationId: process_document-reader_2
+      tags:
+      - F-002
+      - document-reader
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              properties:
+                action:
+                  type: string
+      responses:
+        '200':
+          description: Operation processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnableUsersToOrganizeSnippetRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/citations:
+    post:
+      summary: Create record for Support local citation export
+      description: Execution and ingestion endpoint supporting Support local citation
+        export [F-003]. Cites [API-003].
+      operationId: create_citations_3
+      tags:
+      - F-003
+      - citations
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportLocalCitationExportCreateRequest'
+      responses:
+        '201':
+          description: Support local citation export record saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportLocalCitationExportRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: Query records for Support local citation export
+      description: Query and filter records supporting Support local citation export
+        [F-003]. Cites [API-003].
+      operationId: list_citations_3
+      tags:
+      - F-003
+      - citations
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Support local citation export records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportLocalCitationExportListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/citations/export:
+    post:
+      summary: Process operations for Support local citation export
+      description: Specific transaction execution supporting Support local citation
+        export [F-003]. Cites [API-007].
+      operationId: process_citations_3
+      tags:
+      - F-003
+      - citations
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              properties:
+                action:
+                  type: string
+      responses:
+        '200':
+          description: Operation processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportLocalCitationExportRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/provide-user-friendly:
+    post:
+      summary: Create record for Provide a user-friendly interface for managing documents
+      description: Execution and ingestion endpoint supporting Provide a user-friendly
+        interface for managing documents [F-004]. Cites [API-004].
+      operationId: create_provide-user-friendly_4
+      tags:
+      - F-004
+      - provide-user-friendly
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvideAUserFriendlyInterfacCreateRequest'
+      responses:
+        '201':
+          description: Provide a user-friendly interface for managing documents record
+            saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvideAUserFriendlyInterfacRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+    get:
+      summary: Query records for Provide a user-friendly interface for managing documents
+      description: Query and filter records supporting Provide a user-friendly interface
+        for managing documents [F-004]. Cites [API-004].
+      operationId: list_provide-user-friendly_4
+      tags:
+      - F-004
+      - provide-user-friendly
+      security:
+      - LocalRoleAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of Provide a user-friendly interface for managing documents
+            records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvideAUserFriendlyInterfacListResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/provide-user-friendly/process:
+    post:
+      summary: Process operations for Provide a user-friendly interface for managing
+        documents
+      description: Specific transaction execution supporting Provide a user-friendly
+        interface for managing documents [F-004]. Cites [API-008].
+      operationId: process_provide-user-friendly_4
+      tags:
+      - F-004
+      - provide-user-friendly
+      security:
+      - LocalRoleAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              properties:
+                action:
+                  type: string
+      responses:
+        '200':
+          description: Operation processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvideAUserFriendlyInterfacRecord'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+  /api/v1/health/live:
+    get:
+      summary: Liveness check
+      description: Returns operational status of desktop engine and database subsystem.
+        Cites [API-009].
+      operationId: getLiveness
+      tags:
+      - System
+      responses:
+        '200':
+          description: System is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+components:
+  securitySchemes:
+    LocalRoleAuth:
+      type: apiKey
+      in: header
+      name: X-Client-Role
+      description: Active local user role header verified by local middleware.
+  schemas:
+    ProblemDetails:
+      type: object
+      description: Standard RFC 9457 Problem Details error format
+      required:
+      - type
+      - title
+      - status
+      - detail
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://autonoma.local/errors/validation
+        title:
+          type: string
+          example: Validation Error
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: Required input field is missing or invalid.
+        instance:
+          type: string
+          example: /api/v1/resource/req-102
+    AllowUsersToSearchDocumentsBCreateRequest:
+      type: object
+      required:
+      - title
+      - category
+      - parameters
+      properties:
+        title:
+          type: string
+          example: Sample for Allow users to search documents by tags
+        category:
+          type: string
+          example: Standard
+        parameters:
+          type: object
+          description: Structured operational parameters
+    AllowUsersToSearchDocumentsBRecord:
+      type: object
+      required:
+      - id
+      - title
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          example: active
+        parameters:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+    AllowUsersToSearchDocumentsBListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllowUsersToSearchDocumentsBRecord'
+        total_count:
+          type: integer
+    EnableUsersToOrganizeSnippetCreateRequest:
+      type: object
+      required:
+      - title
+      - category
+      - parameters
+      properties:
+        title:
+          type: string
+          example: Sample for Enable users to organize snippets in a smart snippet
+            organizer
+        category:
+          type: string
+          example: Standard
+        parameters:
+          type: object
+          description: Structured operational parameters
+    EnableUsersToOrganizeSnippetRecord:
+      type: object
+      required:
+      - id
+      - title
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          example: active
+        parameters:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+    EnableUsersToOrganizeSnippetListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnableUsersToOrganizeSnippetRecord'
+        total_count:
+          type: integer
+    SupportLocalCitationExportCreateRequest:
+      type: object
+      required:
+      - title
+      - category
+      - parameters
+      properties:
+        title:
+          type: string
+          example: Sample for Support local citation export
+        category:
+          type: string
+          example: Standard
+        parameters:
+          type: object
+          description: Structured operational parameters
+    SupportLocalCitationExportRecord:
+      type: object
+      required:
+      - id
+      - title
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          example: active
+        parameters:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+    SupportLocalCitationExportListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportLocalCitationExportRecord'
+        total_count:
+          type: integer
+    ProvideAUserFriendlyInterfacCreateRequest:
+      type: object
+      required:
+      - title
+      - category
+      - parameters
+      properties:
+        title:
+          type: string
+          example: Sample for Provide a user-friendly interface for managing documents
+        category:
+          type: string
+          example: Standard
+        parameters:
+          type: object
+          description: Structured operational parameters
+    ProvideAUserFriendlyInterfacRecord:
+      type: object
+      required:
+      - id
+      - title
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          example: active
+        parameters:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+    ProvideAUserFriendlyInterfacListResponse:
+      type: object
+      required:
+      - items
+      - total_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvideAUserFriendlyInterfacRecord'
+        total_count:
+          type: integer
+  responses:
+    400BadRequest:
+      description: Invalid input syntax or missing required parameters (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    401Unauthorized:
+      description: Missing or unauthenticated user session context (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    403Forbidden:
+      description: Active persona role lacks permission to execute requested operation
+        (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    409Conflict:
+      description: State conflict or concurrency lock on target record (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    422ValidationError:
+      description: Semantic validation failure on request payload (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    500InternalError:
+      description: Unexpected internal application or database error (RFC 9457)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

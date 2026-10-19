@@ -1,0 +1,44 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hi there! I’m the Business Analyst assigned to the BioVault Lab Specimen Tracker project.\n\nI see you want a desktop system to track cryogenic bio‑specimens, handle accessioning, generate 2D barcodes, and maintain freezer chain‑of‑custody. I’ll ask a few focused questions so we can turn that idea into a clear, testable set of requirements for the team.\n\nMind if I ask a few questions to get started?",
+    "answer": "Yes, please proceed with the discovery questions.",
+    "round": 1,
+    "timestamp": "2026-10-18T10:20:26.105291+00:00"
+  },
+  {
+    "id": "Q-002",
+    "question": "Got it—thanks for the go‑ahead. Let’s start with the big picture so we can shape everything else.\n\n1. What specific problem or pain point is driving the need for a desktop specimen tracker? (e.g., manual logs causing errors, regulatory compliance gaps, time‑consuming accessioning) – this helps us define the core goal.  \n2. Can you describe the three target user groups—lab technicians, principal investigators, and compliance officers—in terms of their main tasks and any differing needs? (e.g., technicians log samples, PIs request reports, officers audit) – this clarifies personas.  \n3. Walk me through a typical end‑to‑end workflow for a new specimen: from receipt, accessioning, barcode generation, storage, to retrieval. What steps are most critical or problematic now? – this gives us the primary user journey.",
+    "answer": "The primary problem is misplacing cryogenic biological samples stored across -80C freezers and liquid nitrogen tanks. Technicians spend 25 minutes per retrieval with manual paper logs, causing cold-chain compliance risks.",
+    "round": 2,
+    "timestamp": "2026-10-18T10:20:27.784887+00:00"
+  },
+  {
+    "id": "Q-003",
+    "question": "Got it—misplaced samples and long, manual retrievals are the core pain point.\n\n1. For each of the three user groups (lab technicians, principal investigators, compliance officers), what are their main tasks with the tracker and any special needs (e.g., audit logs, report generation, permission levels)? — knowing this shapes the personas and access controls.  \n2. Could you describe the full end‑to‑end workflow for a specimen, from receipt through accessioning, barcode creation, storage, and eventual retrieval? Highlight which steps are currently paper‑based and which you expect the software to handle. — this gives us the primary user journey and automation scope.  \n3. What concrete metric would tell you the system is a success (e.g., cut retrieval time from 25 min to under 5 min, zero misplaced samples, compliance audit pass rate)? — this will drive the success criteria.",
+    "answer": "Primary users are: 1. Lab Technician (P-01) scanning 2D DataMatrix barcodes and logging freezer rack/shelf/box positions; 2. Principal Investigator (P-02) searching sample inventory and requesting pulls; 3. Compliance Officer (P-03) auditing chain-of-custody logs.",
+    "round": 3,
+    "timestamp": "2026-10-18T10:20:29.773305+00:00"
+  },
+  {
+    "id": "Q-004",
+    "question": "Got it—your three user groups are Lab Technicians scanning barcodes and logging locations, Principal Investigators searching inventory and requesting pulls, and Compliance Officers auditing chain‑of‑custody logs.\n\n1. Can you describe the full end‑to‑end workflow for a specimen—from receipt, accessioning, barcode generation, storage, to retrieval—highlighting which steps are still paper‑based and which you expect the software to automate? — this defines the primary user journey.  \n2. For each user group, are there specific permission levels, audit‑log details, or report formats they’ll need (e.g., read‑only vs. edit, exportable CSVs, regulatory audit trails)? — this refines personas and compliance needs.  \n3. What concrete metric will tell you the system is a success (e.g., cut retrieval time from 25 min to under 5 min, zero misplaced samples, 100 % audit pass rate)? — this gives us a clear success criterion.",
+    "answer": "Key workflow: Technician receives specimen vial, scans barcode, assigns box coordinate (e.g. Freezer 2, Rack B, Shelf 3, Box 12, Position E4), verifies temperature threshold, and saves record. Any temperature alert flag requires supervisor sign-off.",
+    "round": 4,
+    "timestamp": "2026-10-18T10:20:44.788744+00:00"
+  },
+  {
+    "id": "Q-005",
+    "question": "Got it—technicians will scan the vial, log its exact freezer coordinates, check the temperature, and any out‑of‑range reading triggers a supervisor sign‑off.\n\n1. What concrete success metric will tell you the system is working (e.g., cut retrieval time from 25 min to under 5 min, zero misplaced samples, 100 % audit pass rate)? — helps us set clear acceptance criteria.  \n2. Which data fields must be recorded for each specimen (e.g., sample type, collection date, donor ID, storage location, temperature log, barcode value, etc.)? — defines the database schema.  \n3. Will the tracker need to integrate with any external tools or devices—such as a barcode printer, freezer temperature monitoring system, or an existing LIMS—and what kind of data exchange is expected (real‑time, batch import/export)? — covers integration scope.",
+    "answer": "All data must be stored locally in SQLite with zero cloud database dependency. System must run offline on laboratory desktop workstations (macOS and Windows 11). UI response time must be under 1.5 seconds for barcode scans.",
+    "round": 5,
+    "timestamp": "2026-10-18T10:21:06.669052+00:00"
+  },
+  {
+    "id": "Q-006",
+    "question": "Got it—everything will sit locally in SQLite, run offline on macOS and Windows 11, and barcode scans need to respond in under 1.5 seconds.\n\n1. Which concrete, numeric success metric will tell you the system is working (e.g., cut retrieval time from 25 min to ≤ 5 min, 0 misplaced samples, 100 % audit pass rate)? — this gives us a clear acceptance target.  \n2. What exact data fields must be recorded for each specimen (e.g., sample type, collection date, donor ID, storage location, temperature log, barcode value, etc.) and which of those are mandatory vs. optional? — this defines the database schema.  \n3. Will the tracker need to talk to any external devices or systems—such as a barcode printer, freezer temperature‑monitoring hardware, or an existing LIMS—and should those connections be real‑time or batch‑style? — this sets the integration scope.",
+    "answer": "For v1 MVP, we need accessioning, barcode lookup, freezer hierarchy mapping, and CSV audit export. Integrations with automated robotic arms are out of scope for v1.",
+    "round": 6,
+    "timestamp": "2026-10-18T10:21:33.907858+00:00"
+  }
+]

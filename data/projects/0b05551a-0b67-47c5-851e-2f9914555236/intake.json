@@ -1,0 +1,8 @@
+{
+  "project_name": "DocuPulse Reader",
+  "description": "A local offline document reader and smart snippet organizer for research scientists with tag-based search and local citation export.",
+  "target_users": "Biomedical research scientists and lab technicians",
+  "timeline": "8 weeks for v1 MVP",
+  "budget": "$6,000 MVP build budget, zero monthly cloud costs",
+  "created_at": "2026-10-16T19:16:10.909156+00:00"
+}

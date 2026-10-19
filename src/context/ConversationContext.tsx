@@ -10,6 +10,8 @@ import {
   IntakeFormData,
   BASessionSummary,
   OfficeStatusResponse,
+  PMEstimateData,
+  Gate1State,
   startBaSession,
   sendBaMessage,
   getBaRequirements,
@@ -19,6 +21,13 @@ import {
   sendPmMessage,
   getPmSession,
   getOfficeStatus,
+  apiApproveGate1,
+  apiRequestGate1Changes,
+  apiGetArchitectSession,
+  apiGenerateArchitectArtifacts,
+  apiGetDesignerSession,
+  apiGenerateDesignerArtifacts,
+  apiRunFeasibility,
   clearConversation as apiClearConversation,
   sendChatMessage as apiSendChatMessage,
 } from "../lib/engine";
@@ -49,14 +58,30 @@ interface ConversationContextType {
   // PM Agent State
   pmMessages: ChatMessage[];
   prdContent: string | null;
+  estimateData: PMEstimateData | null;
   pmStarted: boolean;
   isPmSending: boolean;
   pmError: string | null;
 
+  // Architect Agent & Gate 1 State
+  architectureContent: string | null;
+  schemaContent: string | null;
+  openapiContent: string | null;
+  architectState: any | null;
+  gate1State: Gate1State | null;
+  isArchitectGenerating: boolean;
+  isGate1Approving: boolean;
+
+  // Designer Agent State
+  appFlowContent: string | null;
+  designBriefContent: string | null;
+  designerState: any | null;
+  isDesignerGenerating: boolean;
+
   // Virtual Office State
   officeStatus: OfficeStatusResponse | null;
-  activeOfficeAgent: "ba" | "pm" | "architect" | "engineer" | "qa" | null;
-  setActiveOfficeAgent: (agent: "ba" | "pm" | "architect" | "engineer" | "qa" | null) => void;
+  activeOfficeAgent: "ba" | "pm" | "architect" | "designer" | "engineer" | "qa" | null;
+  setActiveOfficeAgent: (agent: "ba" | "pm" | "architect" | "designer" | "engineer" | "qa" | null) => void;
   refreshOfficeStatus: (targetSessionId?: string) => Promise<void>;
 
   // Actions
@@ -71,6 +96,13 @@ interface ConversationContextType {
   startPm: (targetSessionId?: string) => Promise<void>;
   sendPm: (prompt: string) => Promise<void>;
   fetchPmSession: (targetSessionId?: string) => Promise<void>;
+  fetchArchitectSession: (targetSessionId?: string) => Promise<void>;
+  generateArchitectArtifacts: (targetSessionId?: string) => Promise<void>;
+  fetchDesignerSession: (targetSessionId?: string) => Promise<void>;
+  generateDesignerArtifacts: (targetSessionId?: string) => Promise<void>;
+  approveGate1: (notes?: string) => Promise<void>;
+  requestGate1Changes: (feedback: string) => Promise<void>;
+  runFeasibility: () => Promise<void>;
   newSession: () => void;
   clearHistory: () => Promise<void>;
   refreshHistory: () => Promise<void>;
@@ -107,14 +139,30 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   // PM Agent State
   const [pmMessages, setPmMessages] = useState<ChatMessage[]>([]);
   const [prdContent, setPrdContent] = useState<string | null>(null);
+  const [estimateData, setEstimateData] = useState<PMEstimateData | null>(null);
   const [pmStarted, setPmStarted] = useState<boolean>(false);
   const [isPmSending, setIsPmSending] = useState<boolean>(false);
   const [pmError, setPmError] = useState<string | null>(null);
 
+  // Architect Agent & Gate 1 State
+  const [architectureContent, setArchitectureContent] = useState<string | null>(null);
+  const [schemaContent, setSchemaContent] = useState<string | null>(null);
+  const [openapiContent, setOpenapiContent] = useState<string | null>(null);
+  const [architectState, setArchitectState] = useState<any | null>(null);
+  const [gate1State, setGate1State] = useState<Gate1State | null>(null);
+  const [isArchitectGenerating, setIsArchitectGenerating] = useState<boolean>(false);
+  const [isGate1Approving, setIsGate1Approving] = useState<boolean>(false);
+
+  // Designer Agent State
+  const [appFlowContent, setAppFlowContent] = useState<string | null>(null);
+  const [designBriefContent, setDesignBriefContent] = useState<string | null>(null);
+  const [designerState, setDesignerState] = useState<any | null>(null);
+  const [isDesignerGenerating, setIsDesignerGenerating] = useState<boolean>(false);
+
   // Virtual Office State
   const [officeStatus, setOfficeStatus] = useState<OfficeStatusResponse | null>(null);
   const [activeOfficeAgent, setActiveOfficeAgent] = useState<
-    "ba" | "pm" | "architect" | "engineer" | "qa" | null
+    "ba" | "pm" | "architect" | "designer" | "engineer" | "qa" | null
   >(null);
 
   const refreshSessions = useCallback(async () => {
@@ -152,10 +200,12 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         setPmStarted(pmData.started);
         setPmMessages(pmData.messages || []);
         setPrdContent(pmData.prd_content || null);
+        setEstimateData(pmData.estimate || null);
       } catch {
         setPmStarted(false);
         setPmMessages([]);
         setPrdContent(null);
+        setEstimateData(null);
       }
     },
     [sessionId]
@@ -175,6 +225,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       setRequirementsContent(null);
       setPmMessages([]);
       setPrdContent(null);
+      setEstimateData(null);
       setPmStarted(false);
 
       try {
@@ -200,8 +251,10 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
           setPmStarted(pmData.started);
           setPmMessages(pmData.messages || []);
           setPrdContent(pmData.prd_content || null);
+          setEstimateData(pmData.estimate || null);
         } catch {
           setPmStarted(false);
+          setEstimateData(null);
         }
 
         try {
@@ -386,6 +439,9 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         const res = await startPmSession(target);
         setPmStarted(true);
         setPrdContent(res.prd_content);
+        if (res.estimate) {
+          setEstimateData(res.estimate);
+        }
 
         const pmMsg: ChatMessage = {
           id: crypto.randomUUID(),
@@ -437,6 +493,9 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         if (res.prd_content) {
           setPrdContent(res.prd_content);
         }
+        if (res.estimate) {
+          setEstimateData(res.estimate);
+        }
         refreshOfficeStatus(sessionId);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -449,6 +508,130 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId, isPmSending, refreshOfficeStatus]
   );
 
+  const fetchArchitectSession = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      try {
+        const data = await apiGetArchitectSession(target);
+        setArchitectureContent(data.architecture_content || null);
+        setSchemaContent(data.schema_content || null);
+        setOpenapiContent(data.openapi_content || null);
+        setArchitectState(data.state || null);
+      } catch {
+        setArchitectureContent(null);
+        setSchemaContent(null);
+        setOpenapiContent(null);
+        setArchitectState(null);
+      }
+    },
+    [sessionId]
+  );
+
+  const generateArchitectArtifacts = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsArchitectGenerating(true);
+      try {
+        const data = await apiGenerateArchitectArtifacts(target);
+        setArchitectState(data);
+        await fetchArchitectSession(target);
+        await refreshOfficeStatus(target);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      } finally {
+        setIsArchitectGenerating(false);
+      }
+    },
+    [sessionId, fetchArchitectSession, refreshOfficeStatus]
+  );
+
+  const fetchDesignerSession = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      try {
+        const data = await apiGetDesignerSession(target);
+        setAppFlowContent(data.app_flow_content || null);
+        setDesignBriefContent(data.design_brief_content || null);
+        setDesignerState(data.state || null);
+      } catch {
+        setAppFlowContent(null);
+        setDesignBriefContent(null);
+        setDesignerState(null);
+      }
+    },
+    [sessionId]
+  );
+
+  const generateDesignerArtifacts = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsDesignerGenerating(true);
+      try {
+        const data = await apiGenerateDesignerArtifacts(target);
+        setDesignerState(data);
+        await fetchDesignerSession(target);
+        await refreshOfficeStatus(target);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      } finally {
+        setIsDesignerGenerating(false);
+      }
+    },
+    [sessionId, fetchDesignerSession, refreshOfficeStatus]
+  );
+
+  const approveGate1 = useCallback(
+    async (notes?: string) => {
+      if (!sessionId) return;
+      setIsGate1Approving(true);
+      try {
+        await apiApproveGate1(sessionId, notes);
+        await refreshOfficeStatus(sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      } finally {
+        setIsGate1Approving(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus]
+  );
+
+  const requestGate1Changes = useCallback(
+    async (feedback: string) => {
+      if (!sessionId) return;
+      try {
+        await apiRequestGate1Changes(sessionId, feedback);
+        await refreshOfficeStatus(sessionId);
+        await selectSession(sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      }
+    },
+    [sessionId, refreshOfficeStatus, selectSession]
+  );
+
+  const runFeasibility = useCallback(
+    async () => {
+      if (!sessionId) return;
+      try {
+        await apiRunFeasibility(sessionId);
+        await refreshOfficeStatus(sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      }
+    },
+    [sessionId, refreshOfficeStatus]
+  );
+
   const newSession = useCallback(() => {
     setSessionId(null);
     setIntakeData(null);
@@ -458,7 +641,16 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     setRequirementsContent(null);
     setPmMessages([]);
     setPrdContent(null);
+    setEstimateData(null);
     setPmStarted(false);
+    setArchitectureContent(null);
+    setSchemaContent(null);
+    setOpenapiContent(null);
+    setArchitectState(null);
+    setAppFlowContent(null);
+    setDesignBriefContent(null);
+    setDesignerState(null);
+    setGate1State(null);
     setOfficeStatus(null);
     setActiveOfficeAgent(null);
     setError(null);
@@ -501,9 +693,21 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         isFetchingRequirements,
         pmMessages,
         prdContent,
+        estimateData,
         pmStarted,
         isPmSending,
         pmError,
+        architectureContent,
+        schemaContent,
+        openapiContent,
+        architectState,
+        gate1State,
+        isArchitectGenerating,
+        isGate1Approving,
+        appFlowContent,
+        designBriefContent,
+        designerState,
+        isDesignerGenerating,
         officeStatus,
         activeOfficeAgent,
         setActiveOfficeAgent,
@@ -516,6 +720,13 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         startPm,
         sendPm,
         fetchPmSession,
+        fetchArchitectSession,
+        generateArchitectArtifacts,
+        fetchDesignerSession,
+        generateDesignerArtifacts,
+        approveGate1,
+        requestGate1Changes,
+        runFeasibility,
         newSession,
         clearHistory,
         refreshHistory,

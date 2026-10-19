@@ -1,0 +1,9 @@
+[
+  {
+    "id": "Q-001",
+    "question": "Hi there! I’m your Business Analyst for the BioVault Local Archive project.  \nI see you want a local, offline specimen archive tracker that runs strictly on Ollama. I’ll ask a few focused questions to turn that idea into a clear, testable set of requirements for the team.\n\nMind if I ask a few questions to get started?",
+    "answer": "Yes, please proceed with discovery questions.",
+    "round": 1,
+    "timestamp": "2026-10-18T10:23:55.421048+00:00"
+  }
+]

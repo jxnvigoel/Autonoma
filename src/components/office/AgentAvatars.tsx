@@ -1,6 +1,6 @@
 import React from "react";
 
-export type AgentRoleKey = "ba" | "pm" | "architect" | "engineer" | "qa";
+export type AgentRoleKey = "ba" | "pm" | "architect" | "designer" | "engineer" | "qa";
 
 interface AgentAvatarProps {
   role: AgentRoleKey;
@@ -47,6 +47,14 @@ export const AgentPixelAvatar: React.FC<AgentAvatarProps> = ({
       accessory: "#34D399",
       accent: "#10B981",
       deskAccent: "bg-emerald-500",
+    },
+    designer: {
+      hair: "#0F766E",
+      face: "#FDE68A",
+      clothes: "#0284C7",
+      accessory: "#38BDF8",
+      accent: "#06B6D4",
+      deskAccent: "bg-cyan-500",
     },
     engineer: {
       hair: "#B45309",

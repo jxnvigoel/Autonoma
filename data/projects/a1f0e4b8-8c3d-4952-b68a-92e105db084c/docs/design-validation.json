@@ -1,0 +1,14 @@
+{
+  "all_passed": true,
+  "contrast_valid": true,
+  "contrast_errors": [],
+  "feature_mapping_valid": true,
+  "feature_errors": [],
+  "persona_citations_valid": true,
+  "persona_errors": [],
+  "states_valid": true,
+  "states_errors": [],
+  "errors": [],
+  "checks_count": 4,
+  "passed_count": 4
+}

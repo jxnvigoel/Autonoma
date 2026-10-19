@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import logging
 import json
 import uuid
@@ -19,9 +20,18 @@ except ImportError:
     try:
         from engine.prompts.ba_system_prompt import BA_SYSTEM_PROMPT
     except ImportError:
-        # Fallback if imported from different working directory
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from prompts.ba_system_prompt import BA_SYSTEM_PROMPT
+
+# Import Unified LLM Client (Groq default, Ollama fallback)
+try:
+    from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
+except ImportError:
+    try:
+        from engine.llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
+    except ImportError:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -147,19 +157,49 @@ You MUST structure the document with these exact sections:
 # 1. Problem Statement
 # 2. Personas (P-01, P-02, etc.)
 # 3. User Journeys
-# 4. Functional Requirements (FR-01, FR-02, etc. with MoSCoW priority: Must Have / Should Have / Could Have / Won't Have, and cite the Q-### it came from, e.g. [Source: Q-001])
-# 5. Non-Functional Requirements (NFR-01, NFR-02, etc. with concrete metrics, and cite the Q-### it came from)
+# 4. Functional Requirements (FR-01, FR-02, etc.)
+   CRITICAL CLASSIFICATION RULE:
+   - ONLY list interactive user capabilities or business logic workflows explicitly asked for in the Q&A log.
+   - Format: - FR-01: <Feature name> (Must Have / Should Have / Could Have / Won't Have) [Source: Q-###]
+   - NEVER put latency, response times, database engines, storage mechanisms, privacy rules, offline operation, platform compatibility (OS, Windows, macOS), or accessibility (WCAG) in FRs. Those are strictly NFRs!
+   - NEVER invent or copy example features from other projects. Only extract what this user requested.
+
+# 5. Non-Functional Requirements (NFR-01, NFR-02, etc.)
+   CRITICAL CLASSIFICATION RULE:
+   - All quality constraints, performance numbers, database and storage choices, offline operation, and platform compatibility MUST go here.
+   - Examples of NFR categories to look for in the client answers:
+     - Performance / Latency (response time targets) [Source: Q-###]
+     - Storage & Privacy (local data storage, zero cloud uploads) [Source: Q-###]
+     - Capacity / Concurrency (record volume, snippet volume) [Source: Q-###]
+     - Platform Compatibility (desktop OS, offline operation) [Source: Q-###]
+     - Accessibility (accessibility compliance) [Source: Q-###]
+   - Every NFR must specify a concrete number or verifiable yes/no check, and cite its source [Source: Q-###].
+   - Only list constraints that are relevant to this client's application.
+
 # 6. Data Requirements & Entities
 # 7. Integrations & External Services
 # 8. Timeline & Budget
 # 9. v1 Scope vs Later
 # 10. Definition of Success & Key Metrics
-# 11. Assumptions (ASM-01, ASM-02, etc. for any items unresolved or assumed, citing reason and risk)
+# 11. Assumptions (ASM-01, ASM-02, etc.)
+   CRITICAL ASSUMPTIONS RULE:
+   - Each ASM-## must be written as a single, complete, specific sentence on one line.
+   - NEVER use placeholder variables (e.g. x, y, TBD). State concrete, verifiable assumptions.
+   - NEVER create fragment lines like 'Reason: ...' or 'Risk: ...' as separate lines. Include any rationale in the single sentence.
 
 GROUNDING RULE: Every requirement and key decision must cite the Q- entry it came from. Never invent client facts, dates, or numbers.
 Output ONLY the markdown content for requirements.md. Do not wrap in extra conversational commentary or append state markers."""
 
-    raw_response = query_ollama(prompt=prompt, system=BA_SYSTEM_PROMPT)
+    try:
+        raw_response = query_llm(
+            prompt=prompt,
+            system=BA_SYSTEM_PROMPT,
+            role="ba",
+            session_id=session_id,
+            task_id="generate_requirements"
+        )
+    except GroqKeyMissingError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     cleaned_doc = strip_ba_state_marker(raw_response)
 
     os.makedirs(os.path.dirname(doc_file), exist_ok=True)
@@ -209,6 +249,25 @@ class StatusResponse(BaseModel):
     model_ready: bool
     version: Optional[str] = None
     message: str
+    groq_configured: Optional[bool] = False
+    groq_online: Optional[bool] = False
+    masked_groq_key: Optional[str] = ""
+    active_generator_model: Optional[str] = ""
+    active_judge_model: Optional[str] = ""
+    default_provider: Optional[str] = "groq"
+
+
+class LLMSettingsUpdateRequest(BaseModel):
+    role: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
+class LocalOnlyToggleRequest(BaseModel):
+    session_id: str
+    local_only: bool
 
 
 def load_conversation() -> List[Dict[str, Any]]:
@@ -240,69 +299,113 @@ conversation_store: List[Dict[str, Any]] = load_conversation()
 
 @app.get("/status", response_model=StatusResponse)
 def get_status():
-    """Pings Ollama and checks if the service is reachable and whether llama3.2:3b is ready."""
-    model_name = DEFAULT_MODEL
+    """Checks Groq cloud LLM and local Ollama status."""
+    groq_conf = default_llm_client.is_groq_configured()
+    masked_key = default_llm_client.get_masked_api_key()
+    active_gen = default_llm_client.role_configs.get("pm", {}).get("model", "openai/gpt-oss-120b")
+    active_judge = default_llm_client.role_configs.get("judge", {}).get("model", "openai/gpt-oss-20b")
+
+    groq_online = False
+    if groq_conf:
+        try:
+            models = default_llm_client.fetch_groq_models()
+            groq_online = len(models) > 0
+        except Exception:
+            groq_online = False
+
+    ollama_online = False
+    ollama_ready = False
+    version = "unknown"
     try:
-        version_res = requests.get(f"{OLLAMA_HOST}/api/version", timeout=3)
-        if version_res.status_code != 200:
-            return StatusResponse(
-                status="error",
-                ollama_online=False,
-                model_ready=False,
-                message=f"Cannot connect to Ollama at {OLLAMA_HOST} (HTTP {version_res.status_code}). Make sure the Ollama daemon is running.",
-            )
-        version_data = version_res.json()
-        version = version_data.get("version", "unknown")
+        v_res = requests.get(f"{OLLAMA_HOST}/api/version", timeout=1.5)
+        if v_res.status_code == 200:
+            ollama_online = True
+            version = v_res.json().get("version", "unknown")
+            t_res = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
+            if t_res.status_code == 200:
+                m_names = [m.get("name", "") for m in t_res.json().get("models", [])]
+                ollama_ready = any(DEFAULT_MODEL in name for name in m_names)
+    except Exception:
+        pass
 
-        tags_res = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=3)
-        if tags_res.status_code != 200:
-            return StatusResponse(
-                status="error",
-                ollama_online=True,
-                model_ready=False,
-                version=version,
-                message=f"Ollama is running, but failed to retrieve downloaded models (HTTP {tags_res.status_code}).",
-            )
-
-        tags_data = tags_res.json()
-        models = tags_data.get("models", [])
-        model_names = [m.get("name", "") for m in models]
-        model_found = any(
-            name == model_name or name.startswith(f"{model_name}:") or name == f"{model_name}:latest"
-            for name in model_names
-        )
-
-        if not model_found:
-            return StatusResponse(
-                status="error",
-                ollama_online=True,
-                model_ready=False,
-                version=version,
-                message=f"Model '{model_name}' not found in Ollama. Run: ollama pull {model_name}",
-            )
-
+    if groq_conf and groq_online:
         return StatusResponse(
             status="ready",
-            ollama_online=True,
+            ollama_online=ollama_online,
             model_ready=True,
             version=version,
-            message="Ollama is online and llama3.2:3b is ready",
+            groq_configured=True,
+            groq_online=True,
+            masked_groq_key=masked_key,
+            active_generator_model=active_gen,
+            active_judge_model=active_judge,
+            default_provider="groq",
+            message=f"Groq Cloud LLM online (Generator: {active_gen}, Judge: {active_judge})",
+        )
+    elif not groq_conf:
+        return StatusResponse(
+            status="error" if not ollama_online else "warning",
+            ollama_online=ollama_online,
+            model_ready=ollama_ready,
+            version=version,
+            groq_configured=False,
+            groq_online=False,
+            masked_groq_key="",
+            active_generator_model=active_gen,
+            active_judge_model=active_judge,
+            default_provider="groq",
+            message="GROQ_API_KEY is missing from environment. Configure .env with GROQ_API_KEY.",
+        )
+    else:
+        return StatusResponse(
+            status="ready" if ollama_ready else "error",
+            ollama_online=ollama_online,
+            model_ready=ollama_ready,
+            version=version,
+            groq_configured=True,
+            groq_online=False,
+            masked_groq_key=masked_key,
+            active_generator_model=active_gen,
+            active_judge_model=active_judge,
+            default_provider="groq",
+            message="Groq API key configured but endpoint unreachable. Ollama fallback ready.",
         )
 
-    except requests.exceptions.ConnectionError:
-        return StatusResponse(
-            status="error",
-            ollama_online=False,
-            model_ready=False,
-            message=f"Unable to reach Ollama at {OLLAMA_HOST}. Please ensure the Ollama service is running.",
-        )
-    except Exception as e:
-        return StatusResponse(
-            status="error",
-            ollama_online=False,
-            model_ready=False,
-            message=f"Error checking Ollama status: {str(e)}",
-        )
+
+@app.get("/settings/llm")
+def get_llm_settings(session_id: Optional[str] = None):
+    return default_llm_client.get_settings(session_id=session_id)
+
+
+@app.post("/settings/llm")
+def update_llm_settings(req: LLMSettingsUpdateRequest):
+    updated = default_llm_client.update_role_config(
+        role=req.role,
+        provider=req.provider,
+        model=req.model,
+        temperature=req.temperature,
+        max_tokens=req.max_tokens
+    )
+    return {"status": "ok", "role": req.role, "config": updated}
+
+
+@app.post("/settings/local-only")
+def toggle_local_only(req: LocalOnlyToggleRequest):
+    default_llm_client.set_project_local_only(req.session_id, req.local_only)
+    return {
+        "status": "ok",
+        "session_id": req.session_id,
+        "local_only": req.local_only,
+        "message": f"Local-only mode set to {req.local_only} for project {req.session_id}"
+    }
+
+
+@app.get("/settings/fallbacks")
+def get_fallbacks_endpoint():
+    return {
+        "status": "ok",
+        "fallbacks": default_llm_client.get_fallbacks()
+    }
 
 
 @app.get("/conversation", response_model=List[ChatMessage])
@@ -327,8 +430,6 @@ def chat(req: ChatRequest):
             detail="Prompt cannot be empty",
         )
 
-    model = req.model or DEFAULT_MODEL
-
     user_msg = {
         "id": str(uuid.uuid4()),
         "role": "user",
@@ -339,34 +440,15 @@ def chat(req: ChatRequest):
     conversation_store.append(user_msg)
     save_conversation(conversation_store)
 
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-    }
-
+    start_t = time.time()
     try:
-        res = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json=payload,
-            timeout=180,
+        response_text = query_llm(
+            prompt=prompt,
+            role="general",
+            force_model=req.model if req.model else None
         )
-
-        if res.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Model '{model}' not found in Ollama. Run 'ollama pull {model}' in your terminal.",
-            )
-        elif res.status_code != 200:
-            raise HTTPException(
-                status_code=res.status_code,
-                detail=f"Ollama returned error HTTP {res.status_code}: {res.text}",
-            )
-
-        data = res.json()
-        response_text = data.get("response", "")
-        duration = data.get("total_duration", 0)
-        token_count = data.get("eval_count", 0)
+        duration = time.time() - start_t
+        token_count = len(response_text.split()) * 2
 
         assistant_msg = {
             "id": str(uuid.uuid4()),
@@ -386,18 +468,12 @@ def chat(req: ChatRequest):
             duration=duration,
             token_count=token_count,
         )
-
-    except requests.exceptions.ConnectionError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cannot connect to Ollama at {OLLAMA_HOST}. Make sure Ollama is running.",
-        )
-    except HTTPException:
-        raise
+    except GroqKeyMissingError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error communicating with Ollama: {str(e)}",
+            detail=f"Error communicating with LLM provider: {str(e)}",
         )
 
 
@@ -461,7 +537,16 @@ Do NOT ask any substantive discovery questions yet until they confirm.
 At the end on its own line append:
 <!--BA_STATE:{{"checklist_covered":[],"checklist_missing":["problem","personas","journeys","requirements","data","integrations","timeline_budget","scope","success_metric"],"round":0,"ready_for_requirements":false}}-->"""
 
-    raw_response = query_ollama(prompt=prompt, system=BA_SYSTEM_PROMPT)
+    try:
+        raw_response = query_llm(
+            prompt=prompt,
+            system=BA_SYSTEM_PROMPT,
+            role="ba",
+            session_id=session_id,
+            task_id="ba_start"
+        )
+    except GroqKeyMissingError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     cleaned_message = strip_ba_state_marker(raw_response)
 
     # Store first message in session messages
@@ -587,7 +672,16 @@ INSTRUCTIONS FOR THIS TURN:
 5. End your response with the hidden state marker on its own line:
 <!--BA_STATE:{{"checklist_covered":[...],"checklist_missing":[...],"round":{current_round},"ready_for_requirements":true_or_false}}-->"""
 
-    raw_response = query_ollama(prompt=prompt, system=BA_SYSTEM_PROMPT)
+    try:
+        raw_response = query_llm(
+            prompt=prompt,
+            system=BA_SYSTEM_PROMPT,
+            role="ba",
+            session_id=session_id,
+            task_id=f"ba_round_{current_round}"
+        )
+    except GroqKeyMissingError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     cleaned_reply = strip_ba_state_marker(raw_response)
     parsed_state = parse_ba_state(raw_response)
 
@@ -637,9 +731,13 @@ def get_ba_requirements(session_id: str):
         # Check if session is ready and generate if not already written
         state_file = os.path.join(session_dir, "session_state.json")
         session_state = load_json(state_file, {})
-        if session_state.get("ready_for_requirements", False):
+        qa_file = os.path.join(session_dir, "qa_log.json")
+        qa_log = load_json(qa_file, [])
+        if session_state.get("ready_for_requirements", False) or len(qa_log) >= 2:
             try:
                 content = generate_requirements_doc(session_id)
+                session_state["ready_for_requirements"] = True
+                save_json(state_file, session_state)
                 return {"session_id": session_id, "content": content}
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to generate requirements: {e}")
@@ -771,6 +869,159 @@ def get_ba_session(session_id: str):
     }
 
 
+@app.get("/office/status/{session_id}")
+def get_office_status(session_id: str):
+    session_dir = get_session_dir(session_id)
+    intake_data = load_json(os.path.join(session_dir, "intake.json"), default={})
+    ba_state = load_json(os.path.join(session_dir, "ba_state.json"), default={})
+    if not ba_state:
+        ba_state = load_json(os.path.join(session_dir, "state.json"), default={})
+    qa_log = load_json(os.path.join(session_dir, "qa_log.json"), default=[])
+    req_path = os.path.join(session_dir, "docs", "requirements.md")
+    has_requirements = os.path.exists(req_path)
+
+    pm_state = load_json(os.path.join(session_dir, "pm_state.json"), default={})
+    prd_path = os.path.join(session_dir, "docs", "prd.md")
+    has_prd = os.path.exists(prd_path)
+
+    # BA status
+    if has_requirements:
+        ba_status = "done"
+    elif len(qa_log) > 0:
+        ba_status = "waiting-on-you"
+    else:
+        ba_status = "idle"
+
+    # PM status
+    if has_prd:
+        pm_status = "done"
+    elif pm_state.get("started", False):
+        pm_status = "waiting-on-you"
+    else:
+        pm_status = "idle"
+
+    # Gate 1, Architect & Designer status
+    gate1_state = load_json(os.path.join(session_dir, "gate1_state.json"), default={})
+    gate1_approved = gate1_state.get("approved", False)
+    arch_state = load_json(os.path.join(session_dir, "architect_state.json"), default={})
+    arch_path = os.path.join(session_dir, "docs", "architecture.md")
+    has_arch = os.path.exists(arch_path)
+    feasibility_path = os.path.join(session_dir, "docs", "feasibility.md")
+    has_feasibility = os.path.exists(feasibility_path)
+
+    designer_state = load_json(os.path.join(session_dir, "designer_state.json"), default={})
+    app_flow_path = os.path.join(session_dir, "docs", "app-flow.md")
+    has_designer = os.path.exists(app_flow_path)
+
+    if has_arch:
+        arch_status = "done"
+    elif gate1_approved:
+        arch_status = "waiting-on-you"
+    elif has_prd:
+        arch_status = "idle"
+    else:
+        arch_status = "idle"
+
+    if has_designer:
+        designer_status = "done"
+    elif gate1_approved:
+        designer_status = "waiting-on-you"
+    elif has_prd:
+        designer_status = "idle"
+    else:
+        designer_status = "idle"
+
+    return {
+        "session_id": session_id,
+        "project_name": intake_data.get("project_name", "Untitled Project"),
+        "description": intake_data.get("description", ""),
+        "target_users": intake_data.get("target_users", ""),
+        "timeline": intake_data.get("timeline", ""),
+        "budget": intake_data.get("budget", ""),
+        "gate1": {
+            "status": gate1_state.get("status", "pending" if has_prd else "waiting_for_prd"),
+            "approved": gate1_approved,
+            "approved_at": gate1_state.get("approved_at"),
+            "has_feasibility": has_feasibility,
+            "has_prd": has_prd,
+        },
+        "agents": {
+            "ba": {
+                "id": "ba",
+                "role": "Business Analyst",
+                "abbr": "BA",
+                "status": ba_status,
+                "has_output": has_requirements,
+                "output_name": "docs/requirements.md",
+                "output_type": "markdown",
+                "message_count": len(ba_state.get("messages", [])),
+                "qa_count": len(qa_log),
+                "ready_for_handoff": has_requirements,
+                "can_start": True,
+            },
+            "pm": {
+                "id": "pm",
+                "role": "Product Manager",
+                "abbr": "PM",
+                "status": pm_status,
+                "has_output": has_prd,
+                "output_name": "docs/prd.md",
+                "output_type": "markdown",
+                "message_count": len(pm_state.get("messages", [])),
+                "ready_for_handoff": has_prd,
+                "can_start": has_requirements and not has_prd,
+            },
+            "architect": {
+                "id": "architect",
+                "role": "Solution Architect",
+                "abbr": "ARCH",
+                "status": arch_status,
+                "has_output": has_arch,
+                "output_name": "docs/architecture.md",
+                "output_type": "markdown",
+                "message_count": 1 if has_arch else 0,
+                "is_unlocked": gate1_approved or has_arch,
+                "can_start": gate1_approved and not has_arch,
+            },
+            "designer": {
+                "id": "designer",
+                "role": "UI/UX Designer",
+                "abbr": "DES",
+                "status": designer_status,
+                "has_output": has_designer,
+                "output_name": "docs/app-flow.md",
+                "output_type": "markdown",
+                "message_count": 1 if has_designer else 0,
+                "is_unlocked": gate1_approved or has_designer,
+                "can_start": gate1_approved and not has_designer,
+            },
+            "engineer": {
+                "id": "engineer",
+                "role": "Full-Stack Engineer",
+                "abbr": "ENG",
+                "status": "idle",
+                "has_output": False,
+                "output_name": "src/",
+                "output_type": "code",
+                "message_count": 0,
+                "can_start": False,
+            },
+            "qa": {
+                "id": "qa",
+                "role": "QA Engineer",
+                "abbr": "QA",
+                "status": "idle",
+                "has_output": False,
+                "output_name": "tests/",
+                "output_type": "tests",
+                "message_count": 0,
+                "can_start": False,
+            },
+        },
+    }
+
+
+
 # Initialize PM agent module and routes
 try:
     from pm import init_pm_routes
@@ -781,12 +1032,62 @@ except ImportError:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from pm import init_pm_routes
 
+def make_role_query_fn(role: str):
+    def _role_query(prompt: str, system: Optional[str] = None, session_id: Optional[str] = None, **kwargs) -> str:
+        return query_llm(
+            prompt=prompt,
+            system=system,
+            role=role,
+            session_id=session_id,
+            **kwargs
+        )
+    return _role_query
+
 init_pm_routes(
     main_app=app,
     get_session_dir_fn=get_session_dir,
     load_json_fn=load_json,
     save_json_fn=save_json,
-    query_ollama_fn=query_ollama,
+    query_ollama_fn=make_role_query_fn("pm"),
+    data_projects_dir=DATA_PROJECTS_DIR,
+    generate_requirements_fn=generate_requirements_doc,
+)
+
+# Initialize Architect agent module and routes
+try:
+    from architect import init_architect_routes
+except ImportError:
+    try:
+        from engine.architect import init_architect_routes
+    except ImportError:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from architect import init_architect_routes
+
+init_architect_routes(
+    main_app=app,
+    get_session_dir_fn=get_session_dir,
+    load_json_fn=load_json,
+    save_json_fn=save_json,
+    query_ollama_fn=make_role_query_fn("architect"),
+    data_projects_dir=DATA_PROJECTS_DIR,
+)
+
+# Initialize Designer agent module and routes
+try:
+    from designer import init_designer_routes
+except ImportError:
+    try:
+        from engine.designer import init_designer_routes
+    except ImportError:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from designer import init_designer_routes
+
+init_designer_routes(
+    main_app=app,
+    get_session_dir_fn=get_session_dir,
+    load_json_fn=load_json,
+    save_json_fn=save_json,
+    query_ollama_fn=make_role_query_fn("designer"),
     data_projects_dir=DATA_PROJECTS_DIR,
 )
 
@@ -795,3 +1096,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("ENGINE_PORT", 8765))
     logger.info(f"Starting Autonoma Python Engine on http://127.0.0.1:{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+

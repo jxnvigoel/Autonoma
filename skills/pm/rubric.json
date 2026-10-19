@@ -1,0 +1,112 @@
+{
+  "role": "pm",
+  "artifact": "docs/prd.md",
+  "pass_threshold": 20,
+  "max_total": 24,
+  "criteria": [
+    {
+      "id": "fr_coverage",
+      "name": "FR Coverage and MoSCoW Prioritization",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every F- cites FR-s; every Must-have FR- is covered by some F-. MoSCoW priority clearly marked.",
+      "scale": {
+        "3": "100% of Must-have FRs covered, all F- cite valid [FR-] IDs with clear priority.",
+        "2": "All Must-have FRs covered, but minor citation formatting issue.",
+        "1": "One or more Must-have FRs missing from features.",
+        "0": "No FRs covered or no [FR-] citations."
+      }
+    },
+    {
+      "id": "acceptance_criteria",
+      "name": "Feature-Specific Testable Acceptance Criteria",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every AC- is testable by a machine or clear human check using Given/When/Then. Written specifically for that feature's action and expected result. No vague filler ('should be easy', 'seamless', 'intuitive').",
+      "scale": {
+        "3": "All ACs use Given/When/Then with specific actors, triggers, and concrete verifiable results. Zero boilerplate placeholders.",
+        "2": "Given/When/Then used throughout, but 1-2 criteria slightly generic.",
+        "1": "Contains vague phrases ('should be easy', 'seamless', 'intuitive') or non-testable statements.",
+        "0": "ACs missing Given/When/Then format or purely generic."
+      }
+    },
+    {
+      "id": "unhappy_paths",
+      "name": "Unhappy Paths and Error Scenarios",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every feature has at least one explicit unhappy path acceptance criterion covering realistic failure modes, invalid inputs, timeouts, or permission denials.",
+      "scale": {
+        "3": "Every feature has a realistic, tailored unhappy path AC with explicit state preservation and error feedback.",
+        "2": "Unhappy paths present for all features, but generic failure conditions.",
+        "1": "Some features lack unhappy path ACs.",
+        "0": "No unhappy paths specified."
+      }
+    },
+    {
+      "id": "non_goals_grounded",
+      "name": "Non-Goals and Scope Boundaries",
+      "max": 3,
+      "must_pass": false,
+      "description": "Non-goals table (NG-###) present with clear reasons (timeline/budget/deferred) and source citations [Q-###].",
+      "scale": {
+        "3": "Clear non-goals listed with explicit rationale (deferred to v2/budget) and source citations.",
+        "2": "Non-goals present, but reasons lack detail or citations.",
+        "1": "Non-goals vague or not distinguished from v1.",
+        "0": "Non-goals table missing."
+      }
+    },
+    {
+      "id": "metrics_and_measurement",
+      "name": "Success Metrics and Measurement Methods",
+      "max": 3,
+      "must_pass": false,
+      "description": "Every metric (M-###) has a concrete target and an explicit way to measure it (telemetry, query, log). Metrics client didn't give are marked in ASM-.",
+      "scale": {
+        "3": "Every metric has a specific numerical target and explicit measurement method (event/query/log). Client-given numbers preserved.",
+        "2": "Metrics have targets and measurement, but minor ambiguity in measurement.",
+        "1": "Metrics lack explicit measurement methods or targets are untestable.",
+        "0": "Metrics missing or completely untestable."
+      }
+    },
+    {
+      "id": "nfr_classification",
+      "name": "FR vs NFR Separation and NFR Table Cleanliness",
+      "max": 3,
+      "must_pass": true,
+      "description": "No technical NFRs (latency, local SQLite storage, offline mode) disguised as features in Section 5. Section 6 NFR table has clean categories, numeric or yes/no targets, and [NFR-] sources without truncation.",
+      "scale": {
+        "3": "Clean separation: features are purely functional capabilities. Section 6 has real NFR names, numeric/boolean targets, and [NFR-] sources with zero truncation.",
+        "2": "Clean separation, but minor table formatting imperfection.",
+        "1": "1 technical NFR misfiled as a functional feature, or NFR table has truncation.",
+        "0": "Severe confusion of FRs and NFRs; truncated rows or missing targets."
+      }
+    },
+    {
+      "id": "hallucination_and_grounding",
+      "name": "Grounding and Zero Invented Roles/Boilerplate",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every sentence in Sections 2, 3, and 4 traces to client discovery answers. No invented roles ('Workspace Administrator'), no generic boilerplate, correct specific Q-### citations.",
+      "scale": {
+        "3": "100% grounded in client answers with specific Q-### citations. Roles match client personas only. Unconfirmed items filed as ASM-/OQ-.",
+        "2": "Grounded with valid citations, but 1 citation points to Q-001 instead of specific Q-.",
+        "1": "Contains invented roles or unsupported boilerplate facts not in discovery.",
+        "0": "Heavy hallucination of client facts, roles, or requirements."
+      }
+    },
+    {
+      "id": "timeline_budget_feasibility",
+      "name": "Timeline, Budget, and Scope Feasibility",
+      "max": 3,
+      "must_pass": false,
+      "description": "v1 fits stated timeline and budget, with explicit reasoning shown in Section 4/9 explaining how deferrals keep the project feasible.",
+      "scale": {
+        "3": "Clear timeline and budget constraints cited with explicit feasibility reasoning and scope changes table.",
+        "2": "Timeline and budget cited, but feasibility reasoning is brief.",
+        "1": "Timeline/budget mentioned without reasoning on scope fit.",
+        "0": "Timeline and budget missing or ignored."
+      }
+    }
+  ]
+}
