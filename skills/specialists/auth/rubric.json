@@ -1,0 +1,60 @@
+{
+  "pack_id": "auth",
+  "name": "Authentication & Authorization Audit Rubric",
+  "pass_threshold": 12,
+  "max_total": 12,
+  "criteria": [
+    {
+      "id": "password_hashing",
+      "name": "Adaptive Cryptographic Password Hashing",
+      "max": 3,
+      "must_pass": true,
+      "description": "All passwords hashed with Argon2id or bcrypt (work factor >= 12). Zero plaintext passwords stored or logged.",
+      "scale": {
+        "3": "Argon2id or bcrypt used with salted hashes. Zero plaintext passwords in storage or logs.",
+        "2": "Argon2id or bcrypt used, but work factor below recommended baseline.",
+        "1": "Legacy fast hash (MD5, SHA-256 without stretching) used for passwords.",
+        "0": "Plaintext passwords stored or printed in logs."
+      }
+    },
+    {
+      "id": "session_security_and_expiry",
+      "name": "Secure Session Handling and Expiry",
+      "max": 3,
+      "must_pass": true,
+      "description": "Session cookies configured with HttpOnly, Secure, SameSite. Sessions expire after inactivity and support server-side revocation on logout.",
+      "scale": {
+        "3": "HttpOnly, Secure, SameSite cookies with idle/absolute timeouts and server-side revocation table.",
+        "2": "Session cookie flags set, but idle expiration logic missing.",
+        "1": "Missing HttpOnly or Secure cookie flags.",
+        "0": "Sessions stored in client-accessible localStorage without expiry or CSRF protection."
+      }
+    },
+    {
+      "id": "auth_rate_limiting",
+      "name": "Login Rate Limiting and Lockout",
+      "max": 3,
+      "must_pass": true,
+      "description": "Rate limiting enforced on login/reset endpoints to prevent brute-force credential stuffing (max 5 attempts/minute).",
+      "scale": {
+        "3": "Token bucket or sliding window rate limiting returning HTTP 429 after 5 failed attempts.",
+        "2": "Rate limiting present but threshold too generous (> 20 attempts/min).",
+        "1": "Client-side only throttle.",
+        "0": "No rate limiting on login or authentication endpoints."
+      }
+    },
+    {
+      "id": "rbac_and_ownership",
+      "name": "Server-Side RBAC and Ownership Enforcement",
+      "max": 3,
+      "must_pass": true,
+      "description": "Object ownership checked on every data query (WHERE id = $1 AND owner_id = $2). Role authorization checked at route boundary.",
+      "scale": {
+        "3": "Rigorous server-side RBAC and ownership filtering on 100% of resource queries and updates.",
+        "2": "Role checked, but one resource endpoint lacks explicit owner_id filter.",
+        "1": "Client-supplied role or user ID trusted without session validation.",
+        "0": "Broken Object Level Authorization (BOLA) detected on protected routes."
+      }
+    }
+  ]
+}

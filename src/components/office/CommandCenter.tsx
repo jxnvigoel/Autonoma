@@ -186,11 +186,25 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
         <div className="flex items-center gap-3 min-w-0">
           <AgentPixelAvatar role={activeAgent} size="md" isWorking={isAgentThinking} />
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-sm sm:text-base font-bold text-brand-headline tracking-tight truncate">
                 {agentMeta.role} Command Center
               </h2>
               <AgentStatusBadge status={agentMeta.status} size="sm" />
+              {officeStatus?.agents?.[activeAgent]?.attached_skills && officeStatus.agents[activeAgent].attached_skills.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {officeStatus.agents[activeAgent].attached_skills.map((skill) => (
+                    <span
+                      key={skill}
+                      className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-brand-accent/15 text-brand-accent border border-brand-accent/30 flex items-center gap-1 shadow-2xs"
+                      title={`Attached Specialist: ${skill}`}
+                    >
+                      <span>{skill === "payments" ? "💳" : skill === "auth" ? "🛡️" : skill === "notifications" ? "🔔" : skill === "file-storage" ? "📁" : "⚡"}</span>
+                      <span className="capitalize">{skill}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <p className="text-[11px] text-brand-body truncate max-w-xs sm:max-w-md">
               {intakeData?.projectName || "Active Project"} • {agentMeta.description}

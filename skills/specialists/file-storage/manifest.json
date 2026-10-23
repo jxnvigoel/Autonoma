@@ -1,0 +1,43 @@
+{
+  "id": "file-storage",
+  "name": "File Storage & Upload Security Specialist",
+  "version": "1.0.0",
+  "description": "Specialist pack for secure file upload and asset management: strict MIME-type magic byte validation, streaming size limits, path traversal elimination with UUID filenames, SHA-256 integrity checksums, and pluggable antivirus scanning seams.",
+  "compatible_roles": [
+    "backend",
+    "fullstack",
+    "architect",
+    "qa"
+  ],
+  "triggers": {
+    "keywords": [
+      "file upload",
+      "file-storage",
+      "attachment",
+      "s3",
+      "blob",
+      "document upload",
+      "image upload",
+      "media storage",
+      "avatar upload",
+      "virus scan",
+      "checksum",
+      "sha256"
+    ],
+    "signals": [
+      "upload",
+      "file",
+      "attachment",
+      "storage",
+      "media"
+    ]
+  },
+  "required_tools": [
+    "read_file",
+    "write_file"
+  ],
+  "forbidden_tools": [
+    "raw_shell_exec"
+  ],
+  "rubric_path": "rubric.json"
+}

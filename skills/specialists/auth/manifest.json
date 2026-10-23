@@ -1,0 +1,47 @@
+{
+  "id": "auth",
+  "name": "Authentication & Authorization Specialist",
+  "version": "1.0.0",
+  "description": "Specialist pack for secure identity management: Argon2id/bcrypt password hashing, HttpOnly SameSite session handling, JWT access/refresh token rotation, rate limiting and lockout, password reset tokens, and server-side RBAC and object-level ownership checks.",
+  "compatible_roles": [
+    "backend",
+    "fullstack",
+    "architect",
+    "qa"
+  ],
+  "triggers": {
+    "keywords": [
+      "auth",
+      "authentication",
+      "login",
+      "signup",
+      "register",
+      "password",
+      "session",
+      "jwt",
+      "oauth",
+      "rbac",
+      "role-based",
+      "permissions",
+      "access control",
+      "credential",
+      "mfa"
+    ],
+    "signals": [
+      "auth",
+      "login",
+      "register",
+      "signup",
+      "session",
+      "rbac"
+    ]
+  },
+  "required_tools": [
+    "read_file",
+    "write_file"
+  ],
+  "forbidden_tools": [
+    "raw_shell_exec"
+  ],
+  "rubric_path": "rubric.json"
+}

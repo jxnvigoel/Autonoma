@@ -19,7 +19,6 @@ class TestWCAGContrastValidator(unittest.TestCase):
     - #a0aec0 on #ffffff = 2.26
     - #718096 on #1a202c = 4.06
     """
-
     REFERENCE_PAIRS = [
         ("#000000", "#ffffff", 21.0),
         ("#767676", "#ffffff", 4.54),

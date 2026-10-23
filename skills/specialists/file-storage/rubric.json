@@ -1,0 +1,60 @@
+{
+  "pack_id": "file-storage",
+  "name": "File Storage & Upload Security Audit Rubric",
+  "pass_threshold": 12,
+  "max_total": 12,
+  "criteria": [
+    {
+      "id": "magic_byte_validation",
+      "name": "Magic Byte and MIME-Type Validation",
+      "max": 3,
+      "must_pass": true,
+      "description": "Uploaded files inspected via initial binary bytes (magic numbers) rather than trusting client Content-Type headers or extension.",
+      "scale": {
+        "3": "Binary signature checked on streaming header bytes before file acceptance; disallowed types rejected with HTTP 415.",
+        "2": "MIME type checked, but relies on file extension lookup rather than byte sniffing.",
+        "1": "Only client header checked.",
+        "0": "No MIME type validation; arbitrary files accepted."
+      }
+    },
+    {
+      "id": "safe_path_handling",
+      "name": "Safe Path Resolution and Traversal Elimination",
+      "max": 3,
+      "must_pass": true,
+      "description": "Files stored under server-generated UUIDs; target path verified inside storage root; zero user-supplied disk paths.",
+      "scale": {
+        "3": "UUID storage filenames, strict path confinement verification, and zero direct user filename usage.",
+        "2": "Sanitized filename used with random suffix, path traversal prevented.",
+        "1": "Weak sanitization allowing possible path traversal.",
+        "0": "User-supplied filename written directly to disk without verification."
+      }
+    },
+    {
+      "id": "size_limits_and_streaming",
+      "name": "Upload Size Limits and Streaming Defense",
+      "max": 3,
+      "must_pass": true,
+      "description": "Hard upper size limit enforced during streaming ingest with immediate HTTP 413 rejection on overflow.",
+      "scale": {
+        "3": "Streaming byte count enforcement returning HTTP 413 without loading entire oversized payload into memory.",
+        "2": "Size checked after buffering file.",
+        "1": "Size limit declared in config but not enforced at runtime.",
+        "0": "No file size limit; vulnerable to disk/memory exhaustion DoS."
+      }
+    },
+    {
+      "id": "checksums_and_scan_hook",
+      "name": "SHA-256 Checksums and Antivirus Hook",
+      "max": 3,
+      "must_pass": true,
+      "description": "SHA-256 checksum calculated on ingest and recorded in database; scanner seam / hook point exists for virus scanning.",
+      "scale": {
+        "3": "SHA-256 computed on ingest for deduplication/tamper checking, and quarantine hook point implemented.",
+        "2": "Checksum stored, but scanner seam missing.",
+        "1": "MD5 checksum used or checksum optional.",
+        "0": "No checksum or scanning mechanism."
+      }
+    }
+  ]
+}

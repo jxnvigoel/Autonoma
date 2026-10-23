@@ -167,7 +167,7 @@ export interface PMSessionDetail {
 }
 
 export interface OfficeAgentInfo {
-  id: "ba" | "pm" | "architect" | "engineer" | "qa";
+  id: "ba" | "pm" | "architect" | "designer" | "engineer" | "qa";
   role: string;
   abbr: string;
   status: AgentLiveStatus;
@@ -178,6 +178,7 @@ export interface OfficeAgentInfo {
   qa_count?: number;
   ready_for_handoff?: boolean;
   can_start?: boolean;
+  attached_skills?: string[];
 }
 
 export interface Gate1State {
@@ -760,6 +761,120 @@ export async function apiToggleLocalOnly(
   return await res.json();
 }
 
+/**
+ * Specialist Skill Pack Interfaces and API Helpers
+ */
+export interface SpecialistSkillPack {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  compatible_roles: string[];
+  triggers: {
+    keywords: string[];
+    signals: string[];
+  };
+  required_tools: string[];
+  forbidden_tools: string[];
+  rubric_path: string;
+  dir_path?: string;
+  has_instructions: boolean;
+  has_standards: boolean;
+  has_checklist: boolean;
+  has_rubric: boolean;
+}
 
+export interface SpecialistEvidenceItem {
+  id: string;
+  type: string;
+  trigger: string;
+  snippet: string;
+  source: string;
+}
 
+export interface SpecialistNeed {
+  pack_id: string;
+  name: string;
+  version: string;
+  status: string;
+  confidence: string;
+  evidence_count: number;
+  evidence: SpecialistEvidenceItem[];
+  adr_recommendation: string;
+}
 
+export interface SpecialistDetectionResult {
+  specialist_needs: SpecialistNeed[];
+  weak_matches: Array<{
+    pack_id: string;
+    name: string;
+    version: string;
+    status: string;
+    confidence: string;
+    open_question?: {
+      id: string;
+      to: string;
+      text: string;
+      why: string;
+      refs: string[];
+    };
+  }>;
+  open_questions: Array<{
+    id: string;
+    to: string;
+    text: string;
+    why: string;
+    refs: string[];
+  }>;
+}
+
+export async function fetchSkillPacks(): Promise<{ packs: SpecialistSkillPack[]; total: number; broken_count: number }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/skills/packs`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch skill packs: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function detectSpecialistNeeds(sessionId: string): Promise<SpecialistDetectionResult> {
+  const res = await fetch(`${ENGINE_BASE_URL}/skills/detect/${sessionId}`, { method: "POST" });
+  if (!res.ok) {
+    throw new Error(`Failed to detect specialist needs: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function attachSkillPack(
+  sessionId: string,
+  role: string,
+  packId: string,
+  agentId?: string
+): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/skills/attach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, role, pack_id: packId, agent_id: agentId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to attach skill pack");
+  }
+  return res.json();
+}
+
+export async function detachSkillPack(
+  sessionId: string,
+  role: string,
+  packId: string,
+  agentId?: string
+): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/skills/detach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, role, pack_id: packId, agent_id: agentId }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to detach skill pack: ${res.statusText}`);
+  }
+  return res.json();
+}

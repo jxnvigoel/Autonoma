@@ -5,6 +5,7 @@ import { AgentRoster, RosterAgentItem } from "../components/office/AgentRoster";
 import { CommandCenter } from "../components/office/CommandCenter";
 import { AgentRoleKey } from "../components/office/AgentAvatars";
 import { LLMSettingsModal } from "../components/office/LLMSettingsModal";
+import { SkillLibraryModal } from "../components/office/SkillLibraryModal";
 import { useConversation } from "../context/ConversationContext";
 import { EngineStatus, LLMSettings, apiGetLLMSettings } from "../lib/engine";
 import { AnimatePresence } from "framer-motion";
@@ -52,6 +53,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
 
   const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSkillLibraryOpen, setIsSkillLibraryOpen] = useState(false);
 
   const loadLLMSettings = async () => {
     try {
@@ -208,6 +210,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
     hasOutput: d.hasOutput,
     outputName: d.outputName,
     isUnlocked: d.isUnlocked,
+    attachedSkills: officeStatus?.agents?.[d.roleKey]?.attached_skills || [],
   }));
 
   const handleSelectAgent = (agentKey: AgentRoleKey) => {
@@ -235,6 +238,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
         onOpenChat={onOpenChat}
         onOpenEditor={onOpenEditor}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenSkillLibrary={() => setIsSkillLibraryOpen(true)}
       />
 
       {/* Prominent Missing Key Warning Banner (Never silent) */}
@@ -297,6 +301,14 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
           sessionId={sessionId || undefined}
           projectName={intakeData?.projectName}
           onSettingsChanged={loadLLMSettings}
+        />
+
+        {/* Specialist Skill Library Modal */}
+        <SkillLibraryModal
+          isOpen={isSkillLibraryOpen}
+          onClose={() => setIsSkillLibraryOpen(false)}
+          sessionId={sessionId || undefined}
+          onSkillAttached={() => sessionId && refreshOfficeStatus(sessionId)}
         />
       </main>
     </div>

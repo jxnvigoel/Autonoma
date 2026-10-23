@@ -12,6 +12,7 @@ export interface RosterAgentItem {
   hasOutput: boolean;
   outputName?: string;
   isUnlocked: boolean;
+  attachedSkills?: string[];
 }
 
 interface AgentRosterProps {
@@ -90,6 +91,24 @@ export const AgentRoster: React.FC<AgentRosterProps> = ({
                       </span>
                     )}
                   </div>
+
+                  {agent.attachedSkills && agent.attachedSkills.length > 0 && (
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      {agent.attachedSkills.map((skill) => (
+                        <span
+                          key={skill}
+                          className={`text-[8px] font-mono px-1 py-0.2 rounded font-semibold ${
+                            isSelected
+                              ? "bg-white/30 text-white"
+                              : "bg-brand-accent/10 text-brand-accent border border-brand-accent/20"
+                          }`}
+                          title={`Attached Specialist: ${skill}`}
+                        >
+                          {skill === "payments" ? "💳" : skill === "auth" ? "🛡️" : skill === "notifications" ? "🔔" : skill === "file-storage" ? "📁" : "⚡"} {skill}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {agent.isUnlocked && (

@@ -1,4 +1,4 @@
-import { MessageSquare, Code2, Building2, FolderOpen, Sliders } from "lucide-react";
+import { MessageSquare, Code2, Building2, FolderOpen, Sliders, BookOpen } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { ThemeToggle } from "./ThemeToggle";
 import { EngineStatus } from "../lib/engine";
@@ -15,6 +15,7 @@ interface HeaderProps {
   onOpenChat?: () => void;
   onOpenEditor?: () => void;
   onOpenSettings?: () => void;
+  onOpenSkillLibrary?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -28,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenChat,
   onOpenEditor,
   onOpenSettings,
+  onOpenSkillLibrary,
 }) => {
   return (
     <header className="border-b border-brand-border bg-brand-bg/95 backdrop-blur-sm px-6 py-3 flex items-center justify-between sticky top-0 z-30 transition-colors duration-200">
@@ -141,6 +143,17 @@ export const Header: React.FC<HeaderProps> = ({
               : "gpt-oss-120b"}
           </span>
         </div>
+        {onOpenSkillLibrary && (
+          <button
+            type="button"
+            onClick={onOpenSkillLibrary}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-brand-card hover:bg-brand-subtle border border-brand-border text-xs text-brand-headline font-medium shadow-xs transition-colors cursor-pointer"
+            title="Specialist Skill Library (Registry)"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-purple-500" />
+            <span className="hidden md:inline">Skills</span>
+          </button>
+        )}
         {onOpenSettings && (
           <button
             type="button"

@@ -33,6 +33,33 @@ except ImportError:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
 
+# Import Specialist Skill Registry
+try:
+    from skill_registry import (
+        get_skill_registry,
+        detect_specialist_needs,
+        attach_skill_pack,
+        detach_skill_pack,
+        assemble_agent_prompt,
+        save_agent_profile_to_db,
+        get_agent_profile_from_db,
+        init_agents_db,
+    )
+except ImportError:
+    try:
+        from engine.skill_registry import (
+            get_skill_registry,
+            detect_specialist_needs,
+            attach_skill_pack,
+            detach_skill_pack,
+            assemble_agent_prompt,
+            save_agent_profile_to_db,
+            get_agent_profile_from_db,
+            init_agents_db,
+        )
+    except ImportError:
+        get_skill_registry = None
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("autonoma-engine")
@@ -370,6 +397,42 @@ def get_status():
             default_provider="groq",
             message="Groq API key configured but endpoint unreachable. Ollama fallback ready.",
         )
+
+
+@app.get("/models")
+def get_models_endpoint():
+    """
+    Returns available models, active role mappings, and validates Judge capability per Handbook 14.1 & 22.4.
+    """
+    groq_models = default_llm_client.fetch_groq_models(force_refresh=True)
+    role_configs = default_llm_client.role_configs
+
+    designer_model = role_configs.get("designer", {}).get("model", "")
+    judge_model = role_configs.get("judge", {}).get("model", "")
+
+    designer_score = default_llm_client._score_model_capability(designer_model)
+    judge_score = default_llm_client._score_model_capability(judge_model)
+
+    is_valid = (judge_score >= designer_score)
+    rule_note = (
+        f"Valid: Judge model '{judge_model}' (score: {judge_score}) is at least as capable as generator '{designer_model}' (score: {designer_score})."
+        if is_valid
+        else f"Invalid: Judge model '{judge_model}' (score: {judge_score}) is LESS capable than generator '{designer_model}' (score: {designer_score})!"
+    )
+
+    return {
+        "status": "success",
+        "models": groq_models,
+        "role_configs": role_configs,
+        "judge_validation": {
+            "judge_model": judge_model,
+            "designer_model": designer_model,
+            "judge_capability_score": judge_score,
+            "designer_capability_score": designer_score,
+            "is_valid": is_valid,
+            "note": rule_note
+        }
+    }
 
 
 @app.get("/settings/llm")
@@ -931,6 +994,9 @@ def get_office_status(session_id: str):
     else:
         designer_status = "idle"
 
+    # Specialist skills attachments
+    attachments = load_json(os.path.join(session_dir, "agent_attachments.json"), default={})
+
     return {
         "session_id": session_id,
         "project_name": intake_data.get("project_name", "Untitled Project"),
@@ -958,6 +1024,7 @@ def get_office_status(session_id: str):
                 "qa_count": len(qa_log),
                 "ready_for_handoff": has_requirements,
                 "can_start": True,
+                "attached_skills": attachments.get("ba", []),
             },
             "pm": {
                 "id": "pm",
@@ -970,6 +1037,7 @@ def get_office_status(session_id: str):
                 "message_count": len(pm_state.get("messages", [])),
                 "ready_for_handoff": has_prd,
                 "can_start": has_requirements and not has_prd,
+                "attached_skills": attachments.get("pm", []),
             },
             "architect": {
                 "id": "architect",
@@ -982,6 +1050,7 @@ def get_office_status(session_id: str):
                 "message_count": 1 if has_arch else 0,
                 "is_unlocked": gate1_approved or has_arch,
                 "can_start": gate1_approved and not has_arch,
+                "attached_skills": attachments.get("architect", []),
             },
             "designer": {
                 "id": "designer",
@@ -994,6 +1063,7 @@ def get_office_status(session_id: str):
                 "message_count": 1 if has_designer else 0,
                 "is_unlocked": gate1_approved or has_designer,
                 "can_start": gate1_approved and not has_designer,
+                "attached_skills": attachments.get("designer", []),
             },
             "engineer": {
                 "id": "engineer",
@@ -1005,6 +1075,7 @@ def get_office_status(session_id: str):
                 "output_type": "code",
                 "message_count": 0,
                 "can_start": False,
+                "attached_skills": attachments.get("engineer", attachments.get("backend", [])),
             },
             "qa": {
                 "id": "qa",
@@ -1016,9 +1087,190 @@ def get_office_status(session_id: str):
                 "output_type": "tests",
                 "message_count": 0,
                 "can_start": False,
+                "attached_skills": attachments.get("qa", []),
             },
         },
     }
+
+
+# =========================================================================
+# Specialist Skill Registry Endpoints (Chapter 6 & 23)
+# =========================================================================
+
+@app.get("/skills/packs")
+def list_skill_packs():
+    """Lists all valid registered specialist skill packs with metadata."""
+    if not get_skill_registry:
+        raise HTTPException(status_code=500, detail="Skill registry not available")
+    registry = get_skill_registry()
+    return {
+        "packs": registry.list_packs(),
+        "total": len(registry.packs),
+        "broken_count": len(registry.broken_packs),
+    }
+
+
+@app.get("/skills/broken")
+def list_broken_skill_packs():
+    """Reports any broken or invalid skill packs on disk."""
+    if not get_skill_registry:
+        raise HTTPException(status_code=500, detail="Skill registry not available")
+    registry = get_skill_registry()
+    return {"broken_packs": registry.get_broken_packs()}
+
+
+@app.post("/skills/detect/{session_id}")
+def detect_project_specialists(session_id: str):
+    """
+    Deterministically detects specialist skill requirements from prd.md,
+    requirements.md, and architecture.md without consuming LLM tokens.
+    """
+    if not detect_specialist_needs:
+        raise HTTPException(status_code=500, detail="Detection engine not available")
+
+    session_dir = get_session_dir(session_id)
+    req_file = os.path.join(session_dir, "docs", "requirements.md")
+    prd_file = os.path.join(session_dir, "docs", "prd.md")
+    arch_file = os.path.join(session_dir, "docs", "architecture.md")
+
+    req_text = ""
+    prd_text = ""
+    arch_text = ""
+
+    if os.path.exists(req_file):
+        with open(req_file, "r", encoding="utf-8") as f:
+            req_text = f.read()
+    if os.path.exists(prd_file):
+        with open(prd_file, "r", encoding="utf-8") as f:
+            prd_text = f.read()
+    if os.path.exists(arch_file):
+        with open(arch_file, "r", encoding="utf-8") as f:
+            arch_text = f.read()
+
+    result = detect_specialist_needs(
+        prd_text=prd_text,
+        requirements_text=req_text,
+        architecture_text=arch_text,
+    )
+
+    # Persist detection results in project session
+    save_json(os.path.join(session_dir, "specialist_needs.json"), result)
+    return result
+
+
+class SkillAttachRequest(BaseModel):
+    session_id: str
+    role: str
+    pack_id: str
+    agent_id: Optional[str] = None
+
+
+@app.post("/skills/attach")
+def attach_skill_endpoint(req: SkillAttachRequest):
+    """
+    Attaches a specialist pack to an agent profile with tool-permission validation.
+    Returns 'blocked' if the pack does not exist.
+    """
+    if not attach_skill_pack:
+        raise HTTPException(status_code=500, detail="Attach functionality not available")
+
+    session_dir = get_session_dir(req.session_id)
+    agent_id = req.agent_id or f"{req.role}-1"
+
+    # Load agent profile or build default
+    profile = get_agent_profile_from_db(agent_id) if get_agent_profile_from_db else None
+    if not profile:
+        profile = {
+            "agent_id": agent_id,
+            "project_id": req.session_id,
+            "name": req.role.capitalize(),
+            "role": req.role.lower(),
+            "seat_id": f"ROLE-{req.role.upper()}",
+            "reports_to": "tech-lead-1",
+            "tier": "high",
+            "provider": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "tools": ["read_file", "write_file"],
+            "skill_packs": [],
+            "fs_scope": f"projects/{req.session_id}/",
+            "token_cap": 400000,
+            "status": "idle",
+        }
+
+    attach_res = attach_skill_pack(agent_profile=profile, pack_id=req.pack_id)
+
+    if attach_res.get("status") == "blocked":
+        # Missing pack per Handbook Chapter 6: return blocked naming the pack
+        return {
+            "status": "blocked",
+            "missing_pack": attach_res.get("missing_pack"),
+            "error": attach_res.get("error"),
+        }
+
+    if attach_res.get("status") == "rejected":
+        raise HTTPException(status_code=400, detail=attach_res.get("error"))
+
+    # Update session attachments file
+    attachments_path = os.path.join(session_dir, "agent_attachments.json")
+    attachments = load_json(attachments_path, default={})
+    role_skills = attachments.get(req.role, [])
+    if req.pack_id not in role_skills:
+        role_skills.append(req.pack_id)
+    attachments[req.role] = role_skills
+    save_json(attachments_path, attachments)
+
+    # Persist in DB
+    if save_agent_profile_to_db:
+        save_agent_profile_to_db(attach_res["agent_profile"])
+
+    return attach_res
+
+
+@app.post("/skills/detach")
+def detach_skill_endpoint(req: SkillAttachRequest):
+    """Detaches a specialist pack from an agent profile."""
+    if not detach_skill_pack:
+        raise HTTPException(status_code=500, detail="Detach functionality not available")
+
+    session_dir = get_session_dir(req.session_id)
+    agent_id = req.agent_id or f"{req.role}-1"
+
+    profile = get_agent_profile_from_db(agent_id) if get_agent_profile_from_db else None
+    if not profile:
+        profile = {
+            "agent_id": agent_id,
+            "project_id": req.session_id,
+            "role": req.role.lower(),
+            "tools": ["read_file", "write_file"],
+            "skill_packs": [],
+        }
+
+    detach_res = detach_skill_pack(agent_profile=profile, pack_id=req.pack_id)
+
+    # Update session attachments file
+    attachments_path = os.path.join(session_dir, "agent_attachments.json")
+    attachments = load_json(attachments_path, default={})
+    role_skills = attachments.get(req.role, [])
+    if req.pack_id in role_skills:
+        role_skills = [p for p in role_skills if p != req.pack_id]
+    attachments[req.role] = role_skills
+    save_json(attachments_path, attachments)
+
+    if save_agent_profile_to_db:
+        save_agent_profile_to_db(detach_res["agent_profile"])
+
+    return detach_res
+
+
+@app.get("/skills/prompt/{role}")
+def preview_assembled_prompt(role: str, packs: Optional[str] = None):
+    """Previews assembled prompt with section breakdown and token count."""
+    if not assemble_agent_prompt:
+        raise HTTPException(status_code=500, detail="Prompt assembler not available")
+
+    pack_list = [p.strip() for p in packs.split(",") if p.strip()] if packs else []
+    result = assemble_agent_prompt(role=role, attached_pack_ids=pack_list)
+    return result
 
 
 

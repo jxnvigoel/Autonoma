@@ -1,0 +1,45 @@
+{
+  "id": "notifications",
+  "name": "Notifications Specialist (Email & SMS)",
+  "version": "1.0.0",
+  "description": "Specialist pack for reliable outbound communications: transactional email/SMS delivery, safe template compilation with auto-escaping, queue-based retries with dead-letter queue (DLQ), bounce/complaint handling with suppression lists, recipient rate limits, and compliance opt-out headers.",
+  "compatible_roles": [
+    "backend",
+    "fullstack",
+    "architect",
+    "qa"
+  ],
+  "triggers": {
+    "keywords": [
+      "notification",
+      "notifications",
+      "email",
+      "sms",
+      "sendgrid",
+      "mailgun",
+      "twilio",
+      "alert",
+      "mailer",
+      "digest",
+      "push notification",
+      "opt-out",
+      "unsubscribe"
+    ],
+    "signals": [
+      "notification",
+      "notifications",
+      "email",
+      "sms",
+      "alert",
+      "mailer"
+    ]
+  },
+  "required_tools": [
+    "read_file",
+    "write_file"
+  ],
+  "forbidden_tools": [
+    "raw_shell_exec"
+  ],
+  "rubric_path": "rubric.json"
+}

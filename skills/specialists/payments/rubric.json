@@ -1,0 +1,60 @@
+{
+  "pack_id": "payments",
+  "name": "Payments & Idempotency Audit Rubric",
+  "pass_threshold": 12,
+  "max_total": 12,
+  "criteria": [
+    {
+      "id": "idempotency_key_enforced",
+      "name": "Idempotency Key Verification and Response Caching",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every POST that creates a charge or order requires an Idempotency-Key header. Duplicate requests return cached responses; in-flight requests return 409 Conflict.",
+      "scale": {
+        "3": "Strict Idempotency-Key header requirement enforced at boundary with atomic storage and cached response playback.",
+        "2": "Idempotency header parsed, but replay concurrency lock missing.",
+        "1": "Optional idempotency key or missing table index.",
+        "0": "No idempotency key handling present on financial POST endpoints."
+      }
+    },
+    {
+      "id": "zero_raw_card_data",
+      "name": "Zero Raw Card Data (PCI DSS Compliance)",
+      "max": 3,
+      "must_pass": true,
+      "description": "Zero raw 16-digit credit card PAN numbers or CVV/CVC security codes stored in tables, models, or logged. Only gateway tokens, brand, and last 4 digits stored.",
+      "scale": {
+        "3": "Strict tokenization only: tables store gateway token, brand, and last4. Zero raw PAN or CVV in code, schema, or logs.",
+        "2": "Tokenization used, but temporary in-memory variable names resemble raw card numbers.",
+        "1": "CVV or PAN fields present in schema or unmasked in debug logging.",
+        "0": "Raw credit card numbers or CVVs stored in database or printed in logs."
+      }
+    },
+    {
+      "id": "webhook_signature_verification",
+      "name": "Cryptographic Webhook Signature and Replay Safety",
+      "max": 3,
+      "must_pass": true,
+      "description": "Webhook endpoint cryptographically verifies HMAC-SHA256 signature using raw request bytes and webhook secret, and enforces ≤ 300s timestamp drift replay window.",
+      "scale": {
+        "3": "HMAC-SHA256 calculated over raw payload bytes, compared with constant-time equality, and checked against ≤ 300s timestamp drift.",
+        "2": "HMAC verified, but timestamp replay protection window missing.",
+        "1": "Signature checked against parsed JSON object or without secret.",
+        "0": "Webhook endpoint accepts raw unverified payloads without signature verification."
+      }
+    },
+    {
+      "id": "payment_failure_unhappy_path",
+      "name": "Failure State Preservation (Handbook AC-012)",
+      "max": 3,
+      "must_pass": true,
+      "description": "Payment decline preserves unpaid order status, prevents fulfillment, and returns standard customer message 'Payment failed, you were not charged'.",
+      "scale": {
+        "3": "Full AC-012 compliance: gateway decline preserves unpaid status, rolls back transaction, and returns RFC 9457 Problem Details error.",
+        "2": "Decline handled, but error message wording imprecise.",
+        "1": "Inconsistent state on failure.",
+        "0": "Failed payment silently swallows error or leaves record in paid state."
+      }
+    }
+  ]
+}

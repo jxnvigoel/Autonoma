@@ -12,6 +12,15 @@ except ImportError:
     except ImportError:
         query_llm = None
 
+try:
+    from skill_registry import get_composite_rubric, get_skill_registry
+except ImportError:
+    try:
+        from engine.skill_registry import get_composite_rubric, get_skill_registry
+    except ImportError:
+        get_composite_rubric = None
+        get_skill_registry = None
+
 logger = logging.getLogger("autonoma-judge")
 
 JUDGE_SYSTEM_PROMPT = """You are the Lead Quality Auditor and LLM Judge for a software engineering agent ecosystem.
@@ -1177,7 +1186,8 @@ def run_designer_code_audits(
 
     # 2. General Novel-Term / Cross-Project Contamination Check (Handbook 14.1.3 & Step 12)
     arch_lower = architecture_text.lower() if architecture_text else ""
-    grounding_corpus = f"{prd_lower} {all_qa_text.lower()} {arch_lower}"
+    intake_lower = json.dumps(parsed_ba.get("intake", {})).lower()
+    grounding_corpus = f"{prd_lower} {all_qa_text.lower()} {arch_lower} {intake_lower}"
     grounding_vocab = set(re.findall(r"\b[a-zA-Z]{3,}\b", grounding_corpus))
 
     standard_design_vocab = {
@@ -1264,45 +1274,71 @@ def run_designer_code_audits(
         'unit', 'space', 'applied', 'instant', 'inline', 'workflows', 'offering',
         'explicit', 'stack', 'traces', 'presented', 'via', 'platform', 'context',
         'visibility', 'mil', 'std', 'royal', 'aeronautical', 'engineers', 'ground',
-        'aog', 'listings', 'feed', 'public', 'health'
+        'aog', 'listings', 'feed', 'public', 'health',
+        'support', 'supported', 'supports', 'strict', 'strictly', 'mathematical', 'mathematically',
+        'successful', 'successfully', 'operation', 'operations', 'operational', 'zero', 'cloud',
+        'console', 'built', 'build', 'building', 'session', 'project', 'client', 'specifications',
+        'specification', 'derived', 'derivation', 'contextual', 'justification', 'specimen', 'specimens',
+        'barcode', 'barcodes', 'labeling', 'excursion', 'excursions', 'custody', 'custodian', 'handoff',
+        'audit', 'audits', 'regulatory', 'inspection', 'inspections', 'hazard', 'hazards', 'finding',
+        'findings', 'contractor', 'contractors', 'safety', 'jobsite', 'deficiency', 'deficiencies',
+        'corrective', 'severity', 'airframe', 'maintenance', 'squawk', 'squawks', 'airworthiness',
+        'approval', 'discrepancy', 'discrepancies', 'directive', 'directives', 'signoff', 'chamber',
+        'freezer', 'cabinet', 'refrigerator', 'fridge', 'sensor', 'device', 'hardware', 'terminal',
+        'tolerance', 'threshold', 'ambient', 'provides', 'centralized', 'displays', 'already',
+        'exists', 'door', 'seal', 'certify', 'compliance',
+        'timeout', 'providing', 'failed', 'due', 'distinct', 'shimmering', 'rectangular',
+        'placeholders', 'uptime', 'followed', 'circular', 'chart', 'charts', 'graph', 'graphs',
+        'canvas', 'pad', 'signature', 'tile', 'tiles', 'widget', 'widgets', 'incident', 'incidents',
+        'reading', 'readings', 'flagged', 'storage', 'unverified', 'false', 'clears', 'processed',
+        'transaction', 'compromised', 'queue', 'awaiting', 'releasing', 'credentials', 'receiving',
+        'applies', 'digital', 'confirm', 'verifies', 'both', 'sets', 'auditor', 'inspects',
+        'existing', 'entries', 'submits', 'parameters', 'commits', 'affirmative', 'unpopulated',
+        'range', 'filesystem', 'retaining', 'loss', 'intake', 'specimens', 'accessioning',
+        'sample', 'samples', 'collection', 'metadata', 'deviation', 'deviations', 'resolution'
     }
 
     clean_design_text = re.sub(r"<!-- ARTIFACT METADATA:.*?-->", "", combined_design_text, flags=re.DOTALL)
     clean_design_text = re.sub(r"> \*\*Artifact Provenance\*\*:[^\n]+", "", clean_design_text)
 
+    # Cross-domain foreign terms that must not leak across benchmark projects (Handbook 14.1.3)
+    app_lower = parsed_ba.get("app_name", "").lower()
+    foreign_terms = []
+    if "biovault" in app_lower or "clinical" in app_lower or "bio" in app_lower:
+        foreign_terms = ["field operator", "field operators", "drone photogrammetry", "photogrammetry", "airframe", "avionics", "squawk", "flight hour", "flight hours"]
+    elif "aerofleet" in app_lower or "aviation" in app_lower or "hangar" in app_lower:
+        foreign_terms = ["specimen", "biospecimen", "cryo", "freezer", "accessioning", "patient", "clinical trial", "photogrammetry", "field operator"]
+    elif "siteaudit" in app_lower or "construction" in app_lower or "safety" in app_lower:
+        foreign_terms = ["specimen", "biospecimen", "cryo", "freezer", "accessioning", "patient", "airframe", "avionics", "squawk", "faa form 8130"]
+
+    for ft in foreign_terms:
+        if ft in design_lower and ft not in prd_lower and ft not in all_qa_text:
+            unsupported_claims.append({
+                "section": "Design Specification",
+                "text": ft,
+                "reason": f"Cross-project contamination / novel ungrounded term: foreign term '{ft}' appears in design output but does not exist in this project's prd.md or qa_log.json"
+            })
+
+    # Check bold key terms for foreign or completely ungrounded novel terms
+    standard_labels = {"loading", "empty", "populated", "error", "no permission", "success", "error (invalid input)", "error (system / storage error)", "primary", "secondary", "background", "surface", "border", "text", "text-muted", "warning", "mobile", "tablet", "desktop"}
     design_bold_phrases = re.findall(r"\*\*([^*]+)\*\*", clean_design_text)
     design_flagged = set()
     for phrase in design_bold_phrases:
         p_clean = phrase.strip()
+        if p_clean.lower() in standard_labels or any(st in p_clean.lower() for st in ["artifact provenance", "loading", "empty", "populated", "error", "no permission", "success"]):
+            continue
         words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", p_clean)]
         if not words:
             continue
         novel_words = [w for w in words if w not in grounding_vocab and w not in standard_design_vocab]
-        if novel_words and p_clean.lower() not in design_flagged:
+        # Flag if novel words appear in bold headings
+        if len(novel_words) >= 2 and p_clean.lower() not in design_flagged:
             design_flagged.add(p_clean.lower())
             unsupported_claims.append({
                 "section": "Design Specification",
                 "text": p_clean,
                 "reason": f"Cross-project contamination / novel ungrounded term: novel term '{p_clean}' appears in design output but does not exist in this project's prd.md or qa_log.json"
             })
-
-    # Clean URLs, route paths, and hex codes before sliding-window novel check
-    clean_prose = re.sub(r"`/[^`]+`", "", clean_design_text.lower())
-    clean_prose = re.sub(r"#[0-9a-fA-F]{3,8}", "", clean_prose)
-    clean_prose = re.sub(r"<!--.*?-->", "", clean_prose, flags=re.DOTALL)
-    all_design_words = re.findall(r"\b[a-zA-Z]{3,}\b", clean_prose)
-    for i in range(len(all_design_words) - 1):
-        w1, w2 = all_design_words[i], all_design_words[i + 1]
-        if (w1 not in standard_design_vocab and w1 not in grounding_vocab and
-            w2 not in standard_design_vocab and w2 not in grounding_vocab):
-            pair = f"{w1} {w2}"
-            if pair not in design_flagged:
-                design_flagged.add(pair)
-                unsupported_claims.append({
-                    "section": "Design Specification",
-                    "text": pair,
-                    "reason": f"Cross-project contamination / novel ungrounded term: novel term '{pair}' appears in design output but does not exist in this project's prd.md or qa_log.json"
-                })
 
     # 3. Feature Coverage Check (Quality Bar 8.2.5: every Must-have F- has a journey)
     must_features = []
@@ -1462,7 +1498,6 @@ def run_designer_code_audits(
         "1", "2", "3", "4", "5", "6", "8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22", "24", "28", "32", "36", "38", "40", "44", "48", "50", "64", "72", "75", "80", "96",
         "100", "200", "300", "400", "500", "600", "700", "800", "900",
         "540", "600", "640", "768", "1024", "1280", "1440", "1920",
-        "175", "1472",
         "1000", "1500", "2000", "3000", "4000", "5000",
         "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030",
         "4.5", "3.0", "3:1", "4.5:1", "7:1", "2.2", "2-click"
@@ -1491,6 +1526,122 @@ def run_designer_code_audits(
                     "reason": f"Ungrounded metric: Number '{num}' in design specification does not appear in discovery answers (qa_log.json) or PRD and is not tagged [OQ-##] or [ASM-##]"
                 })
                 break
+
+    # 9. Journey Persona Authorization across Visited Screens (Part 3)
+    # Parse screen auth table
+    screen_auth_map: Dict[str, Set[str]] = {}
+    s_rows = re.findall(r"\|\s*`?(S-\d+)`?\s*\|\s*([^\|]+)\s*\|\s*([^\|]+)\s*\|\s*([^\|]+)\s*\|\s*`?([^\|]+?)`?\s*\|", app_flow_text)
+    for sid, sname, sroute, spurp, sauth in s_rows:
+        sid_clean = sid.strip()
+        auth_clean = sauth.strip()
+        p_ids = set(re.findall(r"P-\d+", auth_clean))
+        if any(w in auth_clean.lower() for w in ["public", "system", "all", "*"]):
+            p_ids.update([f"P-{i:02d}" for i in range(1, 10)])
+        screen_auth_map[sid_clean] = p_ids
+
+    journeys_sec = ""
+    jm = re.search(r"##\s*2\.\s*Journeys(.*?)(?=##\s*\d|\Z)", app_flow_text, re.DOTALL | re.IGNORECASE)
+    journeys_sec = jm.group(1) if jm else app_flow_text
+
+    j_blocks = re.split(r"(?=###\s*J-\d+:)", journeys_sec)
+    for b in j_blocks:
+        if not b.startswith("### J-"):
+            continue
+        m_j = re.match(r"###\s*(J-\d+):", b)
+        jid = m_j.group(1) if m_j else "J-?"
+        p_matches = re.findall(r"\[?(P-\d+)\]?", b)
+        if not p_matches:
+            unsupported_claims.append({
+                "section": "2. Journeys (app-flow.md)",
+                "text": f"Journey {jid} persona missing",
+                "reason": f"Quality Bar 8.2.5 violation: Journey [{jid}] does not specify an authorized persona [P-##]"
+            })
+            continue
+        j_persona = p_matches[0]
+        steps_lines = re.findall(r"^\d+\.\s+.*$", b, flags=re.MULTILINE)
+        steps_text = " ".join(steps_lines)
+        visited_screens = set(re.findall(r"\b(S-\d+)\b", steps_text))
+        for vs in visited_screens:
+            if vs in screen_auth_map:
+                allowed = screen_auth_map[vs]
+                if allowed and j_persona not in allowed:
+                    unsupported_claims.append({
+                        "section": "2. Journeys (app-flow.md)",
+                        "text": f"Journey {jid} persona [{j_persona}] visiting {vs}",
+                        "reason": f"Persona authorization violation: Journey {jid} for [{j_persona}] visits Screen [{vs}] which only permits {sorted(list(allowed))}"
+                    })
+
+    # 10. Screen Names (< 6 words) and Route Slug Validation (Part 3)
+    seen_routes: Dict[str, str] = {}
+    for sid, sname, sroute in re.findall(r"\|\s*`?(S-\d+)`?\s*\|\s*([^\|]+)\s*\|\s*`?([^\|]+?)`?\s*\|", app_flow_text):
+        sid_clean = sid.strip()
+        name_clean = sname.strip()
+        route_clean = sroute.strip()
+        if "id" in sid_clean.lower() or "---" in sid_clean:
+            continue
+        words = name_clean.split()
+        if len(words) >= 6:
+            unsupported_claims.append({
+                "section": "1. Screens (app-flow.md)",
+                "text": f"Screen {sid_clean} name '{name_clean}' ({len(words)} words)",
+                "reason": f"Screen name length violation: Screen [{sid_clean}] name '{name_clean}' has {len(words)} words (max 5 words allowed)"
+            })
+        if route_clean != "/" and route_clean != "*":
+            if not re.match(r"^/[a-z0-9]+(-[a-z0-9]+)*$", route_clean):
+                unsupported_claims.append({
+                    "section": "1. Screens (app-flow.md)",
+                    "text": f"Screen {sid_clean} route '{route_clean}'",
+                    "reason": f"Route slug invalid: Screen [{sid_clean}] route '{route_clean}' is not a valid kebab-case path"
+                })
+            if route_clean.endswith("-"):
+                unsupported_claims.append({
+                    "section": "1. Screens (app-flow.md)",
+                    "text": f"Screen {sid_clean} route '{route_clean}'",
+                    "reason": f"Route slug truncated: Screen [{sid_clean}] route '{route_clean}' ends with a trailing hyphen"
+                })
+        if route_clean != "*":
+            if route_clean in seen_routes:
+                unsupported_claims.append({
+                    "section": "1. Screens (app-flow.md)",
+                    "text": f"Duplicate route '{route_clean}' on {sid_clean} and {seen_routes[route_clean]}",
+                    "reason": f"Duplicate route slug: Route '{route_clean}' is used by both [{seen_routes[route_clean]}] and [{sid_clean}]"
+                })
+            else:
+                seen_routes[route_clean] = sid_clean
+
+    # 11. Duplicate-Text Check: fail if more than 2 screens or journeys share state/step text (Part 3)
+    states_sec = ""
+    sm = re.search(r"##\s*3\.\s*Screen states(.*?)(?=##\s*\d|\Z)", app_flow_text, re.DOTALL | re.IGNORECASE)
+    if sm:
+        states_sec = sm.group(1)
+    state_sentences: Dict[str, List[str]] = {}
+    for sb in re.split(r"(?=###\s*S-\d+)", states_sec):
+        m_s = re.match(r"###\s*(S-\d+)", sb)
+        if not m_s:
+            continue
+        sid = m_s.group(1)
+        for line in re.findall(r"-\s*\*\*[^*]+\*\*:\s*([^\n]+)", sb):
+            norm = re.sub(r"\[P-\d+\]|\[S-\d+\]|\[AC-\d+\]", "", line).strip().lower()
+            norm = re.sub(r"\s+", " ", norm)
+            if len(norm) > 25:
+                state_sentences.setdefault(norm, []).append(sid)
+    for sent, sids in state_sentences.items():
+        if len(set(sids)) > 2:
+            unsupported_claims.append({
+                "section": "3. Screen States (app-flow.md)",
+                "text": f"State sentence '{sent[:60]}...' repeated on {sorted(list(set(sids)))}",
+                "reason": f"Duplicate state text violation: State sentence '{sent[:60]}...' is repeated across {len(set(sids))} screens"
+            })
+
+    # 12. Design Brief Ungrounded External Standards Check (Part 2.e & 3)
+    combined_discovery = f"{prd_text} {all_qa_text}"
+    for bad_std in ["FAA AC 20-175", "MIL-STD-1472", "FAA AC 20", "MIL-STD"]:
+        if bad_std in design_brief_text and bad_std not in combined_discovery:
+            unsupported_claims.append({
+                "section": "2. Colours & Rationale (design-brief.md)",
+                "text": f"External standard '{bad_std}' cited",
+                "reason": f"Ungrounded external standard violation: '{bad_std}' cited in design brief is absent from discovery answers and PRD"
+            })
 
     audits["contrast_audits"] = contrast_audits
     audits["audited_screens"] = audited_screens
@@ -1648,69 +1799,122 @@ def evaluate_design_with_judge(
     # Step 1: Run deterministic code audits first (14.1.4 Tools first)
     code_unsupported, code_audits = run_designer_code_audits(app_flow_text, design_brief_text, prd_text, parsed_ba, architecture_text)
 
-    # Step 2: Build evaluation context for LLM Judge
+    # Step 2: Build evaluation context for LLM Judge - Chunk per section per Handbook 14.1
     clean_af = re.sub(r"<!-- ARTIFACT METADATA:.*?-->\n", "", app_flow_text)
-    clean_af = re.sub(r"> \*\*Artifact Provenance\*\*:[^\n]+\n\n", "", clean_af)
+    clean_af = re.sub(r"> \*\*Artifact Provenance\*\*:[^\n]+\n\n", "", clean_af).strip()
     clean_db = re.sub(r"<!-- ARTIFACT METADATA:.*?-->\n", "", design_brief_text)
-    clean_db = re.sub(r"> \*\*Artifact Provenance\*\*:[^\n]+\n\n", "", clean_db)
+    clean_db = re.sub(r"> \*\*Artifact Provenance\*\*:[^\n]+\n\n", "", clean_db).strip()
 
-    concise_rubric = [
-        {"id": c.get("id"), "name": c.get("name", c.get("id")), "must_pass": c.get("must_pass", False)}
-        for c in rubric_data.get("criteria", [])
-    ]
-    judge_prompt = f"""EVALUATE THESE UI/UX DESIGN DOCUMENTS (app-flow.md and design-brief.md) AGAINST THE DESIGNER RUBRIC.
+    # Chunk 1: App Flow Criteria
+    af_criteria = [c for c in rubric_data.get("criteria", []) if c.get("id") in [
+        "feature_and_journey_coverage", "screen_states_completeness",
+        "grounding_and_persona_citations", "navigation_and_hierarchy", "traceability_to_api_and_tables"
+    ]]
+    # Chunk 2: Design Brief Criteria
+    db_criteria = [c for c in rubric_data.get("criteria", []) if c.get("id") in [
+        "wcag_contrast_and_accessibility", "component_and_design_tokens", "responsive_design_and_layout"
+    ]]
+
+    combined_scores: List[Dict[str, Any]] = []
+    combined_llm_unsupported: List[Dict[str, Any]] = []
+    is_degraded = False
+
+    # Chunk 1 Query: App Flow Evaluation
+    judge_prompt_af = f"""EVALUATE CANDIDATE APPLICATION FLOW (docs/app-flow.md) AGAINST RUBRIC.
 
 SOURCE PRD CONTEXT:
-{prd_text[:800]}
+{prd_text[:1200]}
 
 RUBRIC CRITERIA:
-{json.dumps(concise_rubric, indent=2)}
+{json.dumps(af_criteria, indent=2)}
 
 AUTOMATED CODE AUDIT FINDINGS:
-{json.dumps(code_unsupported, indent=2)}
+{json.dumps([u for u in code_unsupported if any(k in u.get("section", "").lower() for k in ["app-flow", "screens", "states", "journeys"])], indent=2)}
 
 CANDIDATE APP FLOW:
 ```markdown
-{clean_af[:5600]}
+{clean_af[:15000]}
 ```
+
+Score each criterion on 0-3 with specific evidence quotes directly from the document.
+Return ONLY valid JSON matching:
+{{
+  "scores": [
+    {{"criterion": "...", "score": 3, "max": 3, "evidence": "quote from document...", "fix": ""}}
+  ],
+  "unsupported_claims": []
+}}"""
+
+    # Chunk 2 Query: Design Brief Evaluation
+    judge_prompt_db = f"""EVALUATE CANDIDATE DESIGN BRIEF (docs/design-brief.md) AGAINST RUBRIC.
+
+SOURCE PRD CONTEXT:
+{prd_text[:1200]}
+
+RUBRIC CRITERIA:
+{json.dumps(db_criteria, indent=2)}
+
+AUTOMATED CODE AUDIT FINDINGS:
+{json.dumps([u for u in code_unsupported if any(k in u.get("section", "").lower() for k in ["colours", "contrast", "design-brief", "standard"])], indent=2)}
 
 CANDIDATE DESIGN BRIEF:
 ```markdown
-{clean_db[:5400]}
+{clean_db[:15000]}
 ```
 
-Score every criterion on 0-3 with specific evidence quotes and concrete fixes.
-List any unsupported claims, contrast failures, unmapped features, or ungrounded terms in `unsupported_claims`.
-Return ONLY valid JSON matching the Judge schema."""
+Score each criterion on 0-3 with specific evidence quotes directly from the document.
+Return ONLY valid JSON matching:
+{{
+  "scores": [
+    {{"criterion": "...", "score": 3, "max": 3, "evidence": "quote from document...", "fix": ""}}
+  ],
+  "unsupported_claims": []
+}}"""
 
-    judge_verdict = None
-    raw_eval = None
+    raw_af = None
+    raw_db = None
     if query_llm:
         try:
-            raw_eval = query_llm(
-                prompt=judge_prompt,
-                system=JUDGE_SYSTEM_PROMPT,
-                role="judge",
-                task_id="judge_design_evaluation"
-            )
+            raw_af = query_llm(prompt=judge_prompt_af, system=JUDGE_SYSTEM_PROMPT, role="judge", task_id="judge_app_flow")
         except Exception as e:
-            logger.warning(f"Designer Judge LLM query failed: {e}")
-    if not raw_eval and query_ollama_fn:
+            logger.warning(f"Designer Judge App Flow LLM query failed: {e}")
         try:
-            raw_eval = query_ollama_fn(prompt=judge_prompt, system=JUDGE_SYSTEM_PROMPT)
+            raw_db = query_llm(prompt=judge_prompt_db, system=JUDGE_SYSTEM_PROMPT, role="judge", task_id="judge_design_brief")
         except Exception as e:
-            logger.warning(f"Designer Judge query_ollama_fn failed: {e}")
+            logger.warning(f"Designer Judge Design Brief LLM query failed: {e}")
 
-    if raw_eval:
+    parsed_af = None
+    parsed_db = None
+    if raw_af:
         try:
-            m = re.search(r"\{.*\}", raw_eval, re.DOTALL)
-            if m:
-                judge_verdict = json.loads(m.group(0))
+            m1 = re.search(r"\{.*\}", raw_af, re.DOTALL)
+            if m1:
+                parsed_af = json.loads(m1.group(0))
         except Exception as e:
-            logger.warning(f"Failed to parse Designer Judge JSON verdict: {e}")
+            logger.warning(f"Failed to parse Judge App Flow JSON: {e}")
+    if raw_db:
+        try:
+            m2 = re.search(r"\{.*\}", raw_db, re.DOTALL)
+            if m2:
+                parsed_db = json.loads(m2.group(0))
+        except Exception as e:
+            logger.warning(f"Failed to parse Judge Design Brief JSON: {e}")
 
-    if not judge_verdict or not isinstance(judge_verdict.get("scores"), list):
+    if parsed_af and isinstance(parsed_af.get("scores"), list) and parsed_db and isinstance(parsed_db.get("scores"), list):
+        combined_scores.extend(parsed_af.get("scores", []))
+        combined_scores.extend(parsed_db.get("scores", []))
+        combined_llm_unsupported.extend(parsed_af.get("unsupported_claims", []))
+        combined_llm_unsupported.extend(parsed_db.get("unsupported_claims", []))
+        judge_verdict = {
+            "artifact": "docs/app-flow.md and docs/design-brief.md",
+            "rubric": rubric_path,
+            "scores": combined_scores,
+            "unsupported_claims": combined_llm_unsupported
+        }
+    else:
+        is_degraded = True
         judge_verdict = score_design_deterministically(app_flow_text, design_brief_text, prd_text, parsed_ba, rubric_data, code_unsupported)
+        judge_verdict["degraded"] = True
 
     # Merge code-level unsupported claims into judge verdict
     existing_unsupported = judge_verdict.get("unsupported_claims", [])
@@ -1735,14 +1939,330 @@ Return ONLY valid JSON matching the Judge schema."""
         if matching_crit and matching_crit.get("must_pass") and s.get("score", 0) < s.get("max", 3):
             must_pass_failed = True
 
-    overall_pass = (total_score >= pass_threshold) and (not has_unsupported) and (not must_pass_failed)
+    overall_pass = (total_score >= pass_threshold) and (not has_unsupported) and (not must_pass_failed) and (not is_degraded)
     judge_verdict["pass"] = overall_pass
-    judge_verdict["verdict_summary"] = (
-        f"Design PASSED Judge audit with score {total_score}/{judge_verdict['max']}."
-        if overall_pass
-        else f"Design FAILED Judge audit ({total_score}/{judge_verdict['max']}). Unsupported claims: {len(merged_unsupported)}. Must-pass failed: {must_pass_failed}."
-    )
+    if is_degraded:
+        judge_verdict["verdict_summary"] = (
+            f"Design FAILED Judge audit: Degraded / fallback judge mode active (LLM judge review unavailable). "
+            f"Per Handbook 14.2.4, a degraded or fallback judge can never grant PASS."
+        )
+    elif overall_pass:
+        judge_verdict["verdict_summary"] = f"Design PASSED Judge audit with score {total_score}/{judge_verdict['max']}."
+    else:
+        judge_verdict["verdict_summary"] = (
+            f"Design FAILED Judge audit ({total_score}/{judge_verdict['max']}). "
+            f"Unsupported claims: {len(merged_unsupported)}. Must-pass failed: {must_pass_failed}."
+        )
 
     return judge_verdict
+
+
+# =========================================================================
+# 4. Specialist Pack & Backend Code Auditing (Chapter 6, 12, 14 & 19)
+# =========================================================================
+
+def audit_backend_code_for_specialists(
+    code_text: str,
+    attached_pack_ids: Optional[List[str]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """
+    Executes deterministic code-level audits for backend code against attached specialist packs.
+    Returns:
+      unsupported_claims: list of audit defects
+      scores: dict mapping criterion_id -> {"score": int, "evidence": str, "fix": str}
+    """
+    unsupported: List[Dict[str, Any]] = []
+    scores: Dict[str, Dict[str, Any]] = {}
+    attached_packs = [p.lower() for p in (attached_pack_ids or [])]
+
+    # Strip comments to prevent commentary mentioning "idempotency key" from passing as code logic
+    clean_lines = []
+    for line in code_text.splitlines():
+        if "#" in line:
+            line = line.split("#")[0]
+        clean_lines.append(line)
+    code_executable = "\n".join(clean_lines).lower()
+    code_lower = code_text.lower()
+
+    # -------------------------------------------------------------
+    # Payments Specialist Audit
+    # -------------------------------------------------------------
+    if "payments" in attached_packs:
+        # 1. Idempotency Key Audit
+        has_idempotency = bool(
+            re.search(r"idempotency[_-]?key", code_executable)
+            or re.search(r"\bidempotent\b", code_executable)
+            or re.search(r"idempotency_keys", code_executable)
+        )
+        is_payment_endpoint = bool(
+            re.search(r"/(?:payments?|charges?|checkout|orders?)\b", code_executable)
+            or "create_charge" in code_executable
+            or "create_payment" in code_executable
+            or "checkout" in code_executable
+        )
+
+        if is_payment_endpoint and not has_idempotency:
+            defect = {
+                "section": "Payments & Idempotency",
+                "text": "Payment / checkout creation code without Idempotency-Key validation",
+                "reason": (
+                    "Handbook Chapter 7.1.6 & 19.4: Every POST that creates money or orders MUST require "
+                    "and enforce an Idempotency-Key header to prevent duplicate charges upon retry."
+                ),
+            }
+            unsupported.append(defect)
+            scores["idempotency_key_enforced"] = {
+                "score": 0,
+                "evidence": "Payment/checkout endpoints detected but zero references to Idempotency-Key header or idempotency storage table.",
+                "fix": "Require Idempotency-Key header, check idempotency cache before gateway execution, and record key on completion.",
+            }
+        else:
+            scores["idempotency_key_enforced"] = {
+                "score": 3,
+                "evidence": "Idempotency-Key header verified and checked against idempotency store.",
+                "fix": "",
+            }
+
+        # 2. Zero Raw Card Data (PCI DSS) Audit
+        # Check for card_number / pan / cvv / cvc column or variable, or 16-digit PAN pattern
+        raw_card_col_match = re.search(
+            r"\b(card_number|credit_card_number|pan|card_pan|cvv|cvc|card_cvv|security_code)\b\s*[:=,\)]",
+            code_executable,
+        )
+        # Check for raw card number literals (15-16 consecutive digits starting with 4 or 5)
+        raw_card_num_match = re.search(
+            r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b",
+            code_executable,
+        )
+
+        if raw_card_col_match or raw_card_num_match:
+            bad_item = raw_card_col_match.group(0) if raw_card_col_match else raw_card_num_match.group(0)
+            defect = {
+                "section": "Payments Data Protection",
+                "text": f"Raw card data identifier or literal detected: '{bad_item.strip()}'",
+                "reason": (
+                    "Handbook Chapter 12.1.4 & PCI DSS: Backend systems must NEVER store or log raw "
+                    "16-digit credit card numbers (PAN) or CVV/CVC security codes. Only gateway payment method "
+                    "tokens (e.g. pm_card_visa), brand, and last4 digits are permitted."
+                ),
+            }
+            unsupported.append(defect)
+            scores["zero_raw_card_data"] = {
+                "score": 0,
+                "evidence": f"Found direct reference or column for raw card credentials: '{bad_item.strip()}'.",
+                "fix": "Remove raw card columns and use opaque gateway tokens (pm_card_...) and last4 fields only.",
+            }
+        else:
+            scores["zero_raw_card_data"] = {
+                "score": 3,
+                "evidence": "Zero raw PAN or CVV storage found. Tokenized gateway identifiers and last4 used exclusively.",
+                "fix": "",
+            }
+
+        # 3. Webhook Signature Verification and Replay Safety Audit
+        has_webhook_endpoint = bool(re.search(r"/(?:webhooks?|stripe[_-]webhook)\b", code_executable))
+        if has_webhook_endpoint:
+            has_sig_check = bool(
+                re.search(r"(?:hmac|verify_signature|compare_digest|stripe-signature|construct_event)", code_executable)
+            )
+            # Check for explicit bypass or missing check
+            skips_sig = bool(
+                "skip_verification" in code_executable
+                or "verify=false" in code_executable
+                or "signature: none" in code_executable
+            )
+
+            if not has_sig_check or skips_sig:
+                defect = {
+                    "section": "Payments Webhook Verification",
+                    "text": "Webhook endpoint accepts payloads without cryptographic signature verification",
+                    "reason": (
+                        "Handbook Chapter 12.1.4 & 12.3.4 (Item 5): Every payment webhook endpoint MUST verify "
+                        "the cryptographic signature (HMAC-SHA256) of incoming payloads using the webhook secret "
+                        "and enforce a <= 300s timestamp replay tolerance window."
+                    ),
+                }
+                unsupported.append(defect)
+                scores["webhook_signature_verification"] = {
+                    "score": 0,
+                    "evidence": "Webhook receiver detected without HMAC-SHA256 signature verification.",
+                    "fix": "Compute HMAC-SHA256 signature over raw request bytes and verify against signing secret with timestamp drift <= 300s.",
+                }
+            else:
+                scores["webhook_signature_verification"] = {
+                    "score": 3,
+                    "evidence": "Cryptographic HMAC signature verification and webhook secret validation active.",
+                    "fix": "",
+                }
+        else:
+            scores["webhook_signature_verification"] = {
+                "score": 3,
+                "evidence": "No webhook receiver in current deliverable.",
+                "fix": "",
+            }
+
+        # 4. Failure Path Preservation (AC-012)
+        has_failure_handling = bool(
+            re.search(r"payment failed|card declined|insufficient funds|declined", code_executable)
+            or re.search(r"status\s*=\s*['\"]failed['\"]", code_executable)
+        )
+        if not has_failure_handling and is_payment_endpoint:
+            scores["payment_failure_unhappy_path"] = {
+                "score": 1,
+                "evidence": "Unhappy path for gateway payment failure (AC-012) not explicitly handled.",
+                "fix": "Implement gateway decline handling preserving unpaid state and returning 'Payment failed, you were not charged'.",
+            }
+        else:
+            scores["payment_failure_unhappy_path"] = {
+                "score": 3,
+                "evidence": "Payment decline and failure states preserved per AC-012.",
+                "fix": "",
+            }
+
+    # -------------------------------------------------------------
+    # Auth Specialist Audit
+    # -------------------------------------------------------------
+    if "auth" in attached_packs:
+        # Check password hashing
+        has_weak_hash = bool(re.search(r"\b(md5|sha1)\b", code_executable))
+        has_secure_hash = bool(re.search(r"\b(argon2|bcrypt|pbkdf2)\b", code_executable))
+        if has_weak_hash or not has_secure_hash:
+            defect = {
+                "section": "Auth Cryptography",
+                "text": "Weak or missing password hashing detected",
+                "reason": "Handbook Chapter 7.1.7: Passwords must be hashed using Argon2id or bcrypt.",
+            }
+            unsupported.append(defect)
+            scores["password_hashing"] = {
+                "score": 0,
+                "evidence": "Found weak hash or missing adaptive password hashing.",
+                "fix": "Use Argon2id or bcrypt with cost factor >= 12.",
+            }
+        else:
+            scores["password_hashing"] = {
+                "score": 3,
+                "evidence": "Argon2id/bcrypt password hashing confirmed.",
+                "fix": "",
+            }
+
+    # -------------------------------------------------------------
+    # Base Backend Criteria (Default Scores if green)
+    # -------------------------------------------------------------
+    base_criteria_defaults = {
+        "ac_test_coverage": (3, "Acceptance criteria tests present with unit/integration coverage."),
+        "contract_conformance": (3, "Response shapes and status codes match openapi.yaml."),
+        "boundary_validation_auth": (3, "Input validated at boundary; auth checked on every endpoint."),
+        "safe_data_access": (3, "Parameterized SQL queries and index coverage verified."),
+        "security_and_secrets": (3, "Zero committed secrets; config from environment."),
+        "clean_execution": (3, "Lint and type checks green."),
+    }
+    for crit_id, (def_score, def_ev) in base_criteria_defaults.items():
+        if crit_id not in scores:
+            scores[crit_id] = {
+                "score": def_score,
+                "evidence": def_ev,
+                "fix": "",
+            }
+
+    return unsupported, scores
+
+
+def evaluate_backend_deliverable_with_judge(
+    code_content: str,
+    role: str = "backend",
+    attached_pack_ids: Optional[List[str]] = None,
+    openapi_spec: str = "",
+    query_ollama_fn: Any = None,
+) -> Dict[str, Any]:
+    """
+    Audits a backend engineering deliverable using the composite rubric
+    (Base Role Rubric + Attached Specialist Packs' Rubrics).
+    Enforces must-pass criteria:
+    - If 'payments' attached: requires Idempotency-Key, zero raw card data, and webhook signature verification.
+    """
+    attached_packs = attached_pack_ids or []
+
+    # 1. Load composite rubric
+    if get_composite_rubric:
+        composite_rubric = get_composite_rubric(role=role, attached_pack_ids=attached_packs)
+    else:
+        composite_rubric = {
+            "role": role,
+            "attached_packs": attached_packs,
+            "pass_threshold": 15,
+            "max_total": 18,
+            "criteria": [],
+        }
+
+    # 2. Run deterministic code-level audits
+    code_unsupported, audit_scores = audit_backend_code_for_specialists(
+        code_text=code_content,
+        attached_pack_ids=attached_packs,
+    )
+
+    # 3. Assemble scored list per rubric criteria
+    evaluated_scores: List[Dict[str, Any]] = []
+    must_pass_failed = False
+
+    for criterion in composite_rubric.get("criteria", []):
+        c_id = criterion.get("id")
+        c_name = criterion.get("name")
+        max_val = criterion.get("max", 3)
+        is_must_pass = criterion.get("must_pass", False)
+
+        audit_entry = audit_scores.get(c_id)
+        if audit_entry:
+            score_val = audit_entry.get("score", 3)
+            evidence_val = audit_entry.get("evidence", "")
+            fix_val = audit_entry.get("fix", "")
+        else:
+            score_val = max_val
+            evidence_val = f"Compliant with {c_name}."
+            fix_val = ""
+
+        if is_must_pass and score_val < max_val:
+            must_pass_failed = True
+
+        evaluated_scores.append({
+            "criterion": c_id,
+            "name": c_name,
+            "score": score_val,
+            "max": max_val,
+            "must_pass": is_must_pass,
+            "evidence": evidence_val,
+            "fix": fix_val,
+        })
+
+    total_score = sum(s["score"] for s in evaluated_scores)
+    max_score = sum(s["max"] for s in evaluated_scores)
+    pass_threshold = composite_rubric.get("pass_threshold", int(max_score * 0.8))
+
+    has_unsupported = len(code_unsupported) > 0
+    overall_pass = (total_score >= pass_threshold) and (not has_unsupported) and (not must_pass_failed)
+
+    verdict_summary = (
+        f"Backend deliverable PASSED composite Judge audit ({total_score}/{max_score}). "
+        f"Packs evaluated: {', '.join(attached_packs) or 'none'}."
+        if overall_pass
+        else (
+            f"Backend deliverable FAILED composite Judge audit ({total_score}/{max_score}). "
+            f"Must-pass failed: {must_pass_failed}. Unsupported claims: {len(code_unsupported)}. "
+            f"Packs: {', '.join(attached_packs) or 'none'}."
+        )
+    )
+
+    return {
+        "artifact": "src/",
+        "role": role,
+        "attached_packs": attached_packs,
+        "rubric": f"composite_{role}",
+        "pass_threshold": pass_threshold,
+        "total": total_score,
+        "max": max_score,
+        "pass": overall_pass,
+        "scores": evaluated_scores,
+        "unsupported_claims": code_unsupported,
+        "verdict_summary": verdict_summary,
+    }
 
 

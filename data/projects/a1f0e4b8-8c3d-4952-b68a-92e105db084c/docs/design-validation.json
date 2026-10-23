@@ -8,7 +8,11 @@
   "persona_errors": [],
   "states_valid": true,
   "states_errors": [],
+  "auth_errors": [],
+  "route_errors": [],
+  "dup_errors": [],
+  "citation_errors": [],
   "errors": [],
-  "checks_count": 4,
-  "passed_count": 4
+  "checks_count": 8,
+  "passed_count": 8
 }

@@ -1,0 +1,48 @@
+{
+  "id": "payments",
+  "name": "Payments & Idempotency Specialist",
+  "version": "1.0.0",
+  "description": "Specialist pack for resilient, test-mode payment workflows: Idempotency-Key headers, cryptographic webhook signature verification with replay safety, zero raw PAN/CVV storage (PCI DSS compliance), failure/retry paths, refund lifecycle, and reconciliation.",
+  "compatible_roles": [
+    "backend",
+    "fullstack",
+    "architect",
+    "qa"
+  ],
+  "triggers": {
+    "keywords": [
+      "payment",
+      "payments",
+      "checkout",
+      "stripe",
+      "razorpay",
+      "paypal",
+      "credit card",
+      "debit card",
+      "billing",
+      "subscription",
+      "refund",
+      "refunds",
+      "idempotency",
+      "invoice",
+      "transaction fee",
+      "charge"
+    ],
+    "signals": [
+      "payment",
+      "checkout",
+      "billing",
+      "subscription",
+      "refund",
+      "invoice"
+    ]
+  },
+  "required_tools": [
+    "read_file",
+    "write_file"
+  ],
+  "forbidden_tools": [
+    "raw_shell_exec"
+  ],
+  "rubric_path": "rubric.json"
+}

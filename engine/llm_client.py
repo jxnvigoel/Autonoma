@@ -99,15 +99,15 @@ class LLMClient:
             },
             "designer": {
                 "provider": "groq",
-                "model": "openai/gpt-oss-120b",
+                "model": "qwen/qwen3.8-27b",  # Distinct generator family (Alibaba Cloud 27B)
                 "temperature": 0.2,
-                "max_tokens": 8192
+                "max_tokens": 800
             },
             "judge": {
                 "provider": "groq",
-                "model": "openai/gpt-oss-20b",  # Distinct model for Judge per Handbook 22.4 rule 3 (20B vs 120B creator)
+                "model": "openai/gpt-oss-120b",  # Judge is larger (120B) & from OpenAI per Handbook 14.1
                 "temperature": 0.1,
-                "max_tokens": 900
+                "max_tokens": 4096
             },
             "engineer": {
                 "provider": "groq",
@@ -225,31 +225,37 @@ class LLMClient:
 
     def refresh_models(self) -> None:
         """
-        Fetches live models from Groq and auto-defaults generators to the
-        largest capable instruction-following model, and Judge to a distinct model.
+        Fetches live models from Groq. Per Handbook Chapter 14 & 22:
+        - Judge model must be at least as capable as generator, larger size or distinct family.
+        - Defaults Judge to the most capable model (e.g. openai/gpt-oss-120b, 120B).
+        - Defaults Designer generator to a distinct family model (e.g. qwen/qwen3.8-27b, 27B).
         """
         groq_models = self.fetch_groq_models(force_refresh=True)
         if not groq_models:
             return
 
         largest_model = groq_models[0]["id"]
-        # Find secondary distinct model for Judge (prioritize robust models without 1000 OTPM rate limits)
-        judge_candidates = [
-            m["id"] for m in groq_models 
-            if m["id"] != largest_model and "qwen" not in m["id"].lower()
-        ]
-        if not judge_candidates:
-            judge_candidates = [m["id"] for m in groq_models if m["id"] != largest_model]
-        judge_model = judge_candidates[0] if judge_candidates else largest_model
+        # Judge is assigned the most capable model
+        judge_model = largest_model
 
-        for role in ["ba", "pm", "architect", "designer", "engineer", "qa", "general"]:
+        # Generator candidates from distinct family or smaller model
+        gen_candidates = [
+            m["id"] for m in groq_models
+            if "qwen" in m["id"].lower()
+        ]
+        designer_model = gen_candidates[0] if gen_candidates else (groq_models[1]["id"] if len(groq_models) > 1 else largest_model)
+
+        for role in ["ba", "pm", "architect", "engineer", "qa", "general"]:
             if self.role_configs.get(role, {}).get("provider") == "groq":
                 self.role_configs[role]["model"] = largest_model
+
+        if self.role_configs.get("designer", {}).get("provider") == "groq":
+            self.role_configs["designer"]["model"] = designer_model
 
         if self.role_configs.get("judge", {}).get("provider") == "groq":
             self.role_configs["judge"]["model"] = judge_model
 
-        logger.info(f"LLM Client initialized with default Groq generator: '{largest_model}', Judge: '{judge_model}'")
+        logger.info(f"LLM Client refreshed models -> Generator (Designer): '{designer_model}', Judge: '{judge_model}'")
 
     def log_fallback(self, session_id: Optional[str], role: str, original_model: str, error: str, duration_ms: int) -> None:
         fallback_record = {
@@ -482,8 +488,8 @@ class LLMClient:
                 time.sleep(sleep_needed)
             self._last_request_time = time.time()
 
-        max_retries = 3
-        backoffs = [2.0, 4.0, 8.0]
+        max_retries = 4
+        backoffs = [5.0, 15.0, 30.0, 45.0]
 
         for attempt in range(max_retries + 1):
             try:
@@ -515,6 +521,11 @@ class LLMClient:
                                 wait_seconds = max(parsed + 0.5, wait_seconds)
                             except ValueError:
                                 pass
+
+                    if "reduce max_tokens" in res.text:
+                        old_tok = payload.get("max_tokens", 800)
+                        payload["max_tokens"] = max(400, int(old_tok * 0.7))
+                        logger.info(f"Groq OTPM limit signaled. Dynamically reduced max_tokens from {old_tok} to {payload['max_tokens']}.")
 
                     logger.warning(
                         f"Groq HTTP 429 Rate Limit encountered on attempt {attempt+1}/{max_retries+1} for model '{model}'. "

@@ -108,5 +108,27 @@
     "fallback_model": "llama3.2:3b",
     "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-20b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8230, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
     "duration_ms": 212
+  },
+  {
+    "timestamp": "2026-10-21T17:34:23.480294+00:00",
+    "session_id": "global",
+    "role": "judge",
+    "original_provider": "groq",
+    "original_model": "openai/gpt-oss-120b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq returned HTTP 413: {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8711, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 22439
+  },
+  {
+    "timestamp": "2026-10-21T17:42:17.845243+00:00",
+    "session_id": "a1f0e4b8-8c3d-4952-b68a-92e105db084c",
+    "role": "designer",
+    "original_provider": "groq",
+    "original_model": "qwen/qwen3.8-27b",
+    "fallback_provider": "ollama",
+    "fallback_model": "llama3.2:3b",
+    "reason": "Groq HTTP 429: {\"error\":{\"message\":\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01kq7djn3nesf9yxrjx4xjfax6` service tier `on_demand` on output tokens per minute (OTPM): Limit 1000, Requested 1491. The request's expected output tokens exceed the enforced limit; reduce max_tokens (or the request's expected output) and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n",
+    "duration_ms": 68815
   }
 ]

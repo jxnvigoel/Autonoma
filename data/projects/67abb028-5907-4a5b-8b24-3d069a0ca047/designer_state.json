@@ -13,82 +13,72 @@
     "persona_errors": [],
     "states_valid": true,
     "states_errors": [],
+    "auth_errors": [],
+    "route_errors": [],
+    "dup_errors": [],
+    "citation_errors": [],
     "errors": [],
-    "checks_count": 4,
-    "passed_count": 4
-  },
-  "validation_results": {
-    "all_passed": true,
-    "contrast_valid": true,
-    "contrast_errors": [],
-    "feature_mapping_valid": true,
-    "feature_errors": [],
-    "persona_citations_valid": true,
-    "persona_errors": [],
-    "states_valid": true,
-    "states_errors": [],
-    "errors": [],
-    "checks_count": 4,
-    "passed_count": 4
+    "checks_count": 8,
+    "passed_count": 8
   },
   "judge_verdict": {
-    "artifact": "docs/app-flow.md",
+    "artifact": "docs/app-flow.md and docs/design-brief.md",
     "rubric": "skills/designer/rubric.json",
     "scores": [
       {
         "criterion": "feature_and_journey_coverage",
         "score": 3,
         "max": 3,
-        "evidence": "All Must-have features mapped to detailed user journeys covering happy and unhappy paths.",
+        "evidence": "J-1: Specimen Check-In & Barcode Generation \u2026 covers [F-001 / FR-01], [AC-001], [AC-002] ... J-2 \u2026 covers [F-002 / FR-02], [AC-003], [AC-004] ... J-3 \u2026 covers [F-003 / FR-03], [AC-005], [AC-006] ... J-4 \u2026 covers [F-004 / FR-04], [AC-007], [AC-008]",
         "fix": ""
       },
       {
         "criterion": "screen_states_completeness",
         "score": 3,
         "max": 3,
-        "evidence": "All screens specify Loading, Empty, Populated, Error, and No Permission states.",
-        "fix": ""
-      },
-      {
-        "criterion": "wcag_contrast_and_accessibility",
-        "score": 3,
-        "max": 3,
-        "evidence": "All color tokens pass WCAG 2.2 AA contrast ratios (>= 4.5:1 for body text) with visible focus and tab order.",
-        "fix": ""
-      },
-      {
-        "criterion": "component_and_design_tokens",
-        "score": 3,
-        "max": 3,
-        "evidence": "Comprehensive design tokens and component interaction states defined with zero 'TBD'.",
+        "evidence": "Each screen (S-01 to S-05) lists **Loading**, **Empty**, **Populated**, **Error**, and **No Permission** states explicitly.",
         "fix": ""
       },
       {
         "criterion": "grounding_and_persona_citations",
         "score": 3,
         "max": 3,
-        "evidence": "All screens cite authorized PRD personas [P-##] with zero foreign project contamination.",
+        "evidence": "Screens table Auth/Role column cites personas like `[P-01]`, `[P-02]`, `[P-03]`; journeys begin with \u201c([P-01])\u201d, \u201c([P-02])\u201d, \u201c([P-03])\u201d. No invented personas appear.",
         "fix": ""
       },
       {
         "criterion": "navigation_and_hierarchy",
         "score": 3,
         "max": 3,
-        "evidence": "Clear navigation hierarchy with 2-click rule enforced for primary workflows.",
-        "fix": ""
-      },
-      {
-        "criterion": "responsive_design_and_layout",
-        "score": 3,
-        "max": 3,
-        "evidence": "Detailed responsive layout rules defined across mobile, tablet, and desktop breakpoints.",
+        "evidence": "Navigation section defines Top Bar, Sidebar links to every screen, and states \u201cAll primary operational workflows and screens are directly accessible within 2 clicks from the Dashboard (home) screen.\u201d",
         "fix": ""
       },
       {
         "criterion": "traceability_to_api_and_tables",
         "score": 3,
         "max": 3,
-        "evidence": "Screens and journeys explicitly map to Architect API endpoints [API-###].",
+        "evidence": "Screens table Technical Contracts column lists `[API-001]`, `[TBL-01]` etc.; journeys reference the same API and table IDs when describing actions.",
+        "fix": ""
+      },
+      {
+        "criterion": "wcag_contrast_and_accessibility",
+        "score": 3,
+        "max": 3,
+        "evidence": "\u201cEvery foreground text and interactive token passes WCAG 2.2 AA minimum contrast (>= 4.5:1 for normal text, >= 3:1 for large text/components).\u201d The colour token table lists contrast ratios for each token, e.g., `--color-primary` L: 6.55:1 (PASS) / D: 6.98:1 (PASS), `--color-text` L: 13.60:1 (PASS) / D: 17.06:1 (PASS). Later it states \u201cFull Keyboard Accessibility (WCAG 2.2 AA): All interactive controls are navigable via keyboard with visible focus rings and logical tab order (`[NFR-05]`).\u201d Component definitions also include focus\u2011ring details (e.g., Button focus: 2px ring).",
+        "fix": ""
+      },
+      {
+        "criterion": "component_and_design_tokens",
+        "score": 3,
+        "max": 3,
+        "evidence": "Design tokens are fully enumerated for both Light and Dark themes with concrete hex values and contrast ratios (see the \u201cColours\u201d table). All components are listed with default style and interaction states (Hover, Focus, Disabled, Loading) in the \u201cComponents\u201d table, e.g., `Button (Primary)` has height, radius, background, focus ring, loading spinner, etc. No placeholders or \u201cTBD\u201d entries are present.",
+        "fix": ""
+      },
+      {
+        "criterion": "responsive_design_and_layout",
+        "score": 3,
+        "max": 3,
+        "evidence": "The brief defines three breakpoints with explicit layout adaptations in the \u201cBreakpoints & Responsive Behavior\u201d table (Mobile <640\u202fpx, Tablet 640\u20131024\u202fpx, Desktop >1024\u202fpx). It also specifies a maximum reading width of 1280\u202fpx and details for sidebar collapse, off\u2011canvas drawer, and column counts per breakpoint. These satisfy the requirement for layout rules across standard breakpoints.",
         "fix": ""
       }
     ],
@@ -97,6 +87,12 @@
     "max": 24,
     "pass": true,
     "verdict_summary": "Design PASSED Judge audit with score 24/24."
+  },
+  "tokens": {
+    "prompt_tokens": 4455,
+    "completion_tokens": 2699,
+    "cost_usd": 0.001431,
+    "model": "qwen/qwen3.8-27b"
   },
   "escalated": false
 }

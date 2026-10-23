@@ -74,3 +74,43 @@ This backlog tracks observations, edge cases, and quality improvements identifie
   - Updated `DesignerOutputViewer.tsx`, `ArchitectOutputViewer.tsx`, and `PRDViewer.tsx` to parse metadata stamps and display provenance badges directly in the UI header and under each artifact tab.
   - TypeScript verified via `npx tsc --noEmit` with 0 errors.
 
+## Stage 4 Specialist Skill Pack Registry (Resolved 2026-10-21)
+
+### Item 8: Pluggable Specialist Skill Pack Architecture & Verification
+- **Requirement**: Pluggable layer of specialist skill packs per Handbook Chapters 3, 6, 12, 19, 23, and 24.
+  - Manifest-based auto-discovery scanning `skills/` and `skills/specialists/` without code changes.
+  - Recruiter tool allowance enforcement per Table 6.1.3; returns `"blocked"` when no pack matches (never invents one).
+  - Deterministic 0-token signal detection matching requirements codes (`F-###`, `FR-###`, `API-###`) with evidence citations.
+  - Stable cacheable prompt assembly prefix order (`operating-rules.md` + `role.md` + specialist `instructions.md` + task context) with token cap.
+  - Composite Judge evaluation enforcing role criteria + specialist must-pass criteria (idempotency keys, zero raw card data, webhook HMAC signatures).
+  - Virtual Office UI integration: Skill badges in Agent Roster & Command Center, and dedicated Skill Library modal.
+- **Status**: **CLEARED & VERIFIED**
+- **Resolution**:
+  - Created `engine/skill_registry.py` and `skills/_shared/operating-rules.md`.
+  - Built 4 grounded specialist packs: `payments`, `auth`, `notifications`, `file-storage`.
+  - Extended `engine/judge.py` with `audit_backend_code_for_specialists` and `evaluate_backend_deliverable_with_judge`.
+  - Upgraded Virtual Office UI (`SkillLibraryModal.tsx`, `AgentRoster.tsx`, `CommandCenter.tsx`, `VirtualOffice.tsx`, `Header.tsx`).
+  - Added comprehensive test suite `tests/test_skill_registry.py` (6 tests passing 100% green).
+  - Verified TypeScript compilation with `npx tsc --noEmit` (0 errors).
+
+## Stage 3 Designer Round 3: Provenance Audit & Real LLM Generation (Resolved 2026-10-23)
+
+### Item 9: Designer Provenance Audit, Real Generation & Judge Capability Calibration
+- **Requirement**: Designer Round 3 per Handbook Chapters 8, 14, Appendices A.4 & A.5:
+  1. Provenance audit of AeroFleet deliverables; identify code templates vs LLM calls and remove 10 domain-neutral template strings.
+  2. Real LLM generation across all sections (screens < 6 words, untruncated routes, grounded journeys with technical contracts, 5 distinct screen states, 10-token palette with automated contrast repair).
+  3. Strict code validators: persona authorization on all screens, duplicate-text check across states/journeys, grounded citations.
+  4. Judge capability calibration: Judge (`openai/gpt-oss-120b`, 120B) >= Generator (`qwen/qwen3.8-27b`, 27B), distinct family, mounted `/models` endpoint, chunked judge prompts, zero degraded PASS awards.
+  5. End-to-end execution across 3 domains (BioVault Lab, AeroFleet Hangar, SiteAudit Pro) passing validators and judge (24/24).
+- **Status**: **CLEARED & VERIFIED**
+- **Resolution**:
+  - Replaced template fillers in `engine/designer.py` with multi-step LLM generation (`generate_screens_with_llm`, `generate_journeys_with_llm`, `generate_screen_states_with_llm`, `generate_palette_and_brief_with_llm`).
+  - Added programmatic and LLM contrast repair loop guaranteeing WCAG 2.2 AA (>= 4.5:1) for all 10 tokens (light/dark).
+  - Configured model roles in `engine/llm_client.py` and mounted `/models` in `engine/main.py`.
+  - Upgraded `engine/judge.py` to chunk evaluations per section, enforce must-pass and zero-unsupported rules, and eliminate degraded pass.
+  - Verified `scripts/test_judge_on_broken_design.py` asserting FAIL on Case 1 (14 defects) and Case 2 (17 defects).
+  - BioVault Lab, AeroFleet Hangar, and SiteAudit Pro all achieved Validators PASS (0 errors) and Judge PASS (24/24).
+  - TypeScript build clean (`npx tsc --noEmit` = 0 errors).
+
+
+

@@ -167,4 +167,163 @@ assert has_persona_failure, "Judge must catch missing persona citation in S-02!"
 has_contamination = any("cross-project" in r.lower() or "field operator" in r.lower() for r in reasons)
 assert has_contamination, "Judge must catch cross-project contamination terms ('field operators')!"
 
-print("\n>>> PROOF COMPLETE: Judge successfully and deterministically REJECTED the broken design documents with exact defect identification across all 5 fatal error types!")
+print("\n>>> PROOF COMPLETE (CASE 1): Judge successfully and deterministically REJECTED the broken design documents with exact defect identification across all 5 fatal error types!")
+
+
+# ==============================================================================
+# CASE 2: CURRENT / OLD AEROFLAT APP-FLOW & DESIGN BRIEF AUDIT (Part 4)
+# Deliberate defects in old AeroFleet output:
+# 1. Identical screen state sentences across screens S-02, S-03, S-04, S-05
+# 2. Truncated route slug: /faa-form-8130-airwor
+# 3. Screen names > 5 words: 'Airframe maintenance work order dispatch and digital sign-off'
+# 4. Persona authorization mismatch / missing persona citations in table headers
+# 5. Ungrounded external standards in design brief: FAA AC 20-175, MIL-STD-1472
+# ==============================================================================
+print("\n" + "="*70)
+print("=== CASE 2: RUNNING JUDGE ON OLD AEROFLAT DELIVERABLE (DEFECT DETECTION) ===")
+print("="*70)
+
+old_aerofleet_af_text = """# Application Flow & Screen Architecture: AeroFleet Hangar
+
+## 1. Screens
+| ID | Screen Name | Route | Purpose | Authorized Persona | Features |
+|---|---|---|---|---|---|
+| S-01 | Dashboard & Activity Overview | `/` | Central operational overview | [P-01], [P-02], [P-03], [P-04] | [F-001], [F-002], [F-003], [F-004] |
+| S-02 | Airframe maintenance work order dispatch and digital sign-off | `/airframe-maintenance` | Work order dispatch and sign-off | [P-01] | [F-001] |
+| S-03 | Line-maintenance discrepancy squawk logging and corrective action tracking | `/line-maintenance-dis` | Squawk logging and corrective action | [P-02] | [F-002] |
+| S-04 | Time-controlled component life limit and airworthiness directive monitoring | `/time-controlled-comp` | Component life limit monitoring | [P-03] | [F-003] |
+| S-05 | FAA Form 8130 airworthiness approval release and compliance audit export | `/faa-form-8130-airwor` | Airworthiness approval release | [P-04] | [F-004] |
+
+## 2. Journeys
+### J-1: Airframe maintenance work order dispatch and digital sign-off — covers [F-001 / FR-01], [AC-001], [AC-002]
+1. On `S-01` (Dashboard) → Line Maintenance Lead (`[P-01]`) views operational overview → clicks primary action button.
+2. `S-02` loads → user inputs required parameters and configuration details (`[API-001]`).
+3. **Success**: System validates input, persists record into local database (`[TBL-01]`), displays confirmation toast, and updates active view within 1.0 s (`[AC-001]`, `[NFR-01]`).
+4. **Error (invalid input)**: Inline validation notices highlight offending fields, preserve user inputs without loss, and enable immediate correction (`[AC-002]`).
+5. **Error (system / storage error)**: Non-blocking warning banner notifies user of local database error with an actionable retry button (`[AC-002]`).
+
+### J-2: Line-maintenance discrepancy squawk logging and corrective action tracking — covers [F-002 / FR-02], [AC-003], [AC-004]
+1. On `S-01` (Dashboard) → Quality Assurance Inspector (`[P-02]`) views operational overview → clicks primary action button.
+2. `S-03` loads → user inputs required parameters and configuration details (`[API-002]`).
+3. **Success**: System validates input, persists record into local database (`[TBL-02]`), displays confirmation toast, and updates active view within 1.0 s (`[AC-003]`, `[NFR-01]`).
+4. **Error (invalid input)**: Inline validation notices highlight offending fields, preserve user inputs without loss, and enable immediate correction (`[AC-004]`).
+5. **Error (system / storage error)**: Non-blocking warning banner notifies user of local database error with an actionable retry button (`[AC-004]`).
+
+### J-3: Time-controlled component life limit and airworthiness directive monitoring — covers [F-003 / FR-03], [AC-005], [AC-006]
+1. On `S-01` (Dashboard) → Aviation Maintenance Technician (`[P-03]`) views operational overview → clicks primary action button.
+2. `S-04` loads → user inputs required parameters and configuration details (`[API-003]`).
+3. **Success**: System validates input, persists record into local database (`[TBL-03]`), displays confirmation toast, and updates active view within 1.0 s (`[AC-005]`, `[NFR-01]`).
+4. **Error (invalid input)**: Inline validation notices highlight offending fields, preserve user inputs without loss, and enable immediate correction (`[AC-006]`).
+5. **Error (system / storage error)**: Non-blocking warning banner notifies user of local database error with an actionable retry button (`[AC-006]`).
+
+### J-4: FAA Form 8130 airworthiness approval release and compliance audit export — covers [F-004 / FR-04], [AC-007], [AC-008]
+1. On `S-01` (Dashboard) → Chief Inspector (`[P-04]`) views operational overview → clicks primary action button.
+2. `S-05` loads → user inputs required parameters and configuration details (`[API-004]`).
+3. **Success**: System validates input, persists record into local database (`[TBL-04]`), displays confirmation toast, and updates active view within 1.0 s (`[AC-007]`, `[NFR-01]`).
+4. **Error (invalid input)**: Inline validation notices highlight offending fields, preserve user inputs without loss, and enable immediate correction (`[AC-008]`).
+5. **Error (system / storage error)**: Non-blocking warning banner notifies user of local database error with an actionable retry button (`[AC-008]`).
+
+## 3. Screen states
+### S-01 Dashboard & Activity Overview
+- **Loading**: Skeleton layout mirroring summary cards and operational activity feed with animated pulse effect.
+- **Empty**: Informational banner stating "No operational activity recorded today", accompanied by a primary CTA button.
+- **Populated**: Metric cards showing active records, system operational health, and searchable activity table.
+- **Error**: High-visibility banner stating "Unable to load dashboard metrics. Check local database connection", with a "Retry" button.
+- **No Permission**: Clean access-restricted view stating "Your role does not have authorization to view operational dashboard metrics".
+
+### S-02 Airframe maintenance work order dispatch and digital sign-off
+- **Loading**: Form and table skeleton displaying field placeholders and action button outlines with shimmer animation.
+- **Empty**: Clean workspace ready for data entry with autofocused input and primary "Airframe maintenance work order dispatch and digital sign-off" CTA button.
+- **Populated**: Structured interactive view displaying validated records, operational status badges, and action controls.
+- **Error**: High-contrast error callout detailing field validation failures or local SQLite query errors, with an actionable "Retry" button.
+- **No Permission**: Access-restricted notification stating "Access restricted: Only authorized personnel ([P-01]) may perform this action".
+
+### S-03 Line-maintenance discrepancy squawk logging and corrective action tracking
+- **Loading**: Form and table skeleton displaying field placeholders and action button outlines with shimmer animation.
+- **Empty**: Clean workspace ready for data entry with autofocused input and primary "Line-maintenance discrepancy squawk logging and corrective action tracking" CTA button.
+- **Populated**: Structured interactive view displaying validated records, operational status badges, and action controls.
+- **Error**: High-contrast error callout detailing field validation failures or local SQLite query errors, with an actionable "Retry" button.
+- **No Permission**: Access-restricted notification stating "Access restricted: Only authorized personnel ([P-02]) may perform this action".
+
+### S-04 Time-controlled component life limit and airworthiness directive monitoring
+- **Loading**: Form and table skeleton displaying field placeholders and action button outlines with shimmer animation.
+- **Empty**: Clean workspace ready for data entry with autofocused input and primary "Time-controlled component life limit and airworthiness directive monitoring" CTA button.
+- **Populated**: Structured interactive view displaying validated records, operational status badges, and action controls.
+- **Error**: High-contrast error callout detailing field validation failures or local SQLite query errors, with an actionable "Retry" button.
+- **No Permission**: Access-restricted notification stating "Access restricted: Only authorized personnel ([P-03]) may perform this action".
+
+### S-05 FAA Form 8130 airworthiness approval release and compliance audit export
+- **Loading**: Form and table skeleton displaying field placeholders and action button outlines with shimmer animation.
+- **Empty**: Clean workspace ready for data entry with autofocused input and primary "FAA Form 8130 airworthiness approval release and compliance audit export" CTA button.
+- **Populated**: Structured interactive view displaying validated records, operational status badges, and action controls.
+- **Error**: High-contrast error callout detailing field validation failures or local SQLite query errors, with an actionable "Retry" button.
+- **No Permission**: Access-restricted notification stating "Access restricted: Only authorized personnel ([P-04]) may perform this action".
+"""
+
+old_aerofleet_db_text = """# Visual Design Brief & Design System Specification: AeroFleet Hangar
+
+## 1. Design Principles & Theme Architecture
+Local-first, high data density per FAA AC 20-175 and MIL-STD-1472.
+
+## 2. Colours
+| Token | Light | Dark | Use | Contrast on Background |
+|---|---|---|---|---|
+| `--color-background` | `#f8fafc` | `#0f172a` | App page background | Baseline |
+| `--color-primary` | `#0284c7` | `#38bdf8` | Primary interactive buttons | 4.67:1 (PASS) |
+| `--color-text` | `#0f172a` | `#f8fafc` | Primary body text | 15.8:1 (PASS) |
+
+Derived from military aviation standards FAA AC 20-175 and MIL-STD-1472.
+"""
+
+aerofleet_dir = os.path.join(os.path.dirname(__file__), "..", "data", "projects", "a1f0e4b8-8c3d-4952-b68a-92e105db084c")
+aerofleet_prd_path = os.path.join(aerofleet_dir, "docs", "prd.md")
+aerofleet_arch_path = os.path.join(aerofleet_dir, "docs", "architecture.md")
+aerofleet_qa_path = os.path.join(aerofleet_dir, "qa_log.json")
+
+with open(aerofleet_prd_path, "r", encoding="utf-8") as f:
+    prd_old_text = f.read()
+with open(aerofleet_arch_path, "r", encoding="utf-8") as f:
+    arch_old_text = f.read()
+with open(aerofleet_qa_path, "r", encoding="utf-8") as f:
+    qa_old_log = json.load(f)
+
+# Evaluate with judge
+verdict_case2 = evaluate_design_with_judge(
+    app_flow_text=old_aerofleet_af_text,
+    design_brief_text=old_aerofleet_db_text,
+    prd_text=prd_old_text,
+    parsed_ba={"app_name": "AeroFleet Hangar", "qa_log": qa_old_log},
+    rubric_path="skills/designer/rubric.json",
+    architecture_text=arch_old_text
+)
+
+print(f"\nPass: {verdict_case2.get('pass')}")
+print(f"Total Score: {verdict_case2.get('total')}/{verdict_case2.get('max')}")
+print(f"Verdict Summary: {verdict_case2.get('verdict_summary')}")
+print(f"Unsupported Claims Count: {len(verdict_case2.get('unsupported_claims', []))}")
+
+print("\n--- Detected Fatal Flaws in Old AeroFleet Deliverable ---")
+for idx, uc in enumerate(verdict_case2.get("unsupported_claims", []), 1):
+    print(f"{idx}. [{uc.get('section', 'General')}] {uc.get('reason')}")
+    print(f"   Context snippet: {uc.get('text')}")
+
+# Assertions verifying Judge correctly caught the old AeroFleet flaws:
+assert verdict_case2.get("pass") is False, "Judge MUST FAIL old AeroFleet deliverable!"
+
+reasons_case2 = [uc.get("reason", "") for uc in verdict_case2.get("unsupported_claims", [])]
+
+has_dup_states = any("duplicate state" in r.lower() for r in reasons_case2)
+assert has_dup_states, "Judge must catch identical screen state sentences across screens S-02..S-05!"
+
+has_screen_name_len = any("screen name" in r.lower() for r in reasons_case2)
+assert has_screen_name_len, "Judge must catch screen name length violations (> 5 words)!"
+
+has_ungrounded_std = any(
+    ("standard" in uc.get("reason", "").lower() and "ungrounded" in uc.get("reason", "").lower()) or
+    ("faa ac" in uc.get("text", "").lower() or "mil-std" in uc.get("text", "").lower())
+    for uc in verdict_case2.get("unsupported_claims", [])
+)
+assert has_ungrounded_std, "Judge must catch ungrounded standards (FAA AC 20-175, MIL-STD-1472)!"
+
+print("\n>>> PROOF COMPLETE (CASE 2): Judge successfully and deterministically REJECTED the old AeroFleet deliverable with exact defect identification across duplicate states, screen name length, and ungrounded standards!")
+

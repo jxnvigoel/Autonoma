@@ -1,0 +1,86 @@
+{
+  "role": "backend",
+  "artifact": "src/",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "ac_test_coverage",
+      "name": "Acceptance Criteria and Failure Test Coverage",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every AC- has a test; every endpoint has failure-case tests covering 400, 401, 403, 404, 409.",
+      "scale": {
+        "3": "100% of story ACs tested with integration tests including all boundary failure conditions.",
+        "2": "All happy path ACs tested, but 1-2 edge/failure cases missing.",
+        "1": "Major ACs untested or tests purely mocked without assertions.",
+        "0": "No tests written."
+      }
+    },
+    {
+      "id": "contract_conformance",
+      "name": "OpenAPI Contract Conformance",
+      "max": 3,
+      "must_pass": true,
+      "description": "Response shapes, paths, methods, and status codes match openapi.yaml exactly. Errors use Problem Details (RFC 9457).",
+      "scale": {
+        "3": "Exact match to OpenAPI spec for requests, responses, status codes, and RFC 9457 error formatting.",
+        "2": "Paths and successful responses match, minor discrepancy in error details schema.",
+        "1": "Field names or HTTP status codes drift from openapi.yaml.",
+        "0": "Endpoint signature violates OpenAPI contract."
+      }
+    },
+    {
+      "id": "boundary_validation_auth",
+      "name": "Boundary Validation and Authorization Checks",
+      "max": 3,
+      "must_pass": true,
+      "description": "All input validated at the boundary with schemas. Auth (authentication and object-level authorization WHERE id = $1 AND owner_id = $2) verified on every endpoint.",
+      "scale": {
+        "3": "Rigorous boundary schema validation and server-enforced role and ownership checks on every endpoint.",
+        "2": "Validation and auth present on primary endpoints, but ownership check missing on one read endpoint.",
+        "1": "Weak validation or missing authorization checks allowing unauthorized access.",
+        "0": "Unauthenticated access allowed on protected endpoints."
+      }
+    },
+    {
+      "id": "safe_data_access",
+      "name": "Safe Parameterized Data Access and Indexing",
+      "max": 3,
+      "must_pass": true,
+      "description": "Parameterized queries only (zero SQL string interpolation). Proper short transactions. Indexes present for new query paths. Zero N+1 query loops.",
+      "scale": {
+        "3": "Strictly parameterized queries, short ACID transactions, no network calls inside transactions, verified query indexes.",
+        "2": "Parameterized queries used, but one list endpoint exhibits potential N+1 query pattern.",
+        "1": "String concatenation in query or long-running transaction with external calls.",
+        "0": "SQL injection vulnerability detected."
+      }
+    },
+    {
+      "id": "security_and_secrets",
+      "name": "OWASP Security and Secrets Management",
+      "max": 3,
+      "must_pass": true,
+      "description": "Zero secrets or API keys hardcoded. Config sourced from environment. Passwords hashed with Argon2id or bcrypt. Sensitive data masked in logs.",
+      "scale": {
+        "3": "Zero hardcoded credentials, Argon2id/bcrypt used, safe structured logging without PII or sensitive keys.",
+        "2": "Secrets externalized, but debug logging occasionally prints raw request payloads.",
+        "1": "Weak hashing (MD5/SHA1) or credentials in code.",
+        "0": "Plaintext passwords or committed production secret keys."
+      }
+    },
+    {
+      "id": "clean_execution",
+      "name": "Lint, Types, and Test Status",
+      "max": 3,
+      "must_pass": true,
+      "description": "Code compiles, linter is clean, TypeScript/Python types check with 0 errors, and test suite passes cleanly.",
+      "scale": {
+        "3": "Typecheck clean (0 errors), linter clean (0 warnings), all unit and integration tests green.",
+        "2": "Tests green, 1 minor harmless linter warning.",
+        "1": "Type check errors or failing unit tests.",
+        "0": "Code fails to compile or run."
+      }
+    }
+  ]
+}

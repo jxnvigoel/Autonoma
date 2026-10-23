@@ -1,0 +1,60 @@
+{
+  "pack_id": "notifications",
+  "name": "Notifications Audit Rubric",
+  "pass_threshold": 12,
+  "max_total": 12,
+  "criteria": [
+    {
+      "id": "asynchronous_outbox",
+      "name": "Asynchronous Outbox and Queueing",
+      "max": 3,
+      "must_pass": true,
+      "description": "Outbound email/SMS sending is decoupled from HTTP handlers via transactional outbox or background queue.",
+      "scale": {
+        "3": "Full transactional outbox pattern implemented; zero synchronous SMTP/HTTP provider calls in request handlers.",
+        "2": "Background thread used, but not written to durable DB outbox table first.",
+        "1": "Synchronous outbound call with short timeout.",
+        "0": "Blocking synchronous mail send inside web request loop."
+      }
+    },
+    {
+      "id": "safe_templating",
+      "name": "Safe Escaping and Plain-Text Alternatives",
+      "max": 3,
+      "must_pass": true,
+      "description": "Dynamic template interpolation auto-escapes HTML and provides plain-text fallback content.",
+      "scale": {
+        "3": "Auto-escaping active on all dynamic parameters; clean plain-text alternative generated.",
+        "2": "Escaping active, but plain-text alternative missing.",
+        "1": "Partial escaping or raw format string interpolation.",
+        "0": "Raw HTML string concatenation creating stored XSS or injection vulnerabilities."
+      }
+    },
+    {
+      "id": "bounce_and_suppression",
+      "name": "Bounce Handling and Suppression Lists",
+      "max": 3,
+      "must_pass": true,
+      "description": "Bounce/complaint webhooks record hard bounces to suppression table and abort future sends to those addresses.",
+      "scale": {
+        "3": "Automated suppression table lookup before sending and webhook ingestion for bounces/complaints.",
+        "2": "Suppression list exists, but webhook handling is manual.",
+        "1": "Bounces logged but addresses not suppressed from subsequent runs.",
+        "0": "No bounce handling or suppression list; repeated delivery attempts to dead addresses."
+      }
+    },
+    {
+      "id": "retries_and_opt_out",
+      "name": "Exponential Backoff Retries and Opt-Out Compliance",
+      "max": 3,
+      "must_pass": true,
+      "description": "Exponential backoff retries with DLQ after 3 failures; unsubscribe headers and link provided for non-transactional mail.",
+      "scale": {
+        "3": "Exponential backoff with DLQ on terminal failure, and List-Unsubscribe header + link implemented.",
+        "2": "Retries implemented, but unsubscribe link missing header format.",
+        "1": "Immediate retries without backoff or missing opt-out mechanism.",
+        "0": "Unbounded retries causing mail storms or zero unsubscribe capability."
+      }
+    }
+  ]
+}
