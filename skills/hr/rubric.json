@@ -1,0 +1,112 @@
+{
+  "role": "hr",
+  "artifact": "docs/team-plan.json",
+  "pass_threshold": 20,
+  "max_total": 24,
+  "criteria": [
+    {
+      "id": "sizing_from_work",
+      "name": "Sizing from Work and Velocity",
+      "max": 3,
+      "must_pass": false,
+      "description": "Seats are derived via formula ceil(points / (points_per_agent_per_week * weeks)) using config assumption [ASM-01], not arbitrary habit.",
+      "scale": {
+        "3": "Exact formulaic sizing from story points and weeks; verified against [ASM-01] velocity.",
+        "2": "Minor mathematical rounding difference within 1 seat count.",
+        "1": "Seats disconnected from work size or missing point basis.",
+        "0": "Arbitrary headcount without sizing arithmetic."
+      }
+    },
+    {
+      "id": "feature_coverage",
+      "name": "Full Must-Have Feature Coverage",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every Must-have feature (F-###) has a qualified seat able to implement, test, and deliver it.",
+      "scale": {
+        "3": "100% of Must-have features are mapped to competent roles with ownership.",
+        "2": "All features covered, but minor ambiguity in secondary feature allocation.",
+        "1": "One or more Must-have features unassigned or missing capable role.",
+        "0": "Major gaps in feature ownership."
+      }
+    },
+    {
+      "id": "citation_traceability",
+      "name": "Grounding and Citation of Work Sources",
+      "max": 3,
+      "must_pass": false,
+      "description": "Every seat explicitly cites the specific F-### and ADR-### IDs that create its work.",
+      "scale": {
+        "3": "100% of seats cite valid existing F- and ADR- IDs directly relevant to the role.",
+        "2": "Valid citations on all seats, but minor missing ADR link.",
+        "1": "Citations missing or referencing non-existent IDs.",
+        "0": "Zero citations on team seats."
+      }
+    },
+    {
+      "id": "role_merging",
+      "name": "Sparsity Merging for Minor Roles",
+      "max": 3,
+      "must_pass": false,
+      "description": "Roles with under 2 stories are merged into neighbouring or fullstack seats per Handbook 6.1.1 and [ASM-03].",
+      "scale": {
+        "3": "Proper merging of micro-workloads into fullstack/neighbouring seats with zero lone 1-story roles.",
+        "2": "Roles appropriately merged with minor overlap.",
+        "1": "Isolated seat maintained for less than 2 stories without merging.",
+        "0": "Sprawling unmerged single-task seats."
+      }
+    },
+    {
+      "id": "staggered_schedule",
+      "name": "Staggered Start Disciplines",
+      "max": 3,
+      "must_pass": false,
+      "description": "Staggering enforced: DevOps from week 1, QA from first build week, Performance QA once APIs exist.",
+      "scale": {
+        "3": "Exact adherence to staggering rules: DevOps at wk 1, QA at build start, Perf after APIs.",
+        "2": "Staggering observed with minor 1-week alignment variance.",
+        "1": "DevOps delayed or QA scheduled prior to code build.",
+        "0": "Flat start with all roles starting at week 1 simultaneously."
+      }
+    },
+    {
+      "id": "no_idle_seats",
+      "name": "Active Utilization and Zero Idle Seats",
+      "max": 3,
+      "must_pass": true,
+      "description": "No seat is scheduled idle for more than 1 week of its active span per Handbook 6.2.5 and [ASM-04].",
+      "scale": {
+        "3": "Every seat actively engaged across its scheduled span with 0 idle gaps exceeding 1 week.",
+        "2": "Minor idle window exactly equal to 1 week with documented dependency reason.",
+        "1": "Seat idle for 2 or more weeks during its span.",
+        "0": "Unutilized seats retained without active work."
+      }
+    },
+    {
+      "id": "budget_alignment",
+      "name": "Budget Transparency and Flagging",
+      "max": 3,
+      "must_pass": false,
+      "description": "Headcount * weeks is reconciled against budget limits; any shortfall is explicitly highlighted in notes.",
+      "scale": {
+        "3": "Total staffing cost reconciles with budget, and any gap is transparently flagged in notes.",
+        "2": "Staffing fits budget, but notes lack explicit headcount-week multiplication summary.",
+        "1": "Headcount exceeds budget without prominent warning note.",
+        "0": "Budget overrun concealed or omitted."
+      }
+    },
+    {
+      "id": "scope_architecture_integrity",
+      "name": "Preservation of Architecture and Non-Proliferation",
+      "max": 3,
+      "must_pass": true,
+      "description": "Architecture, technical stack, and PRD scope remain untouched; zero 'just in case' speculative seats.",
+      "scale": {
+        "3": "Strict sizing/timing focus only; zero architecture tampering; zero speculative seats.",
+        "2": "Preserved architecture, but rationale contains redundant role justification.",
+        "1": "Minor scope or stack adjustment suggested in reasons.",
+        "0": "Changed architecture decisions or added speculative 'just in case' seats."
+      }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "role": "tech-lead",
+  "artifact": "reviews/",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "ci_gate_enforcement",
+      "name": "CI Status Verification",
+      "max": 3,
+      "must_pass": true,
+      "description": "Reviews only proceed when CI is green. Red code returned immediately without review.",
+      "scale": {
+        "3": "Strictly blocks red code; reviews proceed only with clean tests, types, and lints.",
+        "2": "CI verified, minor warning in linter noted.",
+        "1": "Review conducted on failing CI without outright blocking.",
+        "0": "Approved diff with failing CI."
+      }
+    },
+    {
+      "id": "ac_verification",
+      "name": "Acceptance Criteria Verification",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every AC- of the story verified against diff and behavioral test execution.",
+      "scale": {
+        "3": "100% of story ACs verified against implementation and tests.",
+        "2": "All ACs verified, minor edge case overlooked.",
+        "1": "Approved code with an unmet AC.",
+        "0": "No AC verification conducted."
+      }
+    },
+    {
+      "id": "architecture_conformance",
+      "name": "Architecture and ADR Conformance",
+      "max": 3,
+      "must_pass": true,
+      "description": "Verifies compliance with cited ADRs, API contracts in openapi.yaml, and schema in schema.md.",
+      "scale": {
+        "3": "Full adherence to ADR decisions, API contracts, and database models.",
+        "2": "Adheres to ADRs, minor naming deviation from API schema.",
+        "1": "Violates a cited ADR or API contract without note.",
+        "0": "Complete departure from architectural blueprint."
+      }
+    },
+    {
+      "id": "security_validation",
+      "name": "Security and Authorization Checks",
+      "max": 3,
+      "must_pass": true,
+      "description": "Verifies endpoint authorization, schema validation at boundaries, safe parameterization, and no hardcoded secrets.",
+      "scale": {
+        "3": "All endpoints strictly validate inputs, enforce permissions, and contain zero secrets.",
+        "2": "Security verified, minor logging of non-sensitive request parameter noted.",
+        "1": "Missing input validation or authorization check.",
+        "0": "Vulnerability or plaintext credential approved."
+      }
+    },
+    {
+      "id": "actionable_comments",
+      "name": "Actionable Specific Feedback",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every comment names file, line, rule, and concrete fix. Clearly marked blocker, major, or nit.",
+      "scale": {
+        "3": "Every comment specifies file, line, rule, concrete fix, and explicit severity.",
+        "2": "Specific comments with fixes, minor severity label missing on nit.",
+        "1": "Vague comments or missing concrete fixes.",
+        "0": "Comments based on personal taste or lacking file/line anchors."
+      }
+    },
+    {
+      "id": "no_code_rewriting",
+      "name": "Reviewer Boundaries (Must Not Rewrite)",
+      "max": 3,
+      "must_pass": true,
+      "description": "Reviewer guides and reviews; never rewrites the code directly.",
+      "scale": {
+        "3": "Strict review comments with guidance; developer implements all code changes.",
+        "2": "Guidance provided with small snippet illustrative examples.",
+        "1": "Reviewer provides extensive code replacement blocks.",
+        "0": "Reviewer directly rewrites the pull request code."
+      }
+    }
+  ]
+}

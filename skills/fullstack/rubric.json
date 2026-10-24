@@ -1,0 +1,86 @@
+{
+  "role": "fullstack",
+  "artifact": "src/",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "e2e_vertical_slice",
+      "name": "End-to-End Vertical Slice Coverage",
+      "max": 3,
+      "must_pass": true,
+      "description": "Story includes an end-to-end integration test demonstrating database migration, API route, and user-facing UI slice.",
+      "scale": {
+        "3": "Complete vertical slice verified with runnable end-to-end integration test covering primary AC.",
+        "2": "Full stack implemented, minor omission in e2e test edge assertion.",
+        "1": "Frontend and backend present but disconnected without e2e verification.",
+        "0": "Incomplete vertical slice."
+      }
+    },
+    {
+      "id": "contract_integrity",
+      "name": "Contract and Schema Integrity",
+      "max": 3,
+      "must_pass": true,
+      "description": "Backend adheres strictly to schema.md and openapi.yaml; frontend consumes only contracted endpoints.",
+      "scale": {
+        "3": "Strict contract conformance across both layers with zero shortcuts or schema drift.",
+        "2": "Contract compliant, minor discrepancy in frontend error mapping.",
+        "1": "Shortcut taken: field bypassed without schema migration.",
+        "0": "Violates API or database contract."
+      }
+    },
+    {
+      "id": "back_to_front_order",
+      "name": "Back-to-Front Implementation Discipline",
+      "max": 3,
+      "must_pass": true,
+      "description": "Migration first, then API endpoint & tests, then UI & tests.",
+      "scale": {
+        "3": "Clear back-to-front progression with discrete commits or clean layering.",
+        "2": "Proper layering, minor concurrent editing of UI and handler.",
+        "1": "Front-end created without working backend endpoint.",
+        "0": "Disorderly code with missing migrations."
+      }
+    },
+    {
+      "id": "security_and_auth",
+      "name": "Security and Least Privilege",
+      "max": 3,
+      "must_pass": true,
+      "description": "Server-side authorization enforced on endpoints; no secrets in frontend code; safe parameterized queries.",
+      "scale": {
+        "3": "Full security compliance across backend authorization and client-side credential hygiene.",
+        "2": "Secure, minor debug logging note.",
+        "1": "Missing server-side permission check.",
+        "0": "Hardcoded secret or SQL injection vulnerability."
+      }
+    },
+    {
+      "id": "ui_state_and_a11y",
+      "name": "UI States and Accessibility",
+      "max": 3,
+      "must_pass": true,
+      "description": "All UI states handled (loading, empty, error); WCAG 2.2 AA compliant.",
+      "scale": {
+        "3": "Comprehensive UI states and verified keyboard accessibility.",
+        "2": "UI states present, minor styling polish on empty state.",
+        "1": "Missing error or loading state.",
+        "0": "Inaccessible UI or unhandled crash."
+      }
+    },
+    {
+      "id": "clean_execution",
+      "name": "Clean Execution, Types, and Tests",
+      "max": 3,
+      "must_pass": true,
+      "description": "TypeScript compiler clean, linter clean, all backend and frontend tests pass.",
+      "scale": {
+        "3": "100% green tests, 0 compiler errors, 0 linter warnings.",
+        "2": "Tests passing, 1 minor linter warning.",
+        "1": "Failing test or type error.",
+        "0": "Build fails."
+      }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "role": "devops",
+  "artifact": "docs/runbook.md",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "ci_pipeline_blocking",
+      "name": "CI Pipeline Configuration and Merge Blocking",
+      "max": 3,
+      "must_pass": true,
+      "description": "CI pipeline enforces lint, type check, test suite execution, and security scans; merges on red strictly blocked from Week 1.",
+      "scale": {
+        "3": "Complete CI pipeline configured and blocking merges on lint, type, test, or scan failure.",
+        "2": "CI configured with required stages, minor caching optimization missing.",
+        "1": "CI pipeline permits merges on warning or skips type check.",
+        "0": "Missing CI pipeline configuration."
+      }
+    },
+    {
+      "id": "container_best_practices",
+      "name": "Container Best Practices and Security",
+      "max": 3,
+      "must_pass": true,
+      "description": "Pinned base image tags (zero :latest), multi-stage build, runs as non-root user, minimal file inclusion, explicit health check.",
+      "scale": {
+        "3": "All containers follow pinned digest/version, multi-stage, non-root USER, and HEALTHCHECK instructions.",
+        "2": "Containers secure with pinned tags, minor non-root permission adjustment needed.",
+        "1": "Runs as root or includes unnecessary source files.",
+        "0": "Uses :latest tag or insecure privileged execution."
+      }
+    },
+    {
+      "id": "reproducible_preview_environment",
+      "name": "Single-Command Seeded Preview Environment",
+      "max": 3,
+      "must_pass": true,
+      "description": "A single command brings up the complete system with reproducible seed data in local preview.",
+      "scale": {
+        "3": "One command docker-compose up brings up app, database, and seeds baseline data cleanly.",
+        "2": "Preview environment functions, minor manual step in initial seed script.",
+        "1": "Preview setup requires multiple undocumented manual steps.",
+        "0": "Preview environment fails to launch."
+      }
+    },
+    {
+      "id": "verified_rollback_and_restore",
+      "name": "Verified Rollback and Backup Restore",
+      "max": 3,
+      "must_pass": true,
+      "description": "Rollback and database backup restore procedures were actually executed with tool verification, not merely drafted.",
+      "scale": {
+        "3": "Both rollback drill and database restore executed once with logged operational evidence.",
+        "2": "Rollback executed, database backup script tested without full restore drill.",
+        "1": "Rollback steps documented in text only without verified run.",
+        "0": "Untested deployment steps."
+      }
+    },
+    {
+      "id": "secret_and_config_hygiene",
+      "name": "Secret Management and Git Hygiene",
+      "max": 3,
+      "must_pass": true,
+      "description": "Config externalized via env vars; zero credentials committed; .gitignore strictly covers all secret files.",
+      "scale": {
+        "3": "Zero secrets in git history or container layers; environment-driven configuration verified.",
+        "2": "Clean hygiene, minor template placeholder in .env.example noted.",
+        "1": "Potential secret or test credential present in committed config.",
+        "0": "Committed production secret or token."
+      }
+    },
+    {
+      "id": "runbook_executable_fidelity",
+      "name": "Runbook Executability and Tool Fidelity",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every command documented in docs/runbook.md was verified against real execution in the environment.",
+      "scale": {
+        "3": "100% of runbook commands verified and runnable verbatim by an operator.",
+        "2": "Runbook clear and functional, minor shell syntax note for zsh/bash.",
+        "1": "Runbook contains incomplete or pseudo-code command lines.",
+        "0": "Fictional runbook."
+      }
+    }
+  ]
+}

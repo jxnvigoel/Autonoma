@@ -1,0 +1,86 @@
+{
+  "role": "scrum",
+  "artifact": "docs/backlog.json",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "must_have_ac_coverage",
+      "name": "Must-Have Acceptance Criteria Coverage",
+      "max": 3,
+      "must_pass": true,
+      "description": "100% of Must-have ACs from docs/prd.md are mapped into stories in backlog.json.",
+      "scale": {
+        "3": "Every single Must-have AC is covered by a discrete story with explicit refs.",
+        "2": "All ACs covered, minor duplicate AC reference across two stories.",
+        "1": "One or more Must-have ACs omitted from backlog.",
+        "0": "Major gaps in requirements coverage."
+      }
+    },
+    {
+      "id": "invest_story_sizing",
+      "name": "INVEST Criteria and Story Sizing",
+      "max": 3,
+      "must_pass": true,
+      "description": "Stories satisfy INVEST criteria; no story exceeds 5 story points (1 day of agent work).",
+      "scale": {
+        "3": "All stories <= 5 points, sliced by user-visible outcome, testable and independent.",
+        "2": "Stories sized <= 5 points, minor multi-layer grouping.",
+        "1": "Story over 5 points requiring breakdown.",
+        "0": "Epic-sized stories or non-testable descriptions."
+      }
+    },
+    {
+      "id": "walking_skeleton_precedence",
+      "name": "Walking Skeleton First Milestone",
+      "max": 3,
+      "must_pass": true,
+      "description": "Story 1 is the walking skeleton defined in architecture.md; zero dependency cycles in the graph.",
+      "scale": {
+        "3": "Walking skeleton is the first story; strict DAG dependency structure with zero cycles.",
+        "2": "Walking skeleton prioritized, minor redundant dependency link.",
+        "1": "Walking skeleton delayed behind non-critical features.",
+        "0": "Dependency cycle detected in story graph."
+      }
+    },
+    {
+      "id": "balanced_load_roster_assignment",
+      "name": "Roster Assignment and Load Balancing",
+      "max": 3,
+      "must_pass": true,
+      "description": "Stories assigned strictly to valid agents from docs/team-plan.json by role; balanced load across parallel seats.",
+      "scale": {
+        "3": "All stories assigned to existing agents from roster with balanced distribution across seats.",
+        "2": "Assigned to valid agents, slight imbalance in point distribution.",
+        "1": "Story assigned to non-existent agent or wrong role.",
+        "0": "Unassigned stories or ungrounded agent IDs."
+      }
+    },
+    {
+      "id": "daily_report_factual_integrity",
+      "name": "Daily Report Factual Task Integrity",
+      "max": 3,
+      "must_pass": true,
+      "description": "Daily reports cite facts directly from task records; blockers listed first; tokens reconciled with ledger.",
+      "scale": {
+        "3": "100% of reported progress traces directly to task records and token ledger with blockers prioritized.",
+        "2": "Factual report, minor formatting variance in token summary.",
+        "1": "Progress reported without corresponding task record update.",
+        "0": "Hallucinated status or concealed blockers."
+      }
+    },
+    {
+      "id": "scope_preservation",
+      "name": "Scope and AC Preservation (Must Not Mutate)",
+      "max": 3,
+      "must_pass": true,
+      "description": "Scrum Master preserves PRD scope and acceptance criteria verbatim without inventing, dropping, or rewriting.",
+      "scale": {
+        "3": "Scope and ACs preserved with exact verbatim traceability.",
+        "2": "Preserved, minor addition of clarifying test hint.",
+        "1": "AC rewritten altering original verification criteria.",
+        "0": "Scope added or removed without authorization."
+      }
+    }
+  ]
+}

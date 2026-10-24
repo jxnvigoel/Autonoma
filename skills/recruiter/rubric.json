@@ -1,0 +1,112 @@
+{
+  "role": "recruiter",
+  "artifact": "docs/staffing-report.md",
+  "pass_threshold": 20,
+  "max_total": 24,
+  "criteria": [
+    {
+      "id": "skill_pack_conformance",
+      "name": "Skill Pack Registry Matching",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every filled seat matches a registered skill pack; missing packs return 'blocked'; zero invented packs; spec_only packs explicitly labeled.",
+      "scale": {
+        "3": "100% of seats matched to valid registry packs; spec_only packs labeled; missing packs properly blocked.",
+        "2": "Packs matched accurately, but minor missing note on spec_only status.",
+        "1": "One role matched to an incompatible or unverified skill pack.",
+        "0": "Invented skill pack created without registry backing."
+      }
+    },
+    {
+      "id": "model_tier_compliance",
+      "name": "Model Tier Assignment by Risk",
+      "max": 3,
+      "must_pass": false,
+      "description": "Model tier strictly follows Handbook 6.1.2 risk table; dynamic resolution via live /models without hardcoded models.",
+      "scale": {
+        "3": "All agents assigned correct tier (high/medium/low) resolved dynamically to healthy live providers.",
+        "2": "Tier correct, but fallback resolution priority order slightly non-standard.",
+        "1": "Role assigned lower or higher tier without documented risk reasoning.",
+        "0": "Model names hardcoded or incorrect risk tier assigned without authorization."
+      }
+    },
+    {
+      "id": "downgrade_transparency",
+      "name": "Model Downgrade Logging and Quality Impact",
+      "max": 3,
+      "must_pass": false,
+      "description": "Every model tier fallback/downgrade is explicitly logged in notes with expected effect on output quality per Handbook 22.4 rule 2.",
+      "scale": {
+        "3": "Every downgrade documented with original tier, fallback tier, and explicit quality effect statement.",
+        "2": "Downgrade noted with fallback model, but quality impact statement is brief.",
+        "1": "Downgrade occurred but missing expected quality impact.",
+        "0": "Silent downgrade hidden without logging."
+      }
+    },
+    {
+      "id": "least_privilege_tools",
+      "name": "Least Privilege Tool Allowances",
+      "max": 3,
+      "must_pass": true,
+      "description": "Tools restricted strictly to Handbook 6.1.3 allowances. Zero run/shell/network tools on document roles (BA, PM, HR, Recruiter, Scrum, Designer).",
+      "scale": {
+        "3": "Strict least privilege: document roles get only read/write docs tools; developer/QA roles get specific scoped tools.",
+        "2": "Tools compliant, minor redundant read tool assigned.",
+        "1": "Document role holds an unnecessary read/write permission beyond docs/.",
+        "0": "Document role assigned shell, run, or git execution tools (Must-Not violation)."
+      }
+    },
+    {
+      "id": "filesystem_scope_least_privilege",
+      "name": "Filesystem Scope Sandboxing",
+      "max": 3,
+      "must_pass": false,
+      "description": "Agent fs_scope is narrowed to exact role folder per Handbook 6.1.3 (docs/, own worktree, tests/, repo root).",
+      "scale": {
+        "3": "Every agent profile has strictly bounded fs_scope according with Handbook Table 6.1.3.",
+        "2": "Scoped correctly, minor relative path normalization variation.",
+        "1": "Scope broader than necessary (e.g. repo root given to document role).",
+        "0": "Unbounded root or system filesystem access."
+      }
+    },
+    {
+      "id": "token_cap_attribution",
+      "name": "Token Cap Derivation and Buffer",
+      "max": 3,
+      "must_pass": false,
+      "description": "Token cap derived directly from estimate.json for that role + 20% rework buffer per Handbook 5.1.6; missing roles flagged.",
+      "scale": {
+        "3": "Exact derivation from estimate.json with 20% rework buffer; unestimated roles explicitly flagged.",
+        "2": "Token cap matches estimate, but 20% rework buffer rounded slightly.",
+        "1": "Token cap guessed rather than traced to estimate.json.",
+        "0": "Missing token caps or arbitrary numbers."
+      }
+    },
+    {
+      "id": "org_chart_reporting",
+      "name": "Org Chart Hierarchy and Management Links",
+      "max": 3,
+      "must_pass": false,
+      "description": "reports_to links follow org chart 2.1: Devs, QA, Perf, DevOps report to tech-lead; others per chart.",
+      "scale": {
+        "3": "100% of reports_to relationships accurately follow Handbook 2.1 hierarchy.",
+        "2": "Valid reporting line with minor naming discrepancy.",
+        "1": "Incorrect reporting relationship assigned (e.g. dev reporting to PM).",
+        "0": "Missing reports_to links or cyclic reporting lines."
+      }
+    },
+    {
+      "id": "requisition_completion",
+      "name": "Requisition Completion and Config Names",
+      "max": 3,
+      "must_pass": true,
+      "description": "All HR requisitions (ROLE-##) are filled or flagged blocked; agent names sourced from config pool, never LLM hallucinated.",
+      "scale": {
+        "3": "All requisitions processed; agent names sourced cleanly from config pool; one row per filled seat in agents table.",
+        "2": "All requisitions filled, but name pool cycle repeated.",
+        "1": "One requisition left unhandled without blocked status.",
+        "0": "Requisitions dropped or agent names generated via LLM domain text."
+      }
+    }
+  ]
+}

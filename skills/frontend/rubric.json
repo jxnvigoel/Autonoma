@@ -1,0 +1,86 @@
+{
+  "role": "frontend",
+  "artifact": "src/",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "ac_coverage_tests",
+      "name": "Acceptance Criteria and Component Tests",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every AC- has component tests verifying behavior and error states.",
+      "scale": {
+        "3": "100% of story ACs covered with automated component tests including error states.",
+        "2": "All happy path ACs tested, minor edge test missing.",
+        "1": "ACs untested or tests lack assertions.",
+        "0": "No tests written."
+      }
+    },
+    {
+      "id": "api_contract_adherence",
+      "name": "API Contract and Typed Client Adherence",
+      "max": 3,
+      "must_pass": true,
+      "description": "Strict conformance to openapi.yaml. Never calls endpoints outside the contract.",
+      "scale": {
+        "3": "Exact match to OpenAPI contract using typed client; all HTTP error responses handled.",
+        "2": "Adheres to contract, minor omission in client-side retry for 5xx.",
+        "1": "Calls uncontracted endpoint or drifts from parameter types.",
+        "0": "Violates API contract signatures."
+      }
+    },
+    {
+      "id": "ui_state_completeness",
+      "name": "All Screen States Handled",
+      "max": 3,
+      "must_pass": true,
+      "description": "Loading, empty, error, success, and no-permission states are completely handled.",
+      "scale": {
+        "3": "All screen states gracefully handled with explicit UI feedback.",
+        "2": "All main states handled, empty state slightly plain.",
+        "1": "Missing error or loading state causing visual glitch.",
+        "0": "Unhappy paths unhandled, uncaught exception on error."
+      }
+    },
+    {
+      "id": "accessibility_wcag",
+      "name": "WCAG 2.2 AA Accessibility",
+      "max": 3,
+      "must_pass": true,
+      "description": "Semantic HTML, keyboard navigable, visible focus, alt text, passing automated a11y checks.",
+      "scale": {
+        "3": "Full WCAG 2.2 AA compliance: semantic tags, labels, keyboard operable, passing automated scan.",
+        "2": "Compliant, minor focus outline styling adjustment needed.",
+        "1": "Missing input labels or non-semantic interactive div elements.",
+        "0": "Completely inaccessible via keyboard or screen reader."
+      }
+    },
+    {
+      "id": "responsive_design",
+      "name": "Mobile and Responsive Layout",
+      "max": 3,
+      "must_pass": true,
+      "description": "Responsive layout without horizontal overflow down to 360px viewport.",
+      "scale": {
+        "3": "Clean responsive behavior tested from 360px to 1280px+ viewports.",
+        "2": "Responsive, minor wrapping on 360px view.",
+        "1": "Horizontal scroll bar or element clipping on mobile.",
+        "0": "Non-responsive fixed-width layout."
+      }
+    },
+    {
+      "id": "clean_execution",
+      "name": "Lint, Types, and Green Tests",
+      "max": 3,
+      "must_pass": true,
+      "description": "TypeScript compiler clean (0 errors), linter clean (0 warnings), tests passing.",
+      "scale": {
+        "3": "Zero TypeScript errors, zero linter warnings, 100% green tests.",
+        "2": "Green tests, 1 minor linter warning.",
+        "1": "TypeScript error or broken unit test.",
+        "0": "Build or execution fails."
+      }
+    }
+  ]
+}

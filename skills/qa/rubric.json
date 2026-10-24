@@ -1,0 +1,86 @@
+{
+  "role": "qa",
+  "artifact": "reports/qa/",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "ac_traceability_executed",
+      "name": "AC Traceability and Test Execution",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every AC- has at least one TC- that was actually executed in the repo test suite.",
+      "scale": {
+        "3": "100% of story ACs have executed TC- test cases with logged evidence.",
+        "2": "All ACs tested, minor trace ID formatting variation.",
+        "1": "AC missing test coverage or test not executed.",
+        "0": "Tests not run or no traceability to ACs."
+      }
+    },
+    {
+      "id": "boundary_negative_coverage",
+      "name": "Boundary and Negative Testing",
+      "max": 3,
+      "must_pass": true,
+      "description": "Tests cover boundaries and negative cases: empty, zero, negative, duplicates, permissions, expired session.",
+      "scale": {
+        "3": "Thorough boundary and negative testing across all inputs, states, and permissions.",
+        "2": "Boundary values tested, minor negative case missing.",
+        "1": "Happy path only with missing negative testing.",
+        "0": "No edge case or error testing."
+      }
+    },
+    {
+      "id": "regression_suite_execution",
+      "name": "Full Regression Suite Verification",
+      "max": 3,
+      "must_pass": true,
+      "description": "The full regression suite is executed, not merely newly added tests.",
+      "scale": {
+        "3": "Full regression suite executed and confirmed green with zero regressions.",
+        "2": "Regression suite executed, minor non-blocking skip observed.",
+        "1": "Only new tests executed without running full regression suite.",
+        "0": "Regression suite bypassed."
+      }
+    },
+    {
+      "id": "bug_evidence_rigor",
+      "name": "Evidence-Backed Bug Reports",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every reported bug includes ID, story, AC, severity, reproduction steps, expected vs actual, and real run evidence.",
+      "scale": {
+        "3": "All bugs contain reproduction steps, expected/actual outputs, and raw execution evidence.",
+        "2": "Bugs documented with evidence, minor severity detail missing.",
+        "1": "Bug report lacks reproduction steps or raw log evidence.",
+        "0": "Speculative bugs reported without run evidence."
+      }
+    },
+    {
+      "id": "gate_pass_discipline",
+      "name": "Strict Pass Gate Discipline",
+      "max": 3,
+      "must_pass": true,
+      "description": "Passes story ONLY when every AC test passes and zero blocker or major bugs remain.",
+      "scale": {
+        "3": "Pass recorded only with 100% AC pass and 0 blocker/major defects.",
+        "2": "Passed with 1 cosmetic/minor bug documented with workaround.",
+        "1": "Passed despite an unresolved major bug.",
+        "0": "Passed with failing tests or blocker bugs."
+      }
+    },
+    {
+      "id": "no_code_modifications",
+      "name": "Tester Role Boundaries (Must Not Fix Code)",
+      "max": 3,
+      "must_pass": true,
+      "description": "QA writes tests and reports defects; never alters application source code directly.",
+      "scale": {
+        "3": "Strict role boundary maintained: only test files and reports modified.",
+        "2": "Proper boundaries, minor typo fix in test assertion.",
+        "1": "QA agent modified source code helper.",
+        "0": "QA directly refactored application production code."
+      }
+    }
+  ]
+}

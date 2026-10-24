@@ -1,0 +1,86 @@
+{
+  "role": "perf",
+  "artifact": "reports/perf/",
+  "pass_threshold": 15,
+  "max_total": 18,
+  "criteria": [
+    {
+      "id": "slo_testing_coverage",
+      "name": "SLO Verification with Measured Values",
+      "max": 3,
+      "must_pass": true,
+      "description": "Every defined SLO- is tested with explicit measured numbers (p50, p95, p99, error rate) compared directly against targets.",
+      "scale": {
+        "3": "100% of SLOs tested with raw p50/p95/p99 latency, throughput, and error metrics from tool output.",
+        "2": "All SLOs tested, minor omission in soak test duration.",
+        "1": "Partial SLO testing or missing p99 percentile.",
+        "0": "No SLO verification."
+      }
+    },
+    {
+      "id": "grounded_load_profiles",
+      "name": "Grounded Load Profiles from NFRs",
+      "max": 3,
+      "must_pass": true,
+      "description": "Load profiles derive from cited NFR-s and capacity arithmetic in docs/architecture.md without invented numbers.",
+      "scale": {
+        "3": "Load numbers (RPS, concurrency, data volume) strictly cited from NFRs and architecture capacity tier.",
+        "2": "Profiles grounded, minor extrapolation for spike test.",
+        "1": "Load profile diverges from architecture capacity estimate.",
+        "0": "Arbitrary hallucinated load figures."
+      }
+    },
+    {
+      "id": "four_stage_testing_order",
+      "name": "Four-Stage Execution Discipline",
+      "max": 3,
+      "must_pass": true,
+      "description": "Executes testing in strict sequence: smoke, load, spike, and soak.",
+      "scale": {
+        "3": "Complete 4-stage execution sequence verified with scripts and reports for smoke, load, spike, and soak.",
+        "2": "Smoke, load, and spike executed; soak shortened with documented rationale.",
+        "1": "Only smoke or load test executed.",
+        "0": "Missing execution stages."
+      }
+    },
+    {
+      "id": "realistic_journey_testing",
+      "name": "Realistic Multi-Step User Journeys",
+      "max": 3,
+      "must_pass": true,
+      "description": "Tests realistic end-to-end user journeys with realistic data sizes, not single endpoints in isolated loops.",
+      "scale": {
+        "3": "Multi-step user journeys exercised with realistic payload distributions and session states.",
+        "2": "Realistic journeys, minor static reuse of payload data.",
+        "1": "Test focuses on single endpoint in tight loop.",
+        "0": "Synthetic ping tests only."
+      }
+    },
+    {
+      "id": "tool_measurement_fidelity",
+      "name": "Tool Measurement Data Fidelity",
+      "max": 3,
+      "must_pass": true,
+      "description": "All numbers in report copied exactly from k6 tool output; suspected root causes marked SUSPECTED: until verified.",
+      "scale": {
+        "3": "Exact numerical fidelity to raw tool logs; hypotheses properly marked SUSPECTED: until confirmed.",
+        "2": "Numbers match tool output, minor rounding difference.",
+        "1": "Discrepancy between report numbers and raw execution logs.",
+        "0": "Invented metrics not present in tool output."
+      }
+    },
+    {
+      "id": "defect_evidence_rigor",
+      "name": "Evidence-Backed Performance Issues",
+      "max": 3,
+      "must_pass": true,
+      "description": "Reported performance bottlenecks backed by concrete resource telemetry (slow queries, CPU, memory, connection pools).",
+      "scale": {
+        "3": "All reported issues accompanied by specific resource saturation and latency trace evidence.",
+        "2": "Issues backed by latency percentiles, minor missing connection pool telemetry.",
+        "1": "Bottleneck reported without resource telemetry evidence.",
+        "0": "Unsubstantiated performance claims."
+      }
+    }
+  ]
+}

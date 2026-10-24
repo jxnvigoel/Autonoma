@@ -1,0 +1,43 @@
+{
+  "tiers": {
+    "high": [
+      { "provider": "groq", "model": "openai/gpt-oss-120b" },
+      { "provider": "groq", "model": "llama-3.3-70b-versatile" },
+      { "provider": "ollama", "model": "llama3.2:3b" }
+    ],
+    "medium": [
+      { "provider": "groq", "model": "qwen/qwen3.8-27b" },
+      { "provider": "groq", "model": "llama-3.1-8b-instant" },
+      { "provider": "ollama", "model": "llama3.2:3b" }
+    ],
+    "low": [
+      { "provider": "groq", "model": "llama-3.1-8b-instant" },
+      { "provider": "groq", "model": "qwen/qwen3.8-27b" },
+      { "provider": "ollama", "model": "llama3.2:3b" }
+    ]
+  },
+  "roles": {
+    "architect": "high",
+    "tech-lead": "high",
+    "judge": "high",
+    "frontend": "high",
+    "backend": "high",
+    "fullstack": "high",
+    "engineer": "high",
+    "pm": "medium",
+    "designer": "medium",
+    "qa": "medium",
+    "perf": "medium",
+    "devops": "medium",
+    "ba": "low",
+    "hr": "low",
+    "recruiter": "low",
+    "scrum": "low"
+  },
+  "downgrade_quality_effects": {
+    "high_to_medium": "Reduced synthesis capability on compound architectural and algorithmic design decisions.",
+    "high_to_low": "Significant quality degradation; simple templated implementations only; high risk of logical omissions.",
+    "medium_to_low": "Lower nuanced adherence to edge cases; structured templates will still be maintained.",
+    "cloud_to_local": "Running on local hardware ($0 cost); slower inference latency; reduced capacity on complex reasoning."
+  }
+}
