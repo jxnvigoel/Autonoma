@@ -104,19 +104,36 @@ Every skill pack must contain a valid `manifest.json` at its root. Adding a new 
 
 ---
 
-## 4. Role Tool Allowances (Table 6.1.3 Enforcement)
+## 4. Role Tool Allowances & Least Privilege (Handbook Section 6.1.3)
 
-Per Handbook Section 6.1.3, agents receive only the smallest set of tools necessary for their role:
+Per **Handbook Section 6.1.3 (Least privilege)** verbatim:
+```text
+Role                                     Tools                                                                 Folder
+BA, PM, HR, Recruiter, Scrum, Designer   read artifacts, write docs/                                           docs/
+Architect                                + check_package                                                       docs/
+Developers                               read/write/edit, run (allowlist), git on own branch, check_package     own worktree
+Tech Lead                                read, diff, comment                                                   read-only
+QA / Perf                                read, write tests, run_tests, k6_run                                  tests/, perf/
+DevOps                                   CI, Docker, run                                                       repo root, never production
+```
 
-| Role | Allowed Tool Types |
-|---|---|
-| `ba` | `read_file`, `write_file`, `grep_search`, `list_dir`, `ask_question` |
-| `pm` | `read_file`, `write_file`, `grep_search`, `list_dir`, `ask_question` |
-| `architect` | `read_file`, `write_file`, `replace_file_content`, `grep_search`, `list_dir`, `validate_openapi` |
-| `designer` | `read_file`, `write_file`, `replace_file_content`, `list_dir`, `calculate_contrast` |
-| `backend` | `read_file`, `write_file`, `replace_file_content`, `run_command`, `grep_search`, `list_dir` |
-| `frontend` | `read_file`, `write_file`, `replace_file_content`, `run_command`, `grep_search`, `list_dir` |
-| `qa` | `read_file`, `write_file`, `run_command`, `grep_search`, `list_dir`, `k6_run`, `browser_subagent` |
+Per **Handbook Section 6.1.2 (Staffing by model tier - the Recruiter's job)** verbatim:
+```text
+Tier     Roles                                                  Why
+High     Architect, developers, Tech Lead, LLM Judge            mistakes here are expensive and compound
+Medium   PM, Designer, QA, Performance QA, DevOps               structured work with strong templates and tools
+Low      BA relay turns, HR, Recruiter, Scrum summaries         short, templated text
+```
+
+Per **Handbook Chapter 12 (Backend and Full-stack Engineers)** verbatim:
+> "Build services that are correct, secure and fast, exactly to the API contract and data model, at the scale tier the Architect chose."
+>
+> **12.2 Full-stack Engineer**: "Full-stack engineers apply both the Frontend and the Backend expertise above to a vertical slice: migration → endpoint and tests → UI and tests → one end-to-end test. The contract still applies even when one agent owns both sides."
+>
+> **12.4 Job description: Full-stack Engineer**: "Mission: Deliver a complete user-facing slice (screen, API and data) for small teams and MVPs."
+
+> [!NOTE]
+> **Runtime Implementation Note**: As of the current virtual office phase, **no Backend agent runtime exists yet**. Backend, Frontend, Fullstack, DevOps, QA, and Performance roles are currently **specification-only** (per Handbook 6.3.4 Step 1) and evaluated via deterministic and composite Judge test suites.
 
 If a skill pack's manifest specifies a `required_tool` not present in the role's allowance, `attach_skill_pack()` **rejects the attachment with a permission violation error**.
 

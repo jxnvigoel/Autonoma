@@ -279,10 +279,12 @@ class TestSpecialistSkillRegistry(unittest.TestCase):
             return res
 
         @app.post("/api/v1/payments/webhook")
-        async def payment_webhook(request: Request, signature: str = Header(..., alias="Stripe-Signature")):
+        async def payment_webhook(request: Request, signature: str = Header(..., alias="Stripe-Signature"), timestamp: int = Header(..., alias="Stripe-Timestamp")):
+            if abs(time.time() - timestamp) > 300:
+                raise HTTPException(status_code=400, detail="Timestamp tolerance exceeded")
             body = await request.body()
             secret = "whsec_test_secret"
-            expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            expected = hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
             if not hmac.compare_digest(expected, signature):
                 raise HTTPException(status_code=400, detail="Invalid webhook signature")
             return {"status": "verified"}
@@ -390,6 +392,234 @@ class TestSpecialistSkillRegistry(unittest.TestCase):
         self.assertTrue("API-004" in evidence_ids or "API-005" in evidence_ids)
         self.assertIn("ADR recommends attaching 'Payments & Idempotency Specialist'", payments_need["adr_recommendation"])
 
+    def test_detection_negation_and_keyword_only(self):
+        """
+        DOD Part 2.3:
+        Detection tests: negation ('no payments in scope'), 'Stripe' or 'invoice' only,
+        'authentication' mentioned in passing, a refund policy with no payment flow.
+        Keyword-only hits must NEVER reach 'high'.
+        """
+        # 1. Negation: 'no payments in scope'
+        prd_negated = """
+        # PRD: Simple Reader App
+        ## 7. Out of scope
+        - No payments in scope for v1 MVP. Zero payment processing; payments are out of scope.
+        """
+        res_neg = detect_specialist_needs(prd_text=prd_negated)
+        self.assertEqual(len(res_neg["specialist_needs"]), 0, "Negated payment mentions must not recommend payments pack!")
+
+        # 2. 'Stripe' or 'invoice' only
+        prd_invoice_only = """
+        # PRD: Document Generator
+        ## 5. Features
+        ### F-001: Download invoice PDF
+        - Story: As a user, I want to download a PDF copy of an invoice.
+        """
+        res_inv = detect_specialist_needs(prd_text=prd_invoice_only)
+        self.assertEqual(len(res_inv["specialist_needs"]), 0, "Invoice-only hit must NEVER reach 'high'!")
+        self.assertTrue(len(res_inv["weak_matches"]) > 0 or len(res_inv["open_questions"]) > 0)
+        if res_inv["weak_matches"]:
+            self.assertNotEqual(res_inv["weak_matches"][0]["confidence"], "high")
+
+        # 3. 'authentication' mentioned in passing
+        prd_auth_passing = """
+        # PRD: Local Notes
+        ## 1. App overview
+        A simple local note taker. Authentication might be added in a future version.
+        """
+        res_auth = detect_specialist_needs(prd_text=prd_auth_passing)
+        self.assertEqual(len(res_auth["specialist_needs"]), 0, "Passing authentication mention must NEVER reach 'high'!")
+
+        # 4. A refund policy with no payment flow
+        prd_refund_policy = """
+        # PRD: Retail Catalog
+        ## 5. Features
+        ### F-002: Customer Support and Returns
+        - Story: As a shopper, I want to view the store return and refund policy before visiting in person.
+        """
+        res_refund = detect_specialist_needs(prd_text=prd_refund_policy)
+        self.assertEqual(len(res_refund["specialist_needs"]), 0, "Refund policy without payment flow must NEVER reach 'high'!")
+
+    def test_auth_detection_ignores_custody_signature(self):
+        """
+        DOD Requirement 5:
+        Fix auth detection false positive: custody signature != authentication.
+        A laboratory chain-of-custody transfer requiring digital signature sign-off
+        must NOT trigger the Auth specialist pack with 'high' confidence.
+        """
+        prd_custody_signoff = """
+        # PRD: BioVault Cryogenic Specimen Tracker
+        ## 5. Features
+        ### F-003: Specimen Chain of Custody Transfer and Signature
+        - Story: As a laboratory technician, I want to capture a digital signature when transferring custody of a specimen so that regulatory chain-of-custody compliance is maintained.
+        - Priority: Must
+        - Acceptance Criteria:
+          | AC-005 | Given an active specimen transfer, when recipient signs custody signature, then transfer record is sealed with timestamp. |
+          | AC-006 | Given custody transfer without sign-off signature, then transfer status remains pending. |
+        """
+        req_custody = """
+        # Requirements
+        - [FR-004] Chain of custody transfers must record custodian digital signature and physical verification. [Source: Q-008]
+        """
+        res = detect_specialist_needs(prd_text=prd_custody_signoff, requirements_text=req_custody)
+        matched_packs = [p["pack_id"] for p in res["specialist_needs"]]
+        self.assertNotIn("auth", matched_packs, "Custody signature must NOT trigger Auth specialist pack with high confidence!")
+
+    def test_judge_specialist_negative_cases(self):
+        """
+        DOD Part 2.4:
+        Judge negative tests:
+        - idempotency key only in a comment;
+        - sha256 instead of HMAC;
+        - webhook signature without constant-time compare or timestamp tolerance;
+        - raw PAN in a test fixture.
+        Each fails; a compliant sample passes.
+        """
+        # Case 1: Idempotency key only in a comment/docstring
+        code_comment_only = """
+        from fastapi import FastAPI
+        app = FastAPI()
+        # Header: Idempotency-Key is supported here
+        \"\"\"
+        Clients may optionally send an Idempotency-Key.
+        \"\"\"
+        @app.post("/api/v1/payments/charges")
+        def create_charge(amount: int):
+            return {"status": "succeeded", "charge_id": "ch_999"}
+        """
+        verdict1 = evaluate_backend_deliverable_with_judge(
+            code_content=code_comment_only,
+            role="backend",
+            attached_pack_ids=["payments"]
+        )
+        self.assertFalse(verdict1["pass"], "Comment-only idempotency key must FAIL Judge audit!")
+        self.assertTrue(any(s["criterion"] == "idempotency_key_enforced" and s["score"] == 0 for s in verdict1["scores"]))
+
+        # Case 2: sha256 instead of HMAC
+        code_plain_sha256 = """
+        import hashlib
+        from fastapi import FastAPI, Header, Request, HTTPException
+        app = FastAPI()
+
+        @app.post("/api/v1/payments/charges")
+        def create_charge(idempotency_key: str = Header(...)):
+            return {"status": "succeeded"}
+
+        @app.post("/api/v1/payments/webhook")
+        async def payment_webhook(request: Request, signature: str = Header(...)):
+            body = await request.body()
+            # DEFECT: Plain sha256 without HMAC secret keying
+            computed = hashlib.sha256(body).hexdigest()
+            if computed != signature:
+                raise HTTPException(status_code=400, detail="Invalid signature")
+            return {"status": "ok"}
+        """
+        verdict2 = evaluate_backend_deliverable_with_judge(
+            code_content=code_plain_sha256,
+            role="backend",
+            attached_pack_ids=["payments"]
+        )
+        self.assertFalse(verdict2["pass"], "Plain sha256 without HMAC must FAIL Judge audit!")
+        self.assertTrue(any(s["criterion"] == "webhook_signature_verification" and s["score"] == 0 for s in verdict2["scores"]))
+
+        # Case 3: Webhook signature without constant-time compare or timestamp tolerance
+        code_vulnerable_webhook = """
+        import hmac, hashlib
+        from fastapi import FastAPI, Header, Request, HTTPException
+        app = FastAPI()
+
+        @app.post("/api/v1/payments/charges")
+        def create_charge(idempotency_key: str = Header(...)):
+            return {"status": "succeeded"}
+
+        @app.post("/api/v1/payments/webhook")
+        async def payment_webhook(request: Request, signature: str = Header(...)):
+            body = await request.body()
+            secret = b"whsec_test"
+            computed = hmac.new(secret, body, hashlib.sha256).hexdigest()
+            # DEFECT: Variable-time comparison '==' and no timestamp tolerance check
+            if computed == signature:
+                return {"status": "verified"}
+            raise HTTPException(status_code=400, detail="Bad sig")
+        """
+        verdict3 = evaluate_backend_deliverable_with_judge(
+            code_content=code_vulnerable_webhook,
+            role="backend",
+            attached_pack_ids=["payments"]
+        )
+        self.assertFalse(verdict3["pass"], "Webhook with '==' or missing timestamp tolerance must FAIL Judge audit!")
+        self.assertTrue(any(s["criterion"] == "webhook_signature_verification" and s["score"] == 0 for s in verdict3["scores"]))
+
+        # Case 4: Raw PAN in a test fixture
+        code_raw_pan_fixture = """
+        from fastapi import FastAPI, Header
+        app = FastAPI()
+
+        TEST_CARD_FIXTURES = {
+            "test_visa": "4111111111111111",  # DEFECT: Raw PAN in test fixture!
+            "test_mastercard": "5555555555554444"
+        }
+
+        @app.post("/api/v1/payments/charges")
+        def create_charge(idempotency_key: str = Header(...)):
+            return {"status": "succeeded", "last4": "4242"}
+        """
+        verdict4 = evaluate_backend_deliverable_with_judge(
+            code_content=code_raw_pan_fixture,
+            role="backend",
+            attached_pack_ids=["payments"]
+        )
+        self.assertFalse(verdict4["pass"], "Raw PAN in a test fixture must FAIL Judge audit!")
+        self.assertTrue(any(s["criterion"] == "zero_raw_card_data" and s["score"] == 0 for s in verdict4["scores"]))
+
+        # Case 5: Fully compliant sample passes (3/3 on must-pass criteria)
+        code_compliant_sample = """
+        import hmac
+        import hashlib
+        import time
+        from fastapi import FastAPI, Header, Request, HTTPException
+
+        app = FastAPI()
+        IDEMPOTENCY_STORE = {}
+
+        @app.post("/api/v1/payments/charges")
+        def create_charge(amount: int, payment_method_token: str, idempotency_key: str = Header(..., alias="Idempotency-Key")):
+            if idempotency_key in IDEMPOTENCY_STORE:
+                return IDEMPOTENCY_STORE[idempotency_key]
+
+            # Tokenized card only, brand and last4 stored
+            brand = "visa"
+            last4 = "4242"
+
+            if amount <= 0:
+                raise HTTPException(status_code=402, detail="Payment failed, you were not charged")
+
+            res = {"status": "succeeded", "charge_id": "ch_999", "brand": brand, "last4": last4}
+            IDEMPOTENCY_STORE[idempotency_key] = res
+            return res
+
+        @app.post("/api/v1/payments/webhook")
+        async def payment_webhook(request: Request, signature: str = Header(..., alias="Stripe-Signature"), timestamp: int = Header(..., alias="Stripe-Timestamp")):
+            if abs(time.time() - timestamp) > 300:
+                raise HTTPException(status_code=400, detail="Timestamp tolerance exceeded")
+            body = await request.body()
+            secret = "whsec_test_secret"
+            expected = hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, signature):
+                raise HTTPException(status_code=400, detail="Invalid webhook signature")
+            return {"status": "verified"}
+        """
+        verdict5 = evaluate_backend_deliverable_with_judge(
+            code_content=code_compliant_sample,
+            role="backend",
+            attached_pack_ids=["payments"]
+        )
+        self.assertTrue(verdict5["pass"], "Compliant deliverable must PASS Judge audit!")
+        self.assertGreaterEqual(verdict5["total"], verdict5["pass_threshold"])
+        self.assertEqual(len(verdict5["unsupported_claims"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

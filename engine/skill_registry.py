@@ -12,9 +12,15 @@ import logging
 import sqlite3
 from typing import Dict, Any, List, Optional, Set, Tuple
 
-logger = logging.getLogger("autonoma-skill-registry")
+logger = logging.getLogger("autonoma-engine.skill_registry")
 
-# Role allowed tool permissions per Handbook Table 6.1.3 and Chapter 23.4
+# Role allowed tool permissions per Handbook Section 6.1.3 (Least privilege):
+# "BA, PM, HR, Recruiter, Scrum, Designer: read artifacts, write docs/ | docs/"
+# "Architect: + check_package | docs/"
+# "Developers: read/write/edit, run (allowlist), git on own branch, check_package | own worktree"
+# "Tech Lead: read, diff, comment | read-only"
+# "QA / Perf: read, write tests, run_tests, k6_run | tests/, perf/"
+# "DevOps: CI, Docker, run | repo root, never production"
 ROLE_TOOL_ALLOWANCES: Dict[str, Set[str]] = {
     "ba": {"read_file", "write_file", "get_artifact", "ask_client"},
     "pm": {"read_file", "write_file", "get_artifact", "ask_client"},
@@ -61,8 +67,40 @@ ROLE_TOOL_ALLOWANCES: Dict[str, Set[str]] = {
     }
 }
 
+# Role filesystem sandboxes per Handbook Table 6.1.3 and Chapter 23.5
+ROLE_FS_SCOPES: Dict[str, str] = {
+    "ba": "docs/",
+    "pm": "docs/",
+    "hr": "docs/",
+    "recruiter": "docs/",
+    "scrum": "docs/",
+    "designer": "docs/",
+    "architect": "docs/",
+    "backend": "own worktree",
+    "frontend": "own worktree",
+    "fullstack": "own worktree",
+    "engineer": "own worktree",
+    "tech_lead": "read-only",
+    "tech-lead": "read-only",
+    "qa": "tests/",
+    "perf": "perf/",
+    "devops": "repo root",
+    "judge": "read-only",
+}
+
+# Roles whose handbook chapter exists but whose agent runtime is spec-only (Handbook 6.3.4 Step 1)
+SPEC_ONLY_ROLES: Set[str] = {
+    "tech-lead", "tech_lead", "frontend", "backend", "fullstack", "qa", "perf", "devops", "scrum"
+}
+
+# Document roles that only produce text and MUST NOT receive shell/execution/network tools (Handbook 6.1.3 & 6.3.6)
+DOCUMENT_ONLY_ROLES: Set[str] = {
+    "ba", "pm", "hr", "recruiter", "scrum", "designer"
+}
+
 # Default text caps per agent prompt instructions (in characters / tokens)
 DEFAULT_SKILL_TEXT_CHAR_CAP = 30000  # ~7500 tokens max for skill instructions prefix
+
 
 
 class SkillManifest:
@@ -495,8 +533,41 @@ def detect_specialist_needs(
 
         # Evaluate confidence
         unique_evidence_ids = {e["id"] for e in evidence_items}
+        matched_triggers = {e["trigger"].lower() for e in evidence_items}
 
-        if len(unique_evidence_ids) >= 1:
+        core_triggers = {
+            "payments": {"payment", "payments", "checkout", "billing", "subscription", "charge", "idempotency"},
+            "auth": {"login", "signup", "session", "jwt", "oauth", "password", "rbac", "credentials", "mfa"},
+            "notifications": {"email", "sms", "push notification", "webhook", "outbox", "notification"},
+            "file-storage": {"upload", "s3", "bucket", "object storage", "attachment", "stored files"}
+        }.get(pack_id, set())
+
+        has_core_flow = bool(matched_triggers.intersection(core_triggers))
+        is_keyword_only = (not has_core_flow) or (len(unique_evidence_ids) < 2 and not any(e["type"] == "feature" for e in evidence_items))
+
+        # Explicit negative tests / edge cases per DOD Part 2.3:
+        # 1. "refund policy" with no payment flow:
+        if pack_id == "payments" and matched_triggers.issubset({"refund", "refunds", "invoice", "stripe"}):
+            if not any(t in matched_triggers for t in ["payment", "payments", "checkout", "billing", "charge", "idempotency"]):
+                is_keyword_only = True
+
+        # 2. "authentication" mentioned in passing or custody signature false positive:
+        # Custody signature / chain-of-custody sign-off != authentication (Handbook Ch 3, Ch 6)
+        if pack_id == "auth":
+            is_custody_only = bool(evidence_items)
+            for ev in evidence_items:
+                snip = ev.get("snippet", "").lower()
+                if not ("custod" in snip or "chain-of-custody" in snip or "handover" in snip):
+                    is_custody_only = False
+                    break
+            if is_custody_only and not any(t in matched_triggers for t in ["login", "signup", "register", "password", "jwt", "oauth", "mfa", "credentials"]):
+                is_keyword_only = True
+
+            if matched_triggers.issubset({"authentication", "auth", "token"}):
+                if not any(t in matched_triggers for t in ["login", "signup", "session", "jwt", "oauth", "password", "rbac", "credentials", "mfa"]):
+                    is_keyword_only = True
+
+        if len(unique_evidence_ids) >= 1 and not is_keyword_only:
             # Strong evidence grounded in specific requirements/features/endpoints
             adr_refs = sorted(list(unique_evidence_ids))
             detected_packs.append({
@@ -511,6 +582,31 @@ def detect_specialist_needs(
                     f"ADR recommends attaching '{pack.name}' ({pack_id}) "
                     f"per verified work in {', '.join(adr_refs)}."
                 ),
+            })
+        elif len(unique_evidence_ids) >= 1 and is_keyword_only:
+            # Keyword-only hit: NEVER reaches 'high' per DOD Part 2.3
+            hit_terms = sorted(list(matched_triggers))
+            oq_id = f"OQ-SKILL-{pack_id.upper()}"
+            oq = {
+                "id": oq_id,
+                "to": "client",
+                "text": (
+                    f"Project documents mention '{hit_terms[0]}', but lack an active, multi-step {pack.name} workflow. "
+                    f"Should the '{pack.name}' specialist pack be attached for v1?"
+                ),
+                "why": f"Keyword-only or incidental mention of {hit_terms[:2]}; requires client confirmation before attaching specialist pack",
+                "refs": hit_terms[:3]
+            }
+            open_questions.append(oq)
+            detected_packs.append({
+                "pack_id": pack_id,
+                "name": pack.name,
+                "version": pack.version,
+                "status": "weak_evidence",
+                "confidence": "medium",
+                "evidence_count": len(evidence_items),
+                "evidence": evidence_items,
+                "open_question": oq,
             })
         elif len(corpus_hits) >= 1:
             # Weak evidence: keyword mentioned in conversation or brief, but no dedicated F- or FR-
@@ -544,10 +640,39 @@ def detect_specialist_needs(
     }
 
 
+def _is_negated_in_context(keyword: str, text: str) -> bool:
+    """
+    Checks if all occurrences of keyword in text are negated (e.g. 'no payments in scope',
+    'out of scope: payments', 'without payments', 'zero payments').
+    """
+    t_lower = text.lower()
+    kw = keyword.lower()
+    matches = list(re.finditer(r"\b" + re.escape(kw) + r"\b", t_lower))
+    if not matches:
+        return False
+
+    neg_prefix_pat = r"\b(?:no|not|neither|never|without|zero|exclude[s|d]?|excluding|out of scope|non-goals?)\b[\w\s,:\-]{0,25}\b" + re.escape(kw) + r"\b"
+    neg_suffix_pat = r"\b" + re.escape(kw) + r"\b[\w\s]{0,25}\b(?:is|are|was|were)?\s*(?:out of scope|not in scope|not supported|excluded|not planned|not permitted)\b"
+
+    negated_count = 0
+    for m in matches:
+        start_ctx = max(0, m.start() - 40)
+        end_ctx = min(len(t_lower), m.end() + 40)
+        snippet = t_lower[start_ctx:end_ctx]
+        if re.search(neg_prefix_pat, snippet) or re.search(neg_suffix_pat, snippet):
+            negated_count += 1
+
+    return negated_count == len(matches)
+
+
 def _keyword_matches(keyword: str, text: str) -> bool:
-    """Matches keyword as word boundary or exact token."""
+    """Matches keyword as word boundary or exact token, rejecting negated matches."""
     pattern = r"\b" + re.escape(keyword) + r"\b"
-    return bool(re.search(pattern, text, re.IGNORECASE))
+    if not re.search(pattern, text, re.IGNORECASE):
+        return False
+    if _is_negated_in_context(keyword, text):
+        return False
+    return True
 
 
 def _create_snippet(text: str, keyword: str, max_chars: int = 120) -> str:
@@ -708,6 +833,93 @@ def detach_skill_pack(agent_profile: Dict[str, Any], pack_id: str) -> Dict[str, 
     }
 
 
+def get_role_pack(role: str, registry: Optional[SkillRegistry] = None) -> Dict[str, Any]:
+    """
+    Looks up a base role skill pack in skills/<role>/.
+    Enforces Handbook 6.3.4 Rule 1:
+    - If pack does not exist: status 'blocked', do not invent one.
+    - If handbook chapter exists but agent not built yet: marked 'spec_only: true'.
+    """
+    reg = registry or get_skill_registry()
+    norm_role = role.strip().lower()
+
+    role_dir = os.path.join(reg.skills_dir, norm_role)
+    role_md_path = os.path.join(role_dir, "role.md")
+    rubric_path = os.path.join(role_dir, "rubric.json")
+
+    if not os.path.exists(role_md_path):
+        logger.error(f"Recruiter blocked: Role skill pack '{norm_role}' does not exist at {role_dir}.")
+        return {
+            "status": "blocked",
+            "exists": False,
+            "role": norm_role,
+            "missing_pack": norm_role,
+            "spec_only": False,
+            "error": f"Missing skill pack '{norm_role}'. Recruiter cannot invent skill packs."
+        }
+
+    is_spec_only = norm_role in SPEC_ONLY_ROLES
+    return {
+        "status": "available",
+        "exists": True,
+        "role": norm_role,
+        "pack_path": f"skills/{norm_role}",
+        "dir_path": role_dir,
+        "role_md_path": role_md_path,
+        "rubric_path": rubric_path if os.path.exists(rubric_path) else None,
+        "has_role_md": True,
+        "has_rubric": os.path.exists(rubric_path),
+        "spec_only": is_spec_only,
+        "notes": f"Role '{norm_role}' skill pack loaded from skills/{norm_role}/role.md" + (" (spec_only: true)" if is_spec_only else "")
+    }
+
+
+def validate_agent_permissions(
+    role: str,
+    tools: List[str],
+    fs_scope: str
+) -> Tuple[bool, List[str]]:
+    """
+    Validates agent tool allowances and filesystem scope per Handbook 6.1.3 & 6.3.6.
+    Rejects any profile exceeding role permissions.
+    """
+    errors: List[str] = []
+    norm_role = role.strip().lower()
+
+    allowed_tools = ROLE_TOOL_ALLOWANCES.get(norm_role, set())
+    if not allowed_tools:
+        errors.append(f"Unknown or unconfigured role '{norm_role}' for tool allowance check.")
+
+    tool_set = set(tools)
+    exceeded = tool_set - allowed_tools
+    if exceeded:
+        errors.append(
+            f"Least privilege violation: Agent with role '{norm_role}' holds unauthorized tools {sorted(list(exceeded))}. "
+            f"Allowed tools for this role are: {sorted(list(allowed_tools))}."
+        )
+
+    # Document role must-not check: roles that only write documents never get run/shell/git tools
+    if norm_role in DOCUMENT_ONLY_ROLES:
+        forbidden_doc_tools = {"run", "edit_file", "git_commit", "git", "run_tests", "k6_run"}
+        doc_violations = tool_set.intersection(forbidden_doc_tools)
+        if doc_violations:
+            errors.append(
+                f"Must-Not violation (Handbook 6.3.6): Document role '{norm_role}' was given executable/shell tools {sorted(list(doc_violations))}."
+            )
+
+    # Filesystem scope check
+    allowed_scope = ROLE_FS_SCOPES.get(norm_role, "docs/")
+    if fs_scope and allowed_scope:
+        norm_scope = fs_scope.strip().rstrip("/") + "/"
+        norm_allowed = allowed_scope.strip().rstrip("/") + "/"
+        if norm_allowed == "docs/" and norm_scope != "docs/":
+            errors.append(
+                f"Least privilege folder violation: Document role '{norm_role}' restricted to 'docs/', but received '{fs_scope}'."
+            )
+
+    return (len(errors) == 0, errors)
+
+
 def init_agents_db(db_path: str = "data/office.db") -> None:
     """Initializes the agents table in SQLite per Handbook Chapter 24.1."""
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
@@ -738,11 +950,39 @@ def init_agents_db(db_path: str = "data/office.db") -> None:
     conn.close()
 
 
+def init_approvals_db(db_path: str = "data/office.db") -> None:
+    """Initializes the approvals table in SQLite per Handbook Chapter 24.1."""
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS approvals (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            gate INTEGER NOT NULL,
+            summary TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            note TEXT,
+            opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+            decided_at TEXT
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+
 def save_agent_profile_to_db(agent_profile: Dict[str, Any], db_path: str = "data/office.db") -> None:
     """Persists or updates an agent profile in SQLite."""
     init_agents_db(db_path)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+    proj_id = agent_profile.get("project_id", "p_01")
+    aid = agent_profile.get("agent_id", "be-1")
+    db_id = f"{proj_id}_{aid}" if not aid.startswith(proj_id) else aid
+
     cur.execute(
         """
         INSERT INTO agents (id, project_id, name, role, seat_id, reports_to, tier, provider, model, tools, skill_packs, fs_scope, token_cap, status)
@@ -760,8 +1000,8 @@ def save_agent_profile_to_db(agent_profile: Dict[str, Any], db_path: str = "data
             status = excluded.status
         """,
         (
-            agent_profile.get("agent_id", "be-1"),
-            agent_profile.get("project_id", "p_01"),
+            db_id,
+            proj_id,
             agent_profile.get("name", "Arjun"),
             agent_profile.get("role", "backend"),
             agent_profile.get("seat_id", "ROLE-01"),
@@ -787,15 +1027,46 @@ def get_agent_profile_from_db(agent_id: str, db_path: str = "data/office.db") ->
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+    cur.execute("SELECT * FROM agents WHERE id = ? OR id LIKE ?", (agent_id, f"%_{agent_id}"))
     row = cur.fetchone()
     conn.close()
     if not row:
         return None
     d = dict(row)
+    raw_id = d.get("id", "")
+    pid = d.get("project_id", "")
+    clean_aid = raw_id[len(pid)+1:] if (pid and raw_id.startswith(f"{pid}_")) else raw_id
+    d["agent_id"] = clean_aid
+    d["tier"] = d.get("tier", "medium")
     d["tools"] = json.loads(d["tools"]) if d["tools"] else []
     d["skill_packs"] = json.loads(d["skill_packs"]) if d["skill_packs"] else []
     return d
+
+
+def get_agents_by_project(project_id: str, db_path: str = "data/office.db") -> List[Dict[str, Any]]:
+    """Retrieves all agent profiles for a project from SQLite."""
+    if not os.path.exists(db_path):
+        return []
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM agents WHERE project_id = ? ORDER BY id ASC", (project_id,))
+    rows = cur.fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        raw_id = d.get("id", "")
+        clean_aid = raw_id[len(project_id)+1:] if raw_id.startswith(f"{project_id}_") else raw_id
+        d["agent_id"] = clean_aid
+        d["tier"] = d.get("tier", "medium")
+        d["tools"] = json.loads(d["tools"]) if d.get("tools") else []
+        d["skill_packs"] = json.loads(d["skill_packs"]) if d.get("skill_packs") else []
+        result.append(d)
+    return result
+
+
+
 
 
 # =========================================================================
