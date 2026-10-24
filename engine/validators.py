@@ -440,7 +440,9 @@ NON_ANSWER_PATTERNS = [
     r"\bas\s+an\s+ai\b",
     r"\btoday\s+users\s+do\s+without\s+this\s+app\b",
     r"\bthe\s+single\s+biggest\s+pain\b",
-    r"\bwhy\s+existing\s+tools\s+fall\s+short\b"
+    r"\bn/?a\b",
+    r"\bto\s+be\s+determined\b",
+    r"\btbd\b"
 ]
 
 
@@ -474,12 +476,8 @@ def validate_prd_pre_judge(
         errors.append("PRD is missing '## 2. Problem' section")
     else:
         prob_text = prob_m.group(1)
-        for pat in NON_ANSWER_PATTERNS:
-            match = re.search(pat, prob_text, re.IGNORECASE)
-            if match:
-                errors.append(f"Problem section contains non-answer or filler text matching '{match.group(0)}'")
 
-        # Check required fields
+        # Check required fields and inspect their values for non-answer filler
         for field in ["Today", "Core problem", "Why existing tools fall short"]:
             f_m = re.search(rf"\*\*{field}\*\*:\s*([^\n]+)", prob_text, re.IGNORECASE)
             if not f_m:
@@ -488,6 +486,10 @@ def validate_prd_pre_judge(
                 val = f_m.group(1).strip()
                 if len(val) < 25:
                     errors.append(f"Problem field '**{field}**' is too short ({len(val)} chars, minimum 25 required)")
+                for pat in NON_ANSWER_PATTERNS:
+                    match = re.search(pat, val, re.IGNORECASE)
+                    if match:
+                        errors.append(f"Problem section contains non-answer or filler text matching '{match.group(0)}'")
 
     # 2. Extract features and validate uniqueness, stories, ACs, sentences
     summary_m = re.search(r"###\s*Summary(.*?)(?=###\s*(?:Feature\s+)?F-|\Z)", prd_text, re.DOTALL | re.IGNORECASE)
@@ -548,7 +550,7 @@ def validate_prd_pre_judge(
                 errors.append(f"Feature {fid} title '{ftitle}' does not match its story text (title/story mismatch: title specifies export/CSV but story does not mention export)")
             elif ("pull" in ftitle.lower() or "requests" in ftitle.lower()) and not any(w in story.lower() for w in ["pull", "request"]):
                 errors.append(f"Feature {fid} title '{ftitle}' does not match its story text (title/story mismatch: title specifies pull requests but story does not match)")
-            elif operative_title_words and not any(tw in story.lower() for tw in operative_title_words):
+            elif operative_title_words and not any(tw in story.lower() or tw[:4] in story.lower() for tw in operative_title_words):
                 errors.append(f"Feature {fid} title '{ftitle}' does not match its story text (title/story mismatch)")
 
         # Extract ACs
@@ -577,7 +579,7 @@ def validate_prd_pre_judge(
                         re.search(r"\b(?:under|within|<|>|<=|>=)\s+\d+(?:\.\d+)?\s*(?:s|ms|sec|second|seconds|mb|kb|gb)\b", act, re.IGNORECASE),
                         re.search(r"\b(?:status\s+code\s+)?(?:200|201|400|401|403|404|409|422|429|500)\b", act),
                         re.search(r"\[(?:NFR-\d+|ASM-\d+)\]", act),
-                        re.search(r"\b(?:error|success|toast|inline|modal|dialog|message|sealed|disabled|enabled|stored|persisted|logged|flagged)\b", act, re.IGNORECASE)
+                        re.search(r"\b(?:error|success|toast|inline|modal|dialog|message|sealed|disabled|enabled|stored|persisted|logged|flagged|displayed|rendered|shown|visible|returned|created|updated)\b", act, re.IGNORECASE)
                     ])
                     if not has_bound:
                         errors.append(f"{fid} {ac_id} lacks a measurable bound or verification threshold: '{act}'")
