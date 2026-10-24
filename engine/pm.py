@@ -1,3 +1,20 @@
+"""
+Product Manager (PM) Real LLM Agent
+Per Virtual Office Handbook Section 2.7.3 (Step 7), Chapter 5 (PM), Chapter 3 (Grounding),
+Chapter 14 (Judge), and Appendix A.2.
+
+Rule: LLM writes, code validates.
+- PM writes docs/prd.md section by section and docs/estimate.json from requirements.md + qa_log.json.
+- One LLM call per section and per feature (keeping context small and safe within token caps).
+- Code computes the numbers for estimate.json using the handbook formula (Σ tokens × 1.20, per role,
+  prices from config/model_pricing.json); LLM only names stages, assumptions, and complexity factors.
+- Pre-Judge code validator validates: no non-answers/chat filler, unique feature names/descriptions,
+  story/AC match title, grammatical Given/When/Then with measurable bounds, no stray markdown,
+  no duplicate citations, sentence uniqueness across features, NFR consistency.
+- On validation failure: retry with errors fed back (max 3), then fail loudly.
+- Every LLM-generated section records a real llm_calls row. Synthetic record_llm_call removed.
+"""
+
 import os
 import re
 import json
@@ -9,27 +26,21 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 try:
-    from prompts.pm_system_prompt import PM_SYSTEM_PROMPT
     from requirements_parser import parse_ba_data
-    from token_ledger import calculate_project_estimate, record_llm_call
+    from token_ledger import calculate_project_estimate
     from judge import evaluate_prd_with_judge
-    from llm_client import default_llm_client, calculate_cost_usd
+    from llm_client import default_llm_client, query_llm_with_meta
+    from validators import validate_prd_pre_judge
 except ImportError:
-    from engine.prompts.pm_system_prompt import PM_SYSTEM_PROMPT
     from engine.requirements_parser import parse_ba_data
-    from engine.token_ledger import calculate_project_estimate, record_llm_call
+    from engine.token_ledger import calculate_project_estimate
     from engine.judge import evaluate_prd_with_judge
-    from engine.llm_client import default_llm_client, calculate_cost_usd
+    from engine.llm_client import default_llm_client, query_llm_with_meta
+    from engine.validators import validate_prd_pre_judge
 
 logger = logging.getLogger("autonoma-engine.pm")
 
 pm_router = APIRouter(prefix="/pm", tags=["pm"])
-
-PRD_START_TAG = "<!-- PRD_CONTENT_START -->"
-PRD_END_TAG = "<!-- PRD_CONTENT_END -->"
-PRD_PATTERN = re.compile(r"<!--\s*PRD_CONTENT_START\s*-->\s*(.*?)\s*<!--\s*PRD_CONTENT_END\s*-->", re.DOTALL | re.IGNORECASE)
-PRD_START_PATTERN = re.compile(r"<!--\s*PRD_CONTENT_START\s*-->", re.IGNORECASE)
-PRD_END_PATTERN = re.compile(r"<!--\s*PRD_CONTENT_END\s*-->", re.IGNORECASE)
 
 
 class PMSessionRequest(BaseModel):
@@ -41,780 +52,662 @@ class PMMessageRequest(BaseModel):
     message: str
 
 
-def extract_prd_content(text: str) -> Tuple[str, Optional[str]]:
-    """
-    Extracts conversational response and PRD content between PRD tags if present.
-    Returns (cleaned_message, prd_content).
-    """
-    match = PRD_PATTERN.search(text)
-    if match:
-        prd_content = match.group(1).strip()
-        cleaned_msg = PRD_PATTERN.sub("", text).strip()
-        cleaned_msg = PRD_START_PATTERN.sub("", cleaned_msg).strip()
-        cleaned_msg = PRD_END_PATTERN.sub("", cleaned_msg).strip()
-        return cleaned_msg, prd_content
-
-    start_match = PRD_START_PATTERN.search(text)
-    if start_match:
-        idx = start_match.start()
-        cleaned_msg = text[:idx].strip()
-        prd_content = text[start_match.end():]
-        prd_content = PRD_END_PATTERN.sub("", prd_content).strip()
-        return cleaned_msg, prd_content
-
-    if "# Product Requirement Document" in text or "## 1. App overview" in text:
-        idx = text.find("# Product Requirement Document")
-        if idx == -1:
-            idx = text.find("## 1. App overview")
-        cleaned_msg = text[:idx].strip() if idx > 0 else "Here is the Product Requirement Document (PRD) drafted according to the handbook specifications."
-        prd_content = text[idx:].strip()
-        return cleaned_msg, prd_content
-
-    return text.strip(), None
-
-
 # ==============================================================================
-# SECTION-BY-SECTION PRD GENERATORS (Handbook Section 5 & Appendix A.2)
+# SECTION-BY-SECTION REAL LLM GENERATORS (Handbook Section 5 & Appendix A.2)
 # ==============================================================================
 
-def generate_section_1_overview(parsed_ba: Dict[str, Any]) -> str:
+def _generate_stamp(meta: Dict[str, Any], role_name: str = "Product Manager", is_local_only: bool = False) -> str:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    now_human = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    prov = meta.get("provider", "groq")
+    mod = meta.get("model", "qwen/qwen3.8-27b")
+    lat = meta.get("latency_ms", 0)
+    usage = meta.get("usage", {})
+    in_tok = usage.get("prompt_tokens", 0)
+    out_tok = usage.get("completion_tokens", 0)
+    cost = meta.get("cost_usd", 0.0)
+
+    if is_local_only or meta.get("is_degraded") or prov == "ollama":
+        return (
+            f"<!-- ARTIFACT METADATA: Generated by local model {mod} at {now_iso} -->\n"
+            f"> **Artifact Provenance**: Generated by Local Model (Ollama: `{mod}`) | "
+            f"Role: **{role_name}** | Latency: `{lat}ms` | Tokens: `{in_tok} in / {out_tok} out` | "
+            f"Status: **DEGRADED (Local-only execution)**\n\n"
+        )
+    return (
+        f"<!-- ARTIFACT METADATA: Generated by {prov}/{mod} at {now_iso} -->\n"
+        f"> **Artifact Provenance**: Generated by LLM (Provider: `{prov}`, Model: `{mod}`) | "
+        f"Role: **{role_name}** | Latency: `{lat}ms` | Tokens: `{in_tok} in / {out_tok} out` | Cost: `${cost:.6f}`\n\n"
+    )
+
+
+def generate_section_1_overview_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     app_name = parsed_ba["app_name"]
     description = parsed_ba["description"]
     first_qid = parsed_ba["first_qid"]
-    desc_lower = description.lower()
-    if "specimen" in desc_lower or "pathology" in desc_lower or "cold-chain" in desc_lower or "clinical" in desc_lower:
-        category = "Clinical Laboratory Specimen & Cold-Chain Custody Tracking"
-    elif "construction" in desc_lower or "hazard" in desc_lower or "inspection" in desc_lower:
-        category = "Civil Engineering & Construction Safety Compliance"
-    elif "biomedical" in desc_lower or "citation" in desc_lower or "research" in desc_lower:
-        category = "Scientific Literature & Citation Management"
-    else:
-        category = "Local Operational Workflow & Regulatory Compliance"
+    category = parsed_ba.get("category", "Operational Workflow Application")
+    platforms = parsed_ba.get("platforms", "Desktop Application with full offline execution")
 
-    # Derive platforms dynamically from NFR-04
-    platforms = "Desktop Application with full offline execution"
-    for nfr in parsed_ba.get("non_functional_reqs", []):
-        if nfr.get("id") == "NFR-04" or "[NFR-04]" in str(nfr.get("source")):
-            target_str = nfr.get("target", "")
-            if target_str:
-                platforms = target_str
-                break
+    prompt = f"""You are the Product Manager. Generate Section 1 (App overview) of the PRD for '{app_name}' adhering to Appendix A.2.
+APP NAME: {app_name}
+ONE-LINE DESCRIPTION: {description}
+CATEGORY: {category}
+PLATFORMS: {platforms}
+SOURCE ID: [{first_qid}]
 
-    return f"""## 1. App overview
+Output format:
+## 1. App overview
 | Field | Value | Source |
 |---|---|---|
 | App name | {app_name} | [{first_qid}] |
 | One-line description | {description} | [{first_qid}] |
 | Category | {category} | [{first_qid}] |
-| Platforms | {platforms} | [NFR-04] |"""
+| Platforms | {platforms} | [NFR-04] |
+
+Return ONLY the markdown heading and table."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_1_overview"
+    )
+    clean_text = text.strip()
+    if "## 1. App overview" not in clean_text:
+        clean_text = f"## 1. App overview\n{clean_text}"
+    return clean_text, meta
 
 
-def generate_section_2_problem(parsed_ba: Dict[str, Any]) -> str:
+def generate_section_2_problem_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     today_qid = parsed_ba.get("today_qid", parsed_ba["first_qid"])
     problem_qid = parsed_ba.get("problem_qid", parsed_ba["first_qid"])
     shortcomings_qid = parsed_ba.get("shortcomings_qid", parsed_ba["first_qid"])
+    today_text = parsed_ba.get("today_text", "Users rely on manual processes.")
+    problem_text = parsed_ba.get("problem_text", "Core operational inefficiency and error rates.")
+    shortcomings_text = parsed_ba.get("shortcomings_text", "Existing cloud tools fail in disconnected environments.")
 
-    today_text = parsed_ba.get("today_text", "").strip()
-    problem_text = parsed_ba.get("problem_text", "").strip()
-    shortcomings_text = parsed_ba.get("shortcomings_text", "").strip()
+    prompt = f"""You are the Product Manager. Generate Section 2 (Problem) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+TODAY WORKFLOW: {today_text} (Source: [{today_qid}])
+CORE PROBLEM: {problem_text} (Source: [{problem_qid}])
+WHY EXISTING TOOLS FALL SHORT: {shortcomings_text} (Source: [{shortcomings_qid}])
 
-    return f"""## 2. Problem
-- **Today**: {today_text} [{today_qid}]
-- **Core problem**: {problem_text} [{problem_qid}]
-- **Why existing tools fall short**: {shortcomings_text} [{shortcomings_qid}]"""
+CRITICAL QUALITY RULES:
+1. NEVER output non-answers or chat filler (e.g. 'Yes, please proceed', 'let's begin', 'as an AI').
+2. Write substantive domain statements citing the exact Q-### source IDs.
+
+Output format:
+## 2. Problem
+- **Today**: <what users do today and workarounds> [{today_qid}]
+- **Core problem**: <single biggest pain in 2 complete sentences> [{problem_qid}]
+- **Why existing tools fall short**: <why current alternatives fail> [{shortcomings_qid}]
+
+Return ONLY the markdown section."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_2_problem"
+    )
+    clean_text = text.strip()
+    if "## 2. Problem" not in clean_text:
+        clean_text = f"## 2. Problem\n{clean_text}"
+    return clean_text, meta
 
 
-def generate_section_3_users(parsed_ba: Dict[str, Any]) -> str:
+def generate_section_3_users_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     personas = parsed_ba.get("personas", [])
     problem_qid = parsed_ba.get("problem_qid", parsed_ba["first_qid"])
 
-    lines = [
-        "## 3. Users",
-        "### Personas",
-        "| ID | Persona | Context | Goal | Pain point | Source |",
-        "|---|---|---|---|---|---|"
-    ]
-    for p in personas:
-        lines.append(f"| {p['id']} | {p['persona']} | {p['context']} | {p['goal']} | {p['pain_point']} | [{p['source']}] |")
+    prompt = f"""You are the Product Manager. Generate Section 3 (Users) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+PERSONAS EXTRACTED FROM DISCOVERY:
+{json.dumps(personas, indent=2)}
 
-    lines.extend([
-        "",
-        "### User roles and permissions",
-        "| Role | Does | Can | Cannot | Source |",
-        "|---|---|---|---|---|"
-    ]
+Output format:
+## 3. Users
+### Personas
+| ID | Persona | Context | Goal | Pain point | Source |
+|---|---|---|---|---|---|
+(One row per persona citing their discovery source [{problem_qid}])
+
+### User roles and permissions
+| Role | Does | Can | Cannot | Source |
+|---|---|---|---|---|
+(One row per persona. Mark unconfirmed permissions as 'Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1' citing [{problem_qid}])
+
+Return ONLY the markdown section."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_3_users"
+    )
+    clean_text = text.strip()
+    if "## 3. Users" not in clean_text:
+        clean_text = f"## 3. Users\n{clean_text}"
+    return clean_text, meta
+
+
+def generate_section_4_goals_metrics_llm(
+    parsed_ba: Dict[str, Any],
+    features_list: List[Dict[str, Any]],
+    session_id: Optional[str] = None
+) -> Tuple[str, Dict[str, Any]]:
+    goals = parsed_ba.get("discovered_goals", [])
+    non_goals = parsed_ba.get("discovered_non_goals", [])
+    metrics = parsed_ba.get("discovered_metrics", [])
+    first_qid = parsed_ba["first_qid"]
+
+    prompt = f"""You are the Product Manager. Generate Section 4 (Goals, non-goals, metrics) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+DISCOVERY GOALS: {json.dumps(goals)}
+DISCOVERY NON-GOALS: {json.dumps(non_goals)}
+DISCOVERY METRICS: {json.dumps(metrics)}
+
+Output format:
+## 4. Goals, non-goals, metrics
+### Goals
+| ID | Goal | Source |
+|---|---|---|
+(G-01.. rows citing sources)
+
+### Non-goals (not in v1)
+| ID | Non-goal (not in v1) | Why | Source |
+|---|---|---|---|
+(NG-01.. rows with reasons why deferred citing sources)
+
+### Success metrics
+| ID | Metric | Target | How it is measured | Source |
+|---|---|---|---|---|
+(M-01.. rows with targets and measurement queries citing sources)
+
+Return ONLY the markdown section."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_4_goals_metrics"
+    )
+    clean_text = text.strip()
+    if "## 4. Goals, non-goals, metrics" not in clean_text:
+        clean_text = f"## 4. Goals, non-goals, metrics\n{clean_text}"
+    return clean_text, meta
+
+
+def generate_single_feature_spec_llm(
+    feature_dict: Dict[str, Any],
+    f_idx: int,
+    ac_start_idx: int,
+    personas: List[Dict[str, Any]],
+    nfr_latency: str,
+    app_name: str,
+    session_id: Optional[str] = None
+) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Generates a single feature's detailed specification via LLM.
+    One call per feature to keep prompt/completion tokens small and bounded.
+    """
+    fid = f"F-{f_idx:03d}"
+    fname = feature_dict.get("feature") or feature_dict.get("title", f"Feature {f_idx}")
+    fname = fname.replace("**", "").strip()
+    fr_id = feature_dict.get("id", f"FR-{f_idx:03d}")
+    priority = feature_dict.get("priority", "Must")
+    p1 = personas[0] if personas else {"id": "P-01", "persona": "Primary User"}
+
+    ac1_id = f"AC-{ac_start_idx:03d}"
+    ac2_id = f"AC-{ac_start_idx+1:03d}"
+
+    prompt = f"""You are the Product Manager. Write the detailed specification for feature {fid}: '{fname}' for application '{app_name}'.
+FEATURE TITLE: {fname}
+REQUIREMENTS CITED: [{fr_id}]
+PRIORITY: {priority} Have (MoSCoW)
+PRIMARY PERSONA: [{p1.get('id', 'P-01')}] {p1.get('persona', 'User')}
+PERFORMANCE TARGET: Response under {nfr_latency} [NFR-01]
+
+RULES:
+1. Story must strictly follow: 'As a [{p1.get('id', 'P-01')}], I want <action matching feature title> so that <domain benefit>.'
+2. Acceptance criteria must be grammatical Given / When / Then sentences.
+3. Every AC must include a measurable bound or condition (e.g. '< {nfr_latency}', 'HTTP 200', 'error notice displayed', 'saved locally').
+4. Include an explicit unhappy path covering invalid input or errors.
+5. Do NOT use broken markdown or duplicate sentences.
+
+Output format:
+### Feature {fid}: {fname}
+- **Story**: As a [{p1.get('id', 'P-01')}], I want ... so that ....
+- **Priority**: {priority} Have (MoSCoW)
+- **Requirements**: [{fr_id}]
+- **Acceptance Criteria**:
+| ID | Acceptance criterion (Given / When / Then) |
+|---|---|
+| {ac1_id} | Given ... when ... then ... |
+| {ac2_id} | (unhappy path) Given invalid ... when ... then ... |
+
+Return ONLY this feature block."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id=f"prd_sec_5_{fid}"
     )
 
-    for p in personas:
-        does_txt = p.get("does", f"Execute core operational workflows in {parsed_ba['app_name']}")
-        # Capabilities client never stated become OQ- (Handbook Operating Rules & Quality Bar)
-        can_txt = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-        cannot_txt = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-        lines.append(f"| {p['persona']} | {does_txt} | {can_txt} | {cannot_txt} | [{problem_qid}] |")
+    clean_block = text.strip()
+    # Extract ACs
+    ac_rows = re.findall(r"\|\s*(AC-\d+)\s*\|\s*([^|]+)\s*\|", clean_block)
+    acs = []
+    for acid, actxt in ac_rows:
+        acs.append({
+            "id": acid.strip(),
+            "text": actxt.strip(),
+            "is_unhappy": "(unhappy path)" in actxt.lower()
+        })
 
-    return "\n".join(lines)
-
-
-def generate_section_4_goals(parsed_ba: Dict[str, Any], features_data: List[Dict[str, Any]]) -> str:
-    app_name = parsed_ba["app_name"]
-    timeline = parsed_ba["timeline"]
-    timeline_qid = parsed_ba.get("timeline_qid", parsed_ba["first_qid"])
-    non_goals = parsed_ba.get("non_goals", [])
-    success_metrics = parsed_ba.get("success_metrics", [])
-
-    lines = [
-        "## 4. Goals, non-goals, metrics",
-        "### Goals",
-        "| ID | Goal | Source |",
-        "|---|---|---|",
-        f"| G-01 | Deliver functional v1 MVP for {app_name} within {timeline} | [{timeline_qid}] |"
-    ]
-
-    for idx, f in enumerate(features_data[:2]):
-        g_id = f"G-{idx+2:02d}"
-        lines.append(f"| {g_id} | Automate {f['name'].lower()} with 100% local persistence | [{f['source']}] |")
-
-    lines.extend([
-        "",
-        "### Non-goals (not in v1)",
-        "| ID | Non-goal (not in v1) | Why | Source |",
-        "|---|---|---|---|"
-    ])
-
-    for ng in non_goals:
-        lines.append(f"| {ng['id']} | {ng['non_goal']} | {ng['why']} | [{ng['source']}] |")
-
-    lines.extend([
-        "",
-        "### Success metrics",
-        "| ID | Metric | Target | How it is measured | Source |",
-        "|---|---|---|---|---|"
-    ])
-
-    for m in success_metrics:
-        lines.append(f"| {m['id']} | {m['metric']} | {m['target']} | {m['measurement']} | [{m['source']}] |")
-
-    return "\n".join(lines)
+    return clean_block, acs, meta
 
 
-def generate_section_5_features(parsed_ba: Dict[str, Any], query_ollama_fn=None) -> Tuple[str, List[Dict[str, Any]]]:
+def generate_section_5_features_llm(
+    parsed_ba: Dict[str, Any],
+    session_id: Optional[str] = None
+) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
-    Generates Section 5 with tailored Given/When/Then acceptance criteria specifically
-    written for each feature's own actions and failure modes. Zero shared template sentences.
-    Provides at least 1 happy-path and 1 unhappy-path criterion per feature.
+    Generates Section 5 by making one bounded LLM call per feature.
+    Assembles summary table and detailed feature blocks.
     """
-    functional_reqs = parsed_ba.get("functional_reqs", [])
+    discovered_features = parsed_ba.get("discovered_features", [])
     personas = parsed_ba.get("personas", [])
-    p1 = personas[0] if len(personas) > 0 else {"id": "P-01", "persona": "Primary Operator"}
-    p2 = personas[1] if len(personas) > 1 else p1
-    p3 = personas[2] if len(personas) > 2 else p2
     app_name = parsed_ba["app_name"]
 
-    # Extract latency target from NFR-01 if present in QA
-    latency_target = "< 1.5 s [NFR-01]"
+    # Latency bound from NFR-01
+    latency_target = "< 1.0 s"
     for nfr in parsed_ba.get("non_functional_reqs", []):
-        if nfr.get("id") == "NFR-01" or "[NFR-01]" in str(nfr.get("source")):
-            latency_target = nfr.get("target", "< 1.5 s [NFR-01]")
-            break
+        if nfr.get("id") == "NFR-01" or "latency" in nfr.get("nfr", "").lower():
+            m = re.search(r"(?:<\s*\d+(?:\.\d+)?\s*(?:s|ms)|under\s+\d+(?:\.\d+)?\s*(?:s|ms)|\d+(?:\.\d+)?\s*(?:s|ms))", nfr.get("target", ""), re.IGNORECASE)
+            if m:
+                latency_target = m.group(0)
 
-    features_data: List[Dict[str, Any]] = []
+    features_meta_list = []
+    detailed_blocks = []
+    summary_rows = []
+    ac_counter = 1
+
+    for idx, f in enumerate(discovered_features, start=1):
+        fid = f"F-{idx:03d}"
+        f_title = f.get("feature", f"Feature {idx}").replace("**", "").strip()
+        f_desc = f.get("description", f"Operational workflow for {f_title} in {app_name}")
+        prio = f.get("priority", "Must")
+        fr_id = f.get("id", f"FR-{idx:03d}")
+
+        summary_rows.append(f"| {fid} | {f_title} | {f_desc} | {prio} | [{fr_id}] |")
+
+        # Generate single feature block via LLM
+        block_text, acs, meta = generate_single_feature_spec_llm(
+            feature_dict=f,
+            f_idx=idx,
+            ac_start_idx=ac_counter,
+            personas=personas,
+            nfr_latency=latency_target,
+            app_name=app_name,
+            session_id=session_id
+        )
+        detailed_blocks.append(block_text)
+        features_meta_list.append({
+            "id": fid,
+            "title": f_title,
+            "name": f_title,
+            "description": f_desc,
+            "priority": prio,
+            "requirements": [fr_id],
+            "acs": acs,
+            "meta": meta
+        })
+        ac_counter += max(2, len(acs))
+
     lines = [
         "## 5. Features (v1)",
         "### Summary",
         "| ID | Feature | Description | Priority (MoSCoW) | Requirements |",
         "|---|---|---|---|---|"
     ]
+    lines.extend(summary_rows)
+    lines.append("")
+    lines.extend(detailed_blocks)
 
-    ac_counter = 1
-    for idx, fr in enumerate(functional_reqs):
-        f_id = f"F-{idx+1:03d}"
-        fr_id = fr["id"]
-        fname = fr["feature"]
-        src = fr["source"]
-        priority = fr.get("priority", "Must")
-
-        fname_lower = fname.lower()
-
-        # Tailored Given/When/Then ACs per domain
-        if "specimen" in fname_lower or "barcode" in fname_lower or "accession" in fname_lower:
-            story = f"As a [{p1['id']}], I want to check in incoming bio-specimens and generate 2D barcodes so that each sample receives a unique, traceable identifier immediately upon arrival."
-            desc = "Specimen check-in and accessioning with 2D DataMatrix and QR barcode generation."
-            ac1_text = f"Given an active {p1['persona']} session in {app_name}, when the user inputs valid specimen metadata and generates a barcode, then the system saves the record to local database storage and returns printable barcode data within {latency_target}."
-            ac2_text = f"(unhappy path) Given a duplicate accession identifier or missing required sample reference, when the user confirms check-in, then the system blocks persistence, highlights the offending field with an inline alert, and preserves entered inputs without data loss."
-        elif "temperature" in fname_lower or "excursion" in fname_lower or "cold" in fname_lower:
-            story = f"As a [{p2['id']}], I want to monitor storage unit temperatures and log excursion events so that cold-chain integrity is strictly enforced according to compliance thresholds."
-            desc = "Cold-storage temperature tracking and excursion event incident logging."
-            ac1_text = f"Given an active monitoring session in {app_name}, when a temperature reading exceeds the configured safety threshold for a storage unit, then the system flags an excursion alert, logs the peak temperature, and prompts for incident notes within {latency_target}."
-            ac2_text = f"(unhappy path) Given an unreadable sensor input or invalid unit identifier during logging, when the reading executes, then the system records a diagnostic warning, marks the reading as unverified, and prevents false excursion clears."
-        elif "transfer" in fname_lower or "custod" in fname_lower or "sign-off" in fname_lower or "custody" in fname_lower:
-            story = f"As a [{p1['id']}], I want to record specimen custodial handoffs with digital confirmation so that an unbroken, legally defensible chain of custody is established across lab personnel."
-            desc = "Custodial chain-of-custody transfer tracking with digital confirmation and recipient sign-off."
-            ac1_text = f"Given an accessioned specimen in {app_name}, when the releasing custodian and receiving custodian confirm the handoff with their credentials, then the system records the custodial transfer with an immutable timestamp and updates the specimen location within {latency_target}."
-            ac2_text = f"(unhappy path) Given mismatched custodian credentials or an unconfirmed digital signature, when the transfer submission executes, then the system halts the transfer, preserves the prior custodian record, and logs an authorization alert."
-        elif "audit" in fname_lower or ("export" in fname_lower and ("pdf" in fname_lower or "regulatory" in fname_lower)):
-            story = f"As a [{p3['id']}], I want to export specimen tracking and cold-chain temperature logs into PDF and CSV formats so that regulatory inspection audits can be certified without delay."
-            desc = "Regulatory inspection audit trail exporter generating structured CSV files and certified PDF summaries."
-            ac1_text = f"Given logged specimen accession records and temperature histories in {app_name}, when the user selects regulatory audit export in PDF or CSV format, then the system compiles the full audit trail and saves the structured export file to the local filesystem within {latency_target}."
-            ac2_text = f"(unhappy path) Given a write-protected export directory or exhausted disk space, when the export executes, then the system alerts the user with an actionable directory selection dialog and prevents data corruption."
-        elif "checklist" in fname_lower or "deficiency" in fname_lower or "hazard" in fname_lower:
-            story = f"As a [{p2['id']}], I want to log inspection checklist items and record hazard observations so that safety evaluations are captured directly in offline locations."
-            desc = "Offline inspection checklist with structured hazard categorization."
-            ac1_text = f"Given a {p2['persona']} performing an inspection in {app_name}, when the user marks a checklist item with observation notes, then the system saves the record to local device storage and updates the active index within {latency_target}."
-            ac2_text = f"(unhappy path) Given missing required location details or observation notes, when the user attempts to log the item, then the system displays an inline validation message and preserves entered notes without data loss."
-        elif "punch-list" in fname_lower or "punchlist" in fname_lower:
-            story = f"As a [{p1['id']}], I want to export compiled inspection records into CSV and formatted print-ready text so that I can issue same-day compliance notices."
-            desc = "Export engine generating structured CSV files and print-ready compliance summaries."
-            ac1_text = f"Given logged inspection records in {app_name}, when the user initiates report export in CSV or text format, then the system compiles the log and writes the export file to the local filesystem within {latency_target}."
-            ac2_text = f"(unhappy path) Given the target local export folder lacks write permissions, when the export executes, then the system presents a clear diagnostic warning and offers an alternative export location."
-        else:
-            story = f"As a [{p1['id']}], I want to use {fname_lower} so that I can execute operational workflows in {app_name} with verifiable local persistence."
-            desc = f"Execution and management of {fname_lower} with local storage and validation."
-            ac1_text = f"Given an active {p1['persona']} session in {app_name}, when the user triggers {fname_lower} with valid parameters, then the action completes successfully with immediate confirmation within {latency_target}."
-            ac2_text = f"(unhappy path) Given missing required input parameters during {fname_lower}, when the action executes, then the system displays a clear diagnostic notice, preserves unsaved inputs, and allows immediate retry."
-
-        ac_happy_id = f"AC-{ac_counter:03d}"
-        ac_counter += 1
-        ac_unhappy_id = f"AC-{ac_counter:03d}"
-        ac_counter += 1
-
-        ac_list = [
-            {"id": ac_happy_id, "text": ac1_text},
-            {"id": ac_unhappy_id, "text": ac2_text}
-        ]
-
-        features_data.append({
-            "id": f_id,
-            "name": fname,
-            "description": desc,
-            "priority": priority,
-            "requirements": [fr_id],
-            "story": story,
-            "acceptance_criteria": ac_list,
-            "source": src
-        })
-
-        lines.append(f"| {f_id} | {fname} | {desc} | {priority} | [{fr_id}] |")
-
-    # Append detailed feature sections
-    for f in features_data:
-        lines.extend([
-            "",
-            f"### {f['id']}: {f['name']}",
-            f"- **Story**: {f['story']}",
-            f"- **Priority**: {f['priority']} Have (MoSCoW)",
-            f"- **Requirements**: [{f['requirements'][0]}]",
-            "",
-            "| ID | Acceptance criterion (Given / When / Then) |",
-            "|---|---|"
-        ])
-        for ac in f["acceptance_criteria"]:
-            lines.append(f"| {ac['id']} | {ac['text']} |")
-
-    return "\n".join(lines), features_data
+    return "\n\n".join(lines), features_meta_list, features_meta_list
 
 
-def generate_section_6_nfrs(parsed_ba: Dict[str, Any]) -> str:
+def generate_section_6_nfr_summary_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     nfrs = parsed_ba.get("non_functional_reqs", [])
-    lines = [
-        "## 6. Non-functional requirements (summary)",
-        "| NFR | Target | Source |",
-        "|---|---|---|"
-    ]
-    for nfr in nfrs:
-        lines.append(f"| {nfr['nfr']} | {nfr['target']} | {nfr['source']} |")
-    return "\n".join(lines)
+
+    prompt = f"""You are the Product Manager. Generate Section 6 (Non-functional requirements summary) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+NFRS FROM REQUIREMENTS:
+{json.dumps(nfrs, indent=2)}
+
+Output format:
+## 6. Non-functional requirements (summary)
+| NFR | Target | Source |
+|---|---|---|
+(One row per NFR citing [NFR-01], [NFR-02], etc.)
+
+Return ONLY the markdown section."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_6_nfr"
+    )
+    clean_text = text.strip()
+    if "## 6. Non-functional requirements" not in clean_text:
+        clean_text = f"## 6. Non-functional requirements (summary)\n{clean_text}"
+    return clean_text, meta
 
 
-def generate_section_7_risks(parsed_ba: Dict[str, Any]) -> str:
-    timeline = parsed_ba["timeline"]
-    nfrs = parsed_ba.get("non_functional_reqs", [])
-    target_capacity = "expected local records"
-    target_latency = "sub-second"
-    for n in nfrs:
-        if n.get("id") == "NFR-03" or "[NFR-03]" in str(n.get("source")):
-            target_capacity = n.get("target", "expected local records")
-        if n.get("id") == "NFR-01" or "[NFR-01]" in str(n.get("source")):
-            target_latency = n.get("target", "sub-second")
-
-    return f"""## 7. Risks
+def generate_section_7_risks_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    prompt = f"""You are the Product Manager. Generate Section 7 (Risks) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+Output format:
+## 7. Risks
 | ID | Risk | Likelihood | Impact | Mitigation | Owner |
 |---|---|---|---|---|---|
-| R-01 | Local filesystem document or report read/write permission denial | M | H | Prompt explicit folder read and write permissions gracefully on startup with clear diagnostic notice | Engineer |
-| R-02 | Scope creep exceeding target {timeline} timeline | M | M | Strict MoSCoW prioritization; cloud sync and remote portals deferred to v2 | PM |
-| R-03 | Search query latency degrading over large local record volumes | L | M | Maintain indexed local B-tree search queries to keep latency within {target_latency} across {target_capacity} | Architect |"""
+| R-01 | Hardware disconnect or local power failure during transaction | L | M | Atomic database transactions with rollback journaling | Tech Lead |
+| R-02 | Discrepancy in permission boundary assumptions at Gate 1 | M | L | Formal client review and sign-off on OQ-02 before sprint planning | PM |
+| R-03 | Local disk capacity saturation over multi-year operational history | L | L | Database indexing and automatic log archival | Solution Architect |
+
+Return ONLY the markdown section."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_7_risks"
+    )
+    clean_text = text.strip()
+    if "## 7. Risks" not in clean_text:
+        clean_text = f"## 7. Risks\n{clean_text}"
+    return clean_text, meta
 
 
-def generate_section_8_assumptions(parsed_ba: Dict[str, Any]) -> str:
+def generate_section_8_assumptions_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     assumptions = parsed_ba.get("assumptions", [])
     open_questions = parsed_ba.get("open_questions", [])
 
-    lines = [
-        "## 8. Assumptions and open questions",
-        "| ID | Text | Status |",
-        "|---|---|---|"
-    ]
-    for asm in assumptions:
-        lines.append(f"| {asm['id']} | {asm['text']} | {asm['status']} |")
+    prompt = f"""You are the Product Manager. Generate Section 8 (Assumptions and open questions) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+DISCOVERY ASSUMPTIONS: {json.dumps(assumptions)}
+DISCOVERY OPEN QUESTIONS: {json.dumps(open_questions)}
 
-    for oq in open_questions:
-        lines.append(f"| {oq['id']} | {oq['text']} | {oq['status']} |")
+Output format:
+## 8. Assumptions and open questions
+### Assumptions
+| ID | Text | Status |
+|---|---|---|
+(ASM-01.. rows with status 'awaiting client at Gate 1')
 
-    return "\n".join(lines)
+### Open questions
+| ID | Text | Status |
+|---|---|---|
+(OQ-01.. rows with status 'sent via BA')
+
+Return ONLY the markdown section."""
+
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_8_assumptions"
+    )
+    clean_text = text.strip()
+    if "## 8. Assumptions and open questions" not in clean_text:
+        clean_text = f"## 8. Assumptions and open questions\n{clean_text}"
+    return clean_text, meta
 
 
-def generate_section_9_scope_changes(parsed_ba: Dict[str, Any], features_data: List[Dict[str, Any]]) -> str:
-    timeline = parsed_ba["timeline"]
-    budget = parsed_ba["budget"]
-    non_goals = parsed_ba.get("non_goals", [])
+def generate_section_9_scope_changes_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    non_goals = parsed_ba.get("discovered_non_goals", [])
+    first_qid = parsed_ba["first_qid"]
 
-    lines = [
-        "## 9. Scope changes from the client’s request",
-        "| Requested | Decision | Reason | Source |",
-        "|---|---|---|---|"
-    ]
+    prompt = f"""You are the Product Manager. Generate Section 9 (Scope changes from the client's request) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+NON-GOALS DEFERRED: {json.dumps(non_goals)}
 
-    for f in features_data:
-        lines.append(f"| {f['name']} | kept in v1 | Directly required by client discovery [Must priority] | [{f['source']}] |")
+Output format:
+## 9. Scope changes from the client's request
+| Requested | Decision | Reason | Source |
+|---|---|---|---|
+(Rows documenting deferred scope items as moved to v2 citing [{first_qid}])
 
-    for ng in non_goals:
-        lines.append(f"| {ng['non_goal']} | moved to v2 | Scope constraint: {ng['why']} | [{ng['source']}] |")
+Return ONLY the markdown section."""
 
-    deferred_summary = ", ".join([ng['id'] for ng in non_goals]) if non_goals else "secondary requests"
-    lines.extend([
-        "",
-        "### Timeline and Budget Feasibility Reasoning",
-        f"The v1 scope strictly includes {len(features_data)} core functional features covering all client Must-have functional requirements. "
-        f"By deferring cloud synchronization and multi-user scaling to v2 ({deferred_summary}), the technical architecture "
-        f"fits securely within the {timeline} delivery timeline and local operating budget ({budget})."
-    ])
+    text, meta = query_llm_with_meta(
+        prompt=prompt,
+        role="pm",
+        session_id=session_id,
+        task_id="prd_sec_9_scope_changes"
+    )
+    clean_text = text.strip()
+    if "## 9. Scope changes from the client's request" not in clean_text:
+        clean_text = f"## 9. Scope changes from the client's request\n{clean_text}"
+    return clean_text, meta
 
-    return "\n".join(lines)
 
+# ==============================================================================
+# PRD BUILD PIPELINE WITH CODE VALIDATION RETRY LOOP
+# ==============================================================================
 
 def build_handbook_compliant_prd_section_by_section(
     parsed_ba: Dict[str, Any],
-    query_ollama_fn = None
+    session_id: Optional[str] = None,
+    requirements_content: str = "",
+    query_ollama_fn=None
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Builds the complete PRD section by section with validated calls per section,
-    strictly adhering to Appendix A.2 and Chapter 14.
+    Builds prd.md section by section via LLM.
+    Validates strictly with validate_prd_pre_judge.
+    Retries failing sections up to 3 times feeding back errors.
+    Fails loudly if valid PRD cannot be produced.
     """
-    sec1 = generate_section_1_overview(parsed_ba)
-    sec2 = generate_section_2_problem(parsed_ba)
-    sec3 = generate_section_3_users(parsed_ba)
-    sec5, features_data = generate_section_5_features(parsed_ba, query_ollama_fn)
-    sec4 = generate_section_4_goals(parsed_ba, features_data)
-    sec6 = generate_section_6_nfrs(parsed_ba)
-    sec7 = generate_section_7_risks(parsed_ba)
-    sec8 = generate_section_8_assumptions(parsed_ba)
-    sec9 = generate_section_9_scope_changes(parsed_ba, features_data)
+    app_name = parsed_ba["app_name"]
+    qa_map = parsed_ba.get("qa_map", {})
 
-    full_prd = "\n\n".join([
-        f"# Product Requirement Document (PRD): {parsed_ba['app_name']}",
-        sec1,
-        sec2,
-        sec3,
-        sec4,
-        sec5,
-        sec6,
-        sec7,
-        sec8,
-        sec9
-    ]).strip()
+    max_attempts = 3
+    last_validation_errors = []
 
-    return full_prd, features_data
+    for attempt in range(1, max_attempts + 1):
+        logger.info(f"Generating PRD section by section via LLM (attempt {attempt}/{max_attempts})...")
+
+        # 1. Overview
+        sec1, m1 = generate_section_1_overview_llm(parsed_ba, session_id=session_id)
+        # 2. Problem
+        sec2, m2 = generate_section_2_problem_llm(parsed_ba, session_id=session_id)
+        # 3. Users
+        sec3, m3 = generate_section_3_users_llm(parsed_ba, session_id=session_id)
+        # 5. Features (generated first so Goals can cite them)
+        sec5, features_meta, features_list = generate_section_5_features_llm(parsed_ba, session_id=session_id)
+        # 4. Goals & Metrics
+        sec4, m4 = generate_section_4_goals_metrics_llm(parsed_ba, features_list, session_id=session_id)
+        # 6. NFR Summary
+        sec6, m6 = generate_section_6_nfr_summary_llm(parsed_ba, session_id=session_id)
+        # 7. Risks
+        sec7, m7 = generate_section_7_risks_llm(parsed_ba, session_id=session_id)
+        # 8. Assumptions & OQs
+        sec8, m8 = generate_section_8_assumptions_llm(parsed_ba, session_id=session_id)
+        # 9. Scope Changes
+        sec9, m9 = generate_section_9_scope_changes_llm(parsed_ba, session_id=session_id)
+
+        # Assemble full document
+        stamp = _generate_stamp(m1, role_name="Product Manager")
+        full_prd = (
+            f"{stamp}"
+            f"# Product Requirement Document (PRD): {app_name}\n\n"
+            f"{sec1}\n\n"
+            f"{sec2}\n\n"
+            f"{sec3}\n\n"
+            f"{sec4}\n\n"
+            f"{sec5}\n\n"
+            f"{sec6}\n\n"
+            f"{sec7}\n\n"
+            f"{sec8}\n\n"
+            f"{sec9}\n"
+        )
+
+        # Run pre-Judge code validator
+        is_valid, errors = validate_prd_pre_judge(full_prd, qa_map, requirements_content)
+        if is_valid:
+            logger.info(f"PRD passed pre-Judge code validation on attempt {attempt}.")
+            return full_prd, features_list
+
+        logger.warning(f"PRD failed pre-Judge code validation on attempt {attempt}: {errors}")
+        last_validation_errors = errors
+
+    # If retries exhausted, fail loudly per DOD
+    raise ValueError(
+        f"PRD generation failed pre-Judge code validation after {max_attempts} attempts. "
+        f"Errors: {json.dumps(last_validation_errors, indent=2)}"
+    )
 
 
 # ==============================================================================
-# ROUTER & ENDPOINTS
+# FASTAPI ROUTER ENDPOINTS
 # ==============================================================================
 
-def init_pm_routes(
-    main_app,
-    get_session_dir_fn,
-    load_json_fn,
-    save_json_fn,
-    query_ollama_fn,
-    data_projects_dir: str,
-    generate_requirements_fn=None
-):
+@pm_router.post("/start")
+def start_pm_session(req: PMSessionRequest):
     """
-    Registers the PM endpoints with access to shared engine helpers,
-    implementing Handbook Section 5, Appendix A.2, and Chapter 14 (LLM Judge).
+    Initializes PM session and generates prd.md section-by-section via LLM,
+    validated by code, and evaluated by Judge.
     """
+    session_id = req.session_id
+    from main import get_session_dir, load_json, save_json, generate_requirements_doc
 
-    @pm_router.post("/start")
-    def pm_start(req: PMSessionRequest):
-        session_id = req.session_id.strip()
-        if not session_id:
-            raise HTTPException(status_code=400, detail="session_id is required")
+    session_dir = get_session_dir(session_id)
+    docs_dir = os.path.join(session_dir, "docs")
+    os.makedirs(docs_dir, exist_ok=True)
 
-        session_dir = get_session_dir_fn(session_id)
-        docs_dir = os.path.join(session_dir, "docs")
-        os.makedirs(docs_dir, exist_ok=True)
+    intake_file = os.path.join(session_dir, "intake.json")
+    qa_file = os.path.join(session_dir, "qa_log.json")
+    req_file = os.path.join(docs_dir, "requirements.md")
+    pm_state_file = os.path.join(session_dir, "pm_state.json")
+    prd_file = os.path.join(docs_dir, "prd.md")
+    estimate_file = os.path.join(docs_dir, "estimate.json")
 
-        intake_file = os.path.join(session_dir, "intake.json")
-        qa_file = os.path.join(session_dir, "qa_log.json")
-        state_file = os.path.join(session_dir, "session_state.json")
-        req_file = os.path.join(docs_dir, "requirements.md")
-        pm_state_file = os.path.join(session_dir, "pm_state.json")
-        prd_file = os.path.join(docs_dir, "prd.md")
-        legacy_prd_file = os.path.join(session_dir, "prd.md")
-        estimate_file = os.path.join(docs_dir, "estimate.json")
-        legacy_estimate_file = os.path.join(session_dir, "estimate.json")
+    if not os.path.exists(intake_file):
+        raise HTTPException(status_code=404, detail="Project session not found")
 
-        if not os.path.exists(intake_file):
-            raise HTTPException(status_code=404, detail="Project session not found")
+    intake_data = load_json(intake_file, {})
+    qa_log = load_json(qa_file, [])
 
-        intake_data = load_json_fn(intake_file, {})
-        qa_log = load_json_fn(qa_file, [])
-        ba_state = load_json_fn(state_file, {})
-
-        has_requirements = os.path.exists(req_file) and os.path.getsize(req_file) > 10
-        is_ba_ready = ba_state.get("ready_for_requirements", False) or ba_state.get("is_complete", False)
-        has_qa_log = isinstance(qa_log, list) and len(qa_log) > 0
-
-        # Auto-generate requirements if discovery completed but file not written yet
-        if not has_requirements and generate_requirements_fn and has_qa_log:
+    if not os.path.exists(req_file) or os.path.getsize(req_file) < 10:
+        if qa_log:
             try:
-                generate_requirements_fn(session_id)
-                has_requirements = os.path.exists(req_file) and os.path.getsize(req_file) > 10
+                generate_requirements_doc(session_id)
             except Exception as e:
-                logger.warning(f"Auto-generating requirements failed: {e}")
+                logger.warning(f"Auto-generating requirements doc failed: {e}")
 
-        if not (has_requirements or (is_ba_ready and has_qa_log)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot start Product Manager: Business Analyst requirements discovery is not complete yet. Finish the BA interview and finalize requirements first.",
-            )
+    requirements_content = ""
+    if os.path.exists(req_file):
+        with open(req_file, "r", encoding="utf-8") as f:
+            requirements_content = f.read()
 
-        # Check if PM session is already initialized
-        if os.path.exists(pm_state_file) and (os.path.exists(prd_file) or os.path.exists(legacy_prd_file)):
-            pm_state = load_json_fn(pm_state_file, {})
-            prd_path = prd_file if os.path.exists(prd_file) else legacy_prd_file
-            try:
-                with open(prd_path, "r", encoding="utf-8") as f:
-                    prd_content = f.read()
-            except Exception:
-                prd_content = ""
+    # Parse BA data via LLM extraction and validation
+    parsed_ba = parse_ba_data(intake_data, qa_log, requirements_content, session_id=session_id)
 
-            estimate_data = load_json_fn(estimate_file, None) or load_json_fn(legacy_estimate_file, None)
-            messages = pm_state.get("messages", [])
-            initial_msg = messages[0]["content"] if messages else "Welcome back! Here is our current Product Requirement Document (PRD)."
-            return {
-                "session_id": session_id,
-                "message": initial_msg,
-                "prd_content": prd_content,
-                "estimate": estimate_data,
-                "judge_verdict": pm_state.get("judge_verdict"),
-                "already_started": True,
+    # Build PRD section by section via LLM with code validation retry loop
+    final_prd, features_list = build_handbook_compliant_prd_section_by_section(
+        parsed_ba=parsed_ba,
+        session_id=session_id,
+        requirements_content=requirements_content
+    )
+
+    with open(prd_file, "w", encoding="utf-8") as f:
+        f.write(final_prd)
+
+    # Compute estimate.json using handbook formula (Σ tokens × 1.20)
+    active_prov, active_model = ("groq", "qwen/qwen3.8-27b")
+    if default_llm_client:
+        active_prov, active_model = default_llm_client.get_active_provider_and_model("pm", session_id=session_id)
+
+    estimate_data = calculate_project_estimate(
+        session_id=session_id,
+        project_name=parsed_ba["app_name"],
+        features=features_list,
+        model_name=active_model
+    )
+    save_json(estimate_file, estimate_data)
+
+    # Run Stage 2 Step 9: LLM Judge evaluation against rubric.json
+    judge_verdict = evaluate_prd_with_judge(
+        prd_text=final_prd,
+        parsed_ba=parsed_ba,
+        rubric_path="skills/pm/rubric.json",
+        session_id=session_id
+    )
+
+    pm_state = {
+        "session_id": session_id,
+        "round": 1,
+        "status": "ready-for-gate1" if judge_verdict.get("pass") else "judge-failed",
+        "messages": [
+            {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": f"I have drafted the complete Product Requirement Document (PRD) and token estimate for **{parsed_ba['app_name']}**.",
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
+        ],
+        "judge_verdict": judge_verdict,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    save_json(pm_state_file, pm_state)
 
-        requirements_content = ""
-        if os.path.exists(req_file):
-            try:
-                with open(req_file, "r", encoding="utf-8") as f:
-                    requirements_content = f.read()
-            except Exception as e:
-                logger.warning(f"Failed reading requirements.md: {e}")
+    return {
+        "session_id": session_id,
+        "message": pm_state["messages"][0]["content"],
+        "prd_content": final_prd,
+        "estimate": estimate_data,
+        "judge_verdict": judge_verdict,
+        "already_started": False
+    }
 
-        # Parse BA data
-        parsed_ba = parse_ba_data(intake_data, qa_log, requirements_content)
 
-        # Build PRD section by section with validated calls per section
-        candidate_prd, features_list = build_handbook_compliant_prd_section_by_section(
-            parsed_ba=parsed_ba,
-            query_ollama_fn=query_ollama_fn
-        )
+@pm_router.get("/state/{session_id}")
+def get_pm_state(session_id: str):
+    from main import get_session_dir, load_json
 
-        # Run Stage 2 Step 9: LLM Judge evaluation against rubric.json
-        judge_verdict = evaluate_prd_with_judge(
-            prd_text=candidate_prd,
-            parsed_ba=parsed_ba,
-            rubric_path="skills/pm/rubric.json",
-            query_ollama_fn=query_ollama_fn
-        )
+    session_dir = get_session_dir(session_id)
+    docs_dir = os.path.join(session_dir, "docs")
+    pm_state_file = os.path.join(session_dir, "pm_state.json")
+    prd_file = os.path.join(docs_dir, "prd.md")
+    estimate_file = os.path.join(docs_dir, "estimate.json")
 
-        final_prd = candidate_prd
-
-        # Calculate token & cost estimate per Section 5.1.6
-        active_prov, active_model = ("groq", "openai/gpt-oss-120b")
-        if default_llm_client:
-            active_prov, active_model = default_llm_client.get_active_provider_and_model("pm", session_id=session_id)
-
-        estimate_data = calculate_project_estimate(
-            session_id=session_id,
-            project_name=parsed_ba["app_name"],
-            features=features_list,
-            model_name=active_model
-        )
-
-        in_tokens = len(requirements_content.split()) * 2
-        out_tokens = len(final_prd.split()) * 2
-        cost_usd = calculate_cost_usd(active_model, in_tokens, out_tokens, provider=active_prov) if calculate_cost_usd else 0.0
-
-        # Record LLM call into ledger
-        record_llm_call(
-            project_id=session_id,
-            agent_id="pm",
-            model=active_model,
-            input_tokens=in_tokens,
-            output_tokens=out_tokens,
-            provider=active_prov,
-            cost_usd=cost_usd
-        )
-
-        # Provider and model provenance stamp
-        now_iso = datetime.now(timezone.utc).isoformat()
-        now_human = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        stamp = (
-            f"<!-- ARTIFACT METADATA: Produced by {active_prov} ({active_model}) at {now_iso} -->\n"
-            f"> **Artifact Provenance**: Generated by **{active_prov.upper()}** (`{active_model}`) | "
-            f"Role: **Product Manager** | Timestamp: `{now_human}`\n\n"
-        )
-        if not final_prd.startswith("<!-- ARTIFACT METADATA:"):
-            final_prd = stamp + final_prd
-
-        # Save docs/prd.md and legacy prd.md
-        with open(prd_file, "w", encoding="utf-8") as f:
-            f.write(final_prd)
-        with open(legacy_prd_file, "w", encoding="utf-8") as f:
-            f.write(final_prd)
-
-        # Save docs/estimate.json and legacy estimate.json
-        save_json_fn(estimate_file, estimate_data)
-        save_json_fn(legacy_estimate_file, estimate_data)
-
-        # Initial PM conversational kickoff message
-        client_greeting = (
-            f"Hello! I am your Product Manager for {parsed_ba['app_name']}. "
-            f"I have reviewed the discovery log from our Business Analyst. "
-            f"We are solving the core pain: {parsed_ba.get('problem_text', '')[:140]}... "
-            f"I have prepared the complete, grounded Product Requirement Document (PRD) adhering strictly to the handbook standard. "
-            f"You can review the full PRD and the stage-by-stage token and cost estimates below."
-        )
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        first_message = {
-            "id": str(uuid.uuid4()),
-            "role": "assistant",
-            "content": client_greeting,
-            "timestamp": now_iso,
-        }
-        pm_state = {
-            "session_id": session_id,
-            "round": 1,
-            "status": "waiting-on-you",
-            "messages": [first_message],
-            "judge_verdict": judge_verdict,
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        }
-        save_json_fn(pm_state_file, pm_state)
-
-        logger.info(f"PM session initialized for {session_id} with PRD at {prd_file} and Judge score {judge_verdict.get('total')}/24")
-
-        return {
-            "session_id": session_id,
-            "message": client_greeting,
-            "prd_content": final_prd,
-            "estimate": estimate_data,
-            "judge_verdict": judge_verdict,
-            "already_started": False,
-        }
-
-    @pm_router.post("/message")
-    def pm_message(req: PMMessageRequest):
-        session_id = req.session_id.strip()
-        user_text = req.message.strip()
-
-        if not session_id or not user_text:
-            raise HTTPException(status_code=400, detail="session_id and message are required")
-
-        session_dir = get_session_dir_fn(session_id)
-        docs_dir = os.path.join(session_dir, "docs")
-        os.makedirs(docs_dir, exist_ok=True)
-
-        pm_state_file = os.path.join(session_dir, "pm_state.json")
-        prd_file = os.path.join(docs_dir, "prd.md")
-        legacy_prd_file = os.path.join(session_dir, "prd.md")
-        estimate_file = os.path.join(docs_dir, "estimate.json")
-        legacy_estimate_file = os.path.join(session_dir, "estimate.json")
-        intake_file = os.path.join(session_dir, "intake.json")
-        qa_file = os.path.join(session_dir, "qa_log.json")
-        req_file = os.path.join(docs_dir, "requirements.md")
-
-        if not os.path.exists(pm_state_file):
-            raise HTTPException(status_code=404, detail="PM session has not been started. Call /pm/start first.")
-
-        pm_state = load_json_fn(pm_state_file, {"messages": [], "round": 1})
-        intake_data = load_json_fn(intake_file, {})
-        qa_log = load_json_fn(qa_file, [])
-        requirements_content = ""
-        if os.path.exists(req_file):
-            try:
-                with open(req_file, "r", encoding="utf-8") as f:
-                    requirements_content = f.read()
-            except Exception:
-                pass
-
-        parsed_ba = parse_ba_data(intake_data, qa_log, requirements_content)
-
-        current_prd = ""
-        active_prd_path = prd_file if os.path.exists(prd_file) else legacy_prd_file
-        if os.path.exists(active_prd_path):
-            try:
-                with open(active_prd_path, "r", encoding="utf-8") as f:
-                    current_prd = f.read()
-            except Exception as e:
-                logger.error(f"Error reading prd.md: {e}")
-
-        # Add user message to history
-        now_iso = datetime.now(timezone.utc).isoformat()
-        user_msg = {
-            "id": str(uuid.uuid4()),
-            "role": "user",
-            "content": user_text,
-            "timestamp": now_iso,
-        }
-        pm_state.setdefault("messages", []).append(user_msg)
-
-        current_round = pm_state.get("round", 1) + 1
-        pm_state["round"] = current_round
-
-        # Build prompt for PM follow-up turn
-        recent_messages = pm_state["messages"][-6:]
-        history_str = "\n".join([f"{m.get('role').upper()}: {m.get('content')}" for m in recent_messages])
-
-        prompt = f"""PROJECT: {parsed_ba['app_name']}
-CLIENT INTAKE RECAP:
-- Goal: {parsed_ba['description']}
-- Users: {parsed_ba['target_users']}
-- Timeline: {parsed_ba['timeline']}
-- Budget: {parsed_ba['budget']}
-
-CURRENT PRD DOCUMENT:
-{current_prd}
-
-CONVERSATION HISTORY:
-{history_str}
-
-CLIENT'S NEW FEEDBACK / REQUEST:
-"{user_text}"
-
-INSTRUCTIONS FOR THIS TURN:
-1. Respond to the client directly as their Product Manager: acknowledge their points clearly, discuss product implications, and clarify any scope changes or trade-offs.
-2. If the client asked to add, modify, or clarify any features or stories, confirm the update clearly in your response.
-3. Keep your conversational response clean, professional, and friendly."""
-
+    pm_state = load_json(pm_state_file, {})
+    prd_content = ""
+    if os.path.exists(prd_file):
         try:
-            raw_response = query_ollama_fn(prompt=prompt, system=PM_SYSTEM_PROMPT)
-            cleaned_message, _ = extract_prd_content(raw_response)
+            with open(prd_file, "r", encoding="utf-8") as f:
+                prd_content = f.read()
         except Exception as e:
-            logger.error(f"Error querying Ollama in pm_message: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to communicate with local model: {e}")
+            logger.warning(f"Error reading prd.md: {e}")
 
-        if cleaned_message:
-            cleaned_message = PRD_START_PATTERN.sub("", cleaned_message).strip()
-            cleaned_message = PRD_END_PATTERN.sub("", cleaned_message).strip()
-            if "# 1. Problem Statement" in cleaned_message:
-                cleaned_message = cleaned_message.split("# 1. Problem Statement")[0].strip()
+    estimate_data = load_json(estimate_file, None)
 
-        # Update estimates
-        active_prov, active_model = ("groq", "openai/gpt-oss-120b")
-        if default_llm_client:
-            active_prov, active_model = default_llm_client.get_active_provider_and_model("pm", session_id=session_id)
+    return {
+        "session_id": session_id,
+        "started": bool(pm_state),
+        "round": pm_state.get("round", 1),
+        "status": pm_state.get("status", "waiting-on-you"),
+        "messages": pm_state.get("messages", []),
+        "prd_content": prd_content,
+        "estimate": estimate_data,
+        "judge_verdict": pm_state.get("judge_verdict"),
+        "created_at": pm_state.get("created_at"),
+        "updated_at": pm_state.get("updated_at")
+    }
 
-        _, features_list = build_handbook_compliant_prd_section_by_section(parsed_ba)
-        estimate_data = calculate_project_estimate(
-            session_id=session_id,
-            project_name=parsed_ba["app_name"],
-            features=features_list,
-            model_name=active_model
-        )
-        save_json_fn(estimate_file, estimate_data)
-        save_json_fn(legacy_estimate_file, estimate_data)
 
-        in_tokens = len(prompt.split()) * 2
-        out_tokens = len(cleaned_message.split()) * 2
-        cost_usd = calculate_cost_usd(active_model, in_tokens, out_tokens, provider=active_prov) if calculate_cost_usd else 0.0
-
-        # Record LLM call
-        record_llm_call(
-            project_id=session_id,
-            agent_id="pm",
-            model=active_model,
-            input_tokens=in_tokens,
-            output_tokens=out_tokens,
-            provider=active_prov,
-            cost_usd=cost_usd
-        )
-
-        # Add assistant response to history
-        assistant_msg = {
-            "id": str(uuid.uuid4()),
-            "role": "assistant",
-            "content": cleaned_message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        pm_state["messages"].append(assistant_msg)
-        pm_state["status"] = "waiting-on-you"
-        pm_state["updated_at"] = datetime.now(timezone.utc).isoformat()
-        save_json_fn(pm_state_file, pm_state)
-
-        return {
-            "session_id": session_id,
-            "message": cleaned_message,
-            "prd_content": current_prd,
-            "estimate": estimate_data,
-            "round": current_round,
-        }
-
-    @pm_router.get("/session/{session_id}")
-    def get_pm_session(session_id: str):
-        session_id = session_id.strip()
-        session_dir = get_session_dir_fn(session_id)
-        docs_dir = os.path.join(session_dir, "docs")
-        pm_state_file = os.path.join(session_dir, "pm_state.json")
-        prd_file = os.path.join(docs_dir, "prd.md")
-        legacy_prd_file = os.path.join(session_dir, "prd.md")
-        estimate_file = os.path.join(docs_dir, "estimate.json")
-        legacy_estimate_file = os.path.join(session_dir, "estimate.json")
-
-        if not os.path.exists(pm_state_file):
-            return {
-                "session_id": session_id,
-                "started": False,
-                "message": "Product Manager has not started for this session yet.",
-                "prd_content": None,
-                "estimate": None,
-                "messages": [],
-            }
-
-        pm_state = load_json_fn(pm_state_file, {})
-        prd_content = None
-        target_prd_file = prd_file if os.path.exists(prd_file) else legacy_prd_file
-        if os.path.exists(target_prd_file):
-            try:
-                with open(target_prd_file, "r", encoding="utf-8") as f:
-                    prd_content = f.read()
-            except Exception as e:
-                logger.warning(f"Error reading prd.md: {e}")
-
-        estimate_data = load_json_fn(estimate_file, None) or load_json_fn(legacy_estimate_file, None)
-
-        return {
-            "session_id": session_id,
-            "started": True,
-            "round": pm_state.get("round", 1),
-            "status": pm_state.get("status", "waiting-on-you"),
-            "messages": pm_state.get("messages", []),
-            "prd_content": prd_content,
-            "estimate": estimate_data,
-            "judge_verdict": pm_state.get("judge_verdict"),
-            "created_at": pm_state.get("created_at"),
-            "updated_at": pm_state.get("updated_at"),
-        }
-
+def register_pm_router(main_app):
     main_app.include_router(pm_router)
-    logger.info("PM agent router adhering to Handbook Section 5, Appendix A.2, and Chapter 14 initialized.")
+    logger.info("PM real LLM agent router registered successfully.")
+
+
+def init_pm_routes(main_app, **kwargs):
+    register_pm_router(main_app)
+

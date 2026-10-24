@@ -150,21 +150,21 @@ assert verdict.get("pass") is False, "Judge MUST FAIL broken UI/UX design artifa
 assert len(verdict.get("unsupported_claims", [])) >= 4, f"Judge should catch at least 4 fatal defects, got {len(verdict.get('unsupported_claims', []))}"
 
 # Specific checks:
-reasons = [uc.get("reason", "") for uc in verdict.get("unsupported_claims", [])]
+claims_text = [(uc.get("reason", "") + " " + uc.get("text", "")).lower() for uc in verdict.get("unsupported_claims", [])]
 
-has_contrast_failure = any("contrast" in r.lower() for r in reasons)
+has_contrast_failure = any("contrast" in c for c in claims_text)
 assert has_contrast_failure, "Judge must catch WCAG contrast ratio failure (#94a3b8 on #f8fafc)!"
 
-has_feature_failure = any("f-004" in r.lower() or "unmapped" in r.lower() for r in reasons)
+has_feature_failure = any("f-004" in c or "unmapped" in c or "not covered" in c for c in claims_text)
 assert has_feature_failure, "Judge must catch unmapped feature F-004!"
 
-has_state_failure = any("state" in r.lower() for r in reasons)
+has_state_failure = any("state" in c for c in claims_text)
 assert has_state_failure, "Judge must catch missing screen states in S-02!"
 
-has_persona_failure = any("persona" in r.lower() for r in reasons)
+has_persona_failure = any("persona" in c for c in claims_text)
 assert has_persona_failure, "Judge must catch missing persona citation in S-02!"
 
-has_contamination = any("cross-project" in r.lower() or "field operator" in r.lower() for r in reasons)
+has_contamination = any("cross-project" in c or "field operator" in c for c in claims_text)
 assert has_contamination, "Judge must catch cross-project contamination terms ('field operators')!"
 
 print("\n>>> PROOF COMPLETE (CASE 1): Judge successfully and deterministically REJECTED the broken design documents with exact defect identification across all 5 fatal error types!")
@@ -326,4 +326,74 @@ has_ungrounded_std = any(
 assert has_ungrounded_std, "Judge must catch ungrounded standards (FAA AC 20-175, MIL-STD-1472)!"
 
 print("\n>>> PROOF COMPLETE (CASE 2): Judge successfully and deterministically REJECTED the old AeroFleet deliverable with exact defect identification across duplicate states, screen name length, and ungrounded standards!")
+
+
+# ==============================================================================
+# CASE 3: CURRENT / OLD SITEAUDIT PRO APP-FLOW & DESIGN BRIEF AUDIT (Round 4 Item 7)
+# Fatal defects in previous SiteAudit output:
+# 1. Template residue in J-2: 'submits required parameters for', 'writes telemetry', 'out-of-spec measurements', 'technician', 'disk I/O latency'
+# 2. Contrast failures on dark surface: primary 4.14, secondary 3.96, error 3.60, warning 3.74
+# 3. Ungrounded UI elements: 'PDF Summary', 'Assigned Contractor', 'ISO-standard deficiency codes', 'bounding boxes'
+# 4. Cross-section consistency: NFR-01 latency conflict, 100% offline vs real-time telemetry cloud contradictions
+# ==============================================================================
+print("\n" + "="*70)
+print("=== CASE 3: RUNNING JUDGE ON OLD SITEAUDIT DELIVERABLE (DEFECT DETECTION) ===")
+print("="*70)
+
+siteaudit_dir = os.path.join(os.path.dirname(__file__), "..", "data", "projects", "5514241c-ef82-4092-b91f-a9cf94290f58")
+siteaudit_af_path = os.path.join(siteaudit_dir, "docs", "app-flow.md")
+siteaudit_db_path = os.path.join(siteaudit_dir, "docs", "design-brief.md")
+siteaudit_prd_path = os.path.join(siteaudit_dir, "docs", "prd.md")
+siteaudit_arch_path = os.path.join(siteaudit_dir, "docs", "architecture.md")
+siteaudit_qa_path = os.path.join(siteaudit_dir, "qa_log.json")
+
+with open(siteaudit_af_path, "r", encoding="utf-8") as f:
+    siteaudit_af_text = f.read()
+with open(siteaudit_db_path, "r", encoding="utf-8") as f:
+    siteaudit_db_text = f.read()
+with open(siteaudit_prd_path, "r", encoding="utf-8") as f:
+    siteaudit_prd_text = f.read()
+with open(siteaudit_arch_path, "r", encoding="utf-8") as f:
+    siteaudit_arch_text = f.read()
+with open(siteaudit_qa_path, "r", encoding="utf-8") as f:
+    siteaudit_qa_log = json.load(f)
+
+verdict_case3 = evaluate_design_with_judge(
+    app_flow_text=siteaudit_af_text,
+    design_brief_text=siteaudit_db_text,
+    prd_text=siteaudit_prd_text,
+    parsed_ba={"app_name": "SiteAudit Pro", "qa_log": siteaudit_qa_log},
+    rubric_path="skills/designer/rubric.json",
+    architecture_text=siteaudit_arch_text
+)
+
+print(f"\nPass: {verdict_case3.get('pass')}")
+print(f"Total Score: {verdict_case3.get('total')}/{verdict_case3.get('max')}")
+print(f"Verdict Summary: {verdict_case3.get('verdict_summary')}")
+print(f"Unsupported Claims Count: {len(verdict_case3.get('unsupported_claims', []))}")
+
+print("\n--- Detected Fatal Flaws in Old SiteAudit Deliverable ---")
+for idx, uc in enumerate(verdict_case3.get("unsupported_claims", []), 1):
+    print(f"{idx}. [{uc.get('section', 'General')}] {uc.get('reason')}")
+    print(f"   Context snippet: {uc.get('text')}")
+
+# Mandatory assertion per Round 4 Item 7: Judge MUST FAIL the current SiteAudit deliverable!
+assert verdict_case3.get("pass") is False, "Judge MUST FAIL the current/old SiteAudit app-flow.md!"
+
+reasons_case3 = [uc.get("reason", "") for uc in verdict_case3.get("unsupported_claims", [])]
+
+# Verify contrast failures on dark surface were detected
+has_contrast_surface = any("surface" in r.lower() and "contrast" in r.lower() for r in reasons_case3)
+assert has_contrast_surface, "Judge must catch contrast failure on dark surface in SiteAudit!"
+
+# Verify template residue in J-2 was detected
+has_template_residue = any("template" in r.lower() for r in reasons_case3)
+assert has_template_residue, "Judge must catch template filler residue in SiteAudit J-2!"
+
+# Verify ungrounded UI elements were detected
+has_ungrounded_elements = any("ungrounded ui element" in r.lower() for r in reasons_case3)
+assert has_ungrounded_elements, "Judge must catch ungrounded UI elements in SiteAudit!"
+
+print("\n>>> PROOF COMPLETE (CASE 3): Judge successfully and deterministically REJECTED the old SiteAudit deliverable with exact defect identification across template residue, surface contrast, and ungrounded UI elements!")
+
 

@@ -1,0 +1,1358 @@
+[
+  {
+    "file": "engine/architect.py",
+    "line": 305,
+    "pattern": "specimen",
+    "content": "if \"specimen\" in t_lower or \"accession\" in t_lower or \"barcode\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 305,
+    "pattern": "barcode",
+    "content": "if \"specimen\" in t_lower or \"accession\" in t_lower or \"barcode\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 305,
+    "pattern": "accession",
+    "content": "if \"specimen\" in t_lower or \"accession\" in t_lower or \"barcode\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 313,
+    "pattern": "inspection",
+    "content": "if \"inspection\" in t_lower or \"checklist\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 315,
+    "pattern": "punchlist",
+    "content": "if \"punch-list\" in t_lower or \"punchlist\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 365,
+    "pattern": "specimen",
+    "content": "{\"id\": \"F-001\", \"title\": \"Specimen check-in with 2D barcode generation\", \"priority\": \"Must Have\"},"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 365,
+    "pattern": "barcode",
+    "content": "{\"id\": \"F-001\", \"title\": \"Specimen check-in with 2D barcode generation\", \"priority\": \"Must Have\"},"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 385,
+    "pattern": "specimen",
+    "content": "is_biovault = \"biovault\" in app_name.lower() or any(\"specimen\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 385,
+    "pattern": "biovault",
+    "content": "is_biovault = \"biovault\" in app_name.lower() or any(\"specimen\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 386,
+    "pattern": "inspection",
+    "content": "is_siteaudit = \"siteaudit\" in app_name.lower() or any(\"inspection\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 386,
+    "pattern": "siteaudit",
+    "content": "is_siteaudit = \"siteaudit\" in app_name.lower() or any(\"inspection\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 389,
+    "pattern": "biovault",
+    "content": "# Real BioVault per-feature resources"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 392,
+    "pattern": "specimen",
+    "content": "\"summary\": \"Check in incoming specimen [F-001, AC-001]\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 393,
+    "pattern": "specimen",
+    "content": "\"description\": \"Accessions incoming clinical bio-specimen vial with accession number and generates 2D barcode payload [F-001, AC-001]. Cites [API-001].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 393,
+    "pattern": "barcode",
+    "content": "\"description\": \"Accessions incoming clinical bio-specimen vial with accession number and generates 2D barcode payload [F-001, AC-001]. Cites [API-001].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 393,
+    "pattern": "accession",
+    "content": "\"description\": \"Accessions incoming clinical bio-specimen vial with accession number and generates 2D barcode payload [F-001, AC-001]. Cites [API-001].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 403,
+    "pattern": "specimen",
+    "content": "\"description\": \"Specimen accessioned successfully\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 416,
+    "pattern": "accession",
+    "content": "\"description\": \"Query accessioned specimens by status, accession number, or storage unit in < 1.5 s [NFR-01]. Cites [API-001].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 438,
+    "pattern": "barcode",
+    "content": "paths[\"/api/v1/specimens/{id}/barcode\"] = {"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 440,
+    "pattern": "barcode",
+    "content": "\"summary\": \"Fetch 2D barcode payload [F-001, AC-001]\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 441,
+    "pattern": "specimen",
+    "content": "\"description\": \"Retrieves generated 2D DataMatrix/QR payload for specimen label printing [F-001]. Cites [API-002].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 448,
+    "pattern": "specimen",
+    "content": "\"description\": \"Specimen barcode record and print data\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 448,
+    "pattern": "barcode",
+    "content": "\"description\": \"Specimen barcode record and print data\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 456,
+    "pattern": "barcode",
+    "content": "\"summary\": \"Print or regenerate barcode label [F-001, AC-001]\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 457,
+    "pattern": "barcode",
+    "content": "\"description\": \"Generates printable 2D barcode label with laboratory checksum [F-001]. Cites [API-002].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 468,
+    "pattern": "barcode",
+    "content": "\"description\": \"Barcode printed successfully\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 559,
+    "pattern": "specimen",
+    "content": "\"summary\": \"Initiate specimen custodial transfer [F-003, AC-005]\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 580,
+    "pattern": "specimen",
+    "content": "\"description\": \"Retrieves sequential chain of custody transfers for a bio-specimen [F-003, AC-005]. Cites [API-005].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 600,
+    "pattern": "specimen",
+    "content": "\"summary\": \"Digital confirmation of specimen receipt [F-003, AC-005, AC-006]\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 625,
+    "pattern": "inspection",
+    "content": "\"description\": \"Compiles tamper-evident PDF or structured CSV audit export for CLIA/HIPAA inspection in < 1.5 s [F-004, AC-007, NFR-01]. Cites [API-007].\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 635,
+    "pattern": "inspection",
+    "content": "\"description\": \"Inspection report exported to local filesystem\","
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 666,
+    "pattern": "biovault",
+    "content": "# Schemas for BioVault"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 675,
+    "pattern": "freezer",
+    "content": "\"storage_unit_id\": {\"type\": \"string\", \"example\": \"unit-freezer-01\"},"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 723,
+    "pattern": "freezer",
+    "content": "\"unit_id\": {\"type\": \"string\", \"example\": \"freezer-01\"},"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 802,
+    "pattern": "specimen",
+    "content": "\"digital_confirmation\": {\"type\": \"string\", \"example\": \"Confirmed physical specimen integrity and vial seal upon receipt.\"}"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1129,
+    "pattern": "biovault",
+    "content": "For BioVault Lab: Real clinical entities (users, storage_units, specimens, barcodes,"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1136,
+    "pattern": "specimen",
+    "content": "is_biovault = \"biovault\" in app_name.lower() or any(\"specimen\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1136,
+    "pattern": "biovault",
+    "content": "is_biovault = \"biovault\" in app_name.lower() or any(\"specimen\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1139,
+    "pattern": "biovault",
+    "content": "schema_md = \"\"\"# Data Schema: BioVault Lab"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1166,
+    "pattern": "freezer",
+    "content": "| `name` | TEXT | NOT NULL UNIQUE | Unit descriptor (e.g., 'Ultra-Low Freezer 01') |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1173,
+    "pattern": "specimen",
+    "content": "Stores bio-specimen accessioning records, patient references, and active storage state. Needed by [F-001], [AC-001], [AC-002], [NFR-03]."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1178,
+    "pattern": "specimen",
+    "content": "| `accession_number` | TEXT | NOT NULL UNIQUE | Unique specimen accession number [AC-001] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1178,
+    "pattern": "accession",
+    "content": "| `accession_number` | TEXT | NOT NULL UNIQUE | Unique specimen accession number [AC-001] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1180,
+    "pattern": "specimen",
+    "content": "| `sample_type` | TEXT | NOT NULL CHECK (sample_type IN ('blood', 'plasma', 'serum', 'tissue', 'urine', 'biopsy', 'swab')) | Specimen biological classification |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1182,
+    "pattern": "specimen",
+    "content": "| `status` | TEXT | NOT NULL DEFAULT 'accessioned' CHECK (status IN ('accessioned', 'in_storage', 'transferred', 'disposed')) | Specimen lifecycle state |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1183,
+    "pattern": "specimen",
+    "content": "| `collected_at` | TEXT | NOT NULL | Specimen collection UTC timestamp |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1189,
+    "pattern": "barcode",
+    "content": "Stores generated 2D DataMatrix barcode labels mapped to accessioned specimens. Needed by [F-001], [AC-001], [API-002]."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1193,
+    "pattern": "barcode",
+    "content": "| `id` | TEXT | PRIMARY KEY | UUIDv7 unique barcode identifier |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1194,
+    "pattern": "specimen",
+    "content": "| `specimen_id` | TEXT | NOT NULL UNIQUE REFERENCES specimens(id) ON DELETE CASCADE | Parent specimen record [AC-001] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1195,
+    "pattern": "barcode",
+    "content": "| `barcode_format` | TEXT | NOT NULL DEFAULT 'datamatrix' CHECK (barcode_format IN ('datamatrix', 'qr', 'code128')) | 2D barcode encoding standard |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1233,
+    "pattern": "specimen",
+    "content": "| `specimen_id` | TEXT | NOT NULL REFERENCES specimens(id) ON DELETE RESTRICT | Transferred specimen record [AC-005] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1242,
+    "pattern": "inspection",
+    "content": "Stores immutable regulatory inspection reports compiled to the local filesystem. Needed by [F-004], [AC-007], [AC-008], [NFR-02]."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1251,
+    "pattern": "specimen",
+    "content": "| `record_count` | INTEGER | NOT NULL CHECK (record_count >= 0) | Total specimen/audit entries compiled |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1277,
+    "pattern": "specimen",
+    "content": "| `idx_specimens_accession` | `specimens` | `(accession_number)` | Barcode scanning & specimen check-in [API-001] [F-001] [AC-001] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1277,
+    "pattern": "barcode",
+    "content": "| `idx_specimens_accession` | `specimens` | `(accession_number)` | Barcode scanning & specimen check-in [API-001] [F-001] [AC-001] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1278,
+    "pattern": "freezer",
+    "content": "| `idx_specimens_unit_status` | `specimens` | `(storage_unit_id, status)` | Fast freezer inventory search and status filter [API-001] [F-001] [AC-002] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1279,
+    "pattern": "barcode",
+    "content": "| `idx_barcodes_payload` | `barcodes` | `(payload)` | Direct 2D barcode scanner verification [API-002] [F-001] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1309,
+    "pattern": "specimen",
+    "content": "| `barcodes` | ~10,000 records | Retained with parent specimen record [NFR-03] | [NFR-03] |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1323,
+    "pattern": "freezer",
+    "content": "- 2 monitored storage units: `Ultra-Low Freezer -80C (Unit 01)` and `Refrigerated Storage 4C (Unit 02)`."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1324,
+    "pattern": "specimen",
+    "content": "- 5 baseline specimen records across sample types (blood, plasma, tissue) with generated 2D barcodes."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1332,
+    "pattern": "biovault",
+    "content": "-- Migration 001: Initial Relational Schema for BioVault Lab"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1690,
+    "pattern": "specimen",
+    "content": "is_biovault = \"biovault\" in app_name.lower() or any(\"specimen\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1690,
+    "pattern": "biovault",
+    "content": "is_biovault = \"biovault\" in app_name.lower() or any(\"specimen\" in f.get(\"title\", \"\").lower() for f in features)"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1693,
+    "pattern": "barcode",
+    "content": "| `API-002` | POST/GET `/api/v1/specimens/{id}/barcode` | [F-001] | LocalRoleAuth | 400, 401, 403, 404, 500 |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1703,
+    "pattern": "specimen",
+    "content": "- `TBL-03`: `specimens` (Stores bio-specimen accessioning records and storage state) [F-001, AC-001, AC-002, NFR-03]."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1708,
+    "pattern": "inspection",
+    "content": "- `TBL-08`: `audit_exports` (Stores compiled PDF/CSV inspection reports with SHA256 checksums) [F-004, AC-007, AC-008, NFR-02].\"\"\""
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1731,
+    "pattern": "accession",
+    "content": "| `Lab Technician` [P-01] | Accession specimens [F-001], print 2D barcodes, log temperature readings [F-002], initiate custody transfers [F-003] | Delete system audit logs, bypass excursion alarms [OQ-02] | Application Service Layer & DB Triggers |"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1733,
+    "pattern": "specimen",
+    "content": "| `Quality Compliance Auditor` [P-03] | Review end-to-end chain of custody, verify tamper-evident checksums, compile and export PDF/CSV audit reports [F-004] | Modify operational specimen data, perform specimen check-ins | Application Service Layer & SQLite DB Views |\"\"\""
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1746,
+    "pattern": "specimen",
+    "content": "build_order_slices = \"\"\"1. **Walking Skeleton (Slice 1)**: Minimal end-to-end desktop app with embedded SQLite database, accessioning a specimen and rendering a 2D DataMatrix barcode on screen (`API-001`, `API-002` for `[F-001]`) in < 500 ms."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1746,
+    "pattern": "barcode",
+    "content": "build_order_slices = \"\"\"1. **Walking Skeleton (Slice 1)**: Minimal end-to-end desktop app with embedded SQLite database, accessioning a specimen and rendering a 2D DataMatrix barcode on screen (`API-001`, `API-002` for `[F-001]`) in < 500 ms."
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1749,
+    "pattern": "specimen",
+    "content": "4. **Compliance Hardening & Verification (Slice 4)**: Tamper-evident PDF/CSV regulatory inspection report compilation (`API-007`, `API-008` for `[F-004]`), WCAG 2.2 AA accessibility audit, and performance benchmarks against 10,000 specimen records.\"\"\""
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 1749,
+    "pattern": "inspection",
+    "content": "4. **Compliance Hardening & Verification (Slice 4)**: Tamper-evident PDF/CSV regulatory inspection report compilation (`API-007`, `API-008` for `[F-004]`), WCAG 2.2 AA accessibility audit, and performance benchmarks against 10,000 specimen records.\"\"\""
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 661,
+    "pattern": "deficiency",
+    "content": "- Grounded in PRD domain: strictly avoids ungrounded elements (PDF Summary, Assigned Contractor, ISO-standard deficiency codes, bounding boxes)"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 710,
+    "pattern": "deficiency",
+    "content": "3. STRICT GROUNDING: Cite ONLY fields and controls that exist in the PRD. NEVER invent 'PDF Summary', 'Assigned Contractor', 'ISO-standard deficiency codes', or 'bounding boxes'."
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 762,
+    "pattern": "deficiency",
+    "content": "for bad_elem in [\"pdf summary\", \"assigned contractor\", \"iso-standard deficiency codes\", \"bounding boxes\"]:"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 856,
+    "pattern": "biovault",
+    "content": "- Proves BioVault and AeroFleet differ in more than primary hue."
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 856,
+    "pattern": "aerofleet",
+    "content": "- Proves BioVault and AeroFleet differ in more than primary hue."
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 1346,
+    "pattern": "deficiency",
+    "content": "for bad_elem in [\"pdf summary\", \"assigned contractor\", \"iso-standard deficiency codes\", \"bounding boxes\"]:"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 1780,
+    "pattern": "deficiency",
+    "content": "for bad_elem in [\"pdf summary\", \"assigned contractor\", \"iso-standard deficiency codes\", \"bounding boxes\"]:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1281,
+    "pattern": "specimen",
+    "content": "'specification', 'derived', 'derivation', 'contextual', 'justification', 'specimen', 'specimens',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1282,
+    "pattern": "barcode",
+    "content": "'barcode', 'barcodes', 'labeling', 'excursion', 'excursions', 'custody', 'custodian', 'handoff',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1283,
+    "pattern": "inspection",
+    "content": "'audit', 'audits', 'regulatory', 'inspection', 'inspections', 'hazard', 'hazards', 'finding',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1284,
+    "pattern": "deficiency",
+    "content": "'findings', 'contractor', 'contractors', 'safety', 'jobsite', 'deficiency', 'deficiencies',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1287,
+    "pattern": "freezer",
+    "content": "'freezer', 'cabinet', 'refrigerator', 'fridge', 'sensor', 'device', 'hardware', 'terminal',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1307,
+    "pattern": "biovault",
+    "content": "if \"biovault\" in app_lower or \"clinical\" in app_lower or \"bio\" in app_lower:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1309,
+    "pattern": "aerofleet",
+    "content": "elif \"aerofleet\" in app_lower or \"aviation\" in app_lower or \"hangar\" in app_lower:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1310,
+    "pattern": "specimen",
+    "content": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"clinical trial\", \"photogrammetry\", \"field operator\"]"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1310,
+    "pattern": "freezer",
+    "content": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"clinical trial\", \"photogrammetry\", \"field operator\"]"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1311,
+    "pattern": "siteaudit",
+    "content": "elif \"siteaudit\" in app_lower or \"construction\" in app_lower or \"safety\" in app_lower:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1312,
+    "pattern": "specimen",
+    "content": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"airframe\", \"avionics\", \"squawk\", \"faa form 8130\"]"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1312,
+    "pattern": "freezer",
+    "content": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"airframe\", \"avionics\", \"squawk\", \"faa form 8130\"]"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1545,
+    "pattern": "deficiency",
+    "content": "(\"ISO-standard deficiency codes\", \"ISO-standard deficiency codes\"),"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 460,
+    "pattern": "inspection",
+    "content": "exponential backoff, and retry-after inspection."
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 85,
+    "pattern": "specimen",
+    "content": "if \"specimen\" in desc_lower or \"pathology\" in desc_lower or \"cold-chain\" in desc_lower or \"clinical\" in desc_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 86,
+    "pattern": "specimen",
+    "content": "category = \"Clinical Laboratory Specimen & Cold-Chain Custody Tracking\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 87,
+    "pattern": "inspection",
+    "content": "elif \"construction\" in desc_lower or \"hazard\" in desc_lower or \"inspection\" in desc_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 239,
+    "pattern": "specimen",
+    "content": "if \"specimen\" in fname_lower or \"barcode\" in fname_lower or \"accession\" in fname_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 239,
+    "pattern": "barcode",
+    "content": "if \"specimen\" in fname_lower or \"barcode\" in fname_lower or \"accession\" in fname_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 239,
+    "pattern": "accession",
+    "content": "if \"specimen\" in fname_lower or \"barcode\" in fname_lower or \"accession\" in fname_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 241,
+    "pattern": "specimen",
+    "content": "desc = \"Specimen check-in and accessioning with 2D DataMatrix and QR barcode generation.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 241,
+    "pattern": "barcode",
+    "content": "desc = \"Specimen check-in and accessioning with 2D DataMatrix and QR barcode generation.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 242,
+    "pattern": "specimen",
+    "content": "ac1_text = f\"Given an active {p1['persona']} session in {app_name}, when the user inputs valid specimen metadata and generates a barcode, then the system saves the record to local database storage and returns printable barcode data within {latency_target}.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 242,
+    "pattern": "barcode",
+    "content": "ac1_text = f\"Given an active {p1['persona']} session in {app_name}, when the user inputs valid specimen metadata and generates a barcode, then the system saves the record to local database storage and returns printable barcode data within {latency_target}.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 243,
+    "pattern": "accession",
+    "content": "ac2_text = f\"(unhappy path) Given a duplicate accession identifier or missing required sample reference, when the user confirms check-in, then the system blocks persistence, highlights the offending field with an inline alert, and preserves entered inputs without data loss.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 243,
+    "pattern": "duplicate accession identifier",
+    "content": "ac2_text = f\"(unhappy path) Given a duplicate accession identifier or missing required sample reference, when the user confirms check-in, then the system blocks persistence, highlights the offending field with an inline alert, and preserves entered inputs without data loss.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 250,
+    "pattern": "specimen",
+    "content": "story = f\"As a [{p1['id']}], I want to record specimen custodial handoffs with digital confirmation so that an unbroken, legally defensible chain of custody is established across lab personnel.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 252,
+    "pattern": "specimen",
+    "content": "ac1_text = f\"Given an accessioned specimen in {app_name}, when the releasing custodian and receiving custodian confirm the handoff with their credentials, then the system records the custodial transfer with an immutable timestamp and updates the specimen location within {latency_target}.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 255,
+    "pattern": "specimen",
+    "content": "story = f\"As a [{p3['id']}], I want to export specimen tracking and cold-chain temperature logs into PDF and CSV formats so that regulatory inspection audits can be certified without delay.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 255,
+    "pattern": "inspection",
+    "content": "story = f\"As a [{p3['id']}], I want to export specimen tracking and cold-chain temperature logs into PDF and CSV formats so that regulatory inspection audits can be certified without delay.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 256,
+    "pattern": "inspection",
+    "content": "desc = \"Regulatory inspection audit trail exporter generating structured CSV files and certified PDF summaries.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 257,
+    "pattern": "specimen",
+    "content": "ac1_text = f\"Given logged specimen accession records and temperature histories in {app_name}, when the user selects regulatory audit export in PDF or CSV format, then the system compiles the full audit trail and saves the structured export file to the local filesystem within {latency_target}.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 257,
+    "pattern": "accession",
+    "content": "ac1_text = f\"Given logged specimen accession records and temperature histories in {app_name}, when the user selects regulatory audit export in PDF or CSV format, then the system compiles the full audit trail and saves the structured export file to the local filesystem within {latency_target}.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 259,
+    "pattern": "deficiency",
+    "content": "elif \"checklist\" in fname_lower or \"deficiency\" in fname_lower or \"hazard\" in fname_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 260,
+    "pattern": "inspection",
+    "content": "story = f\"As a [{p2['id']}], I want to log inspection checklist items and record hazard observations so that safety evaluations are captured directly in offline locations.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 261,
+    "pattern": "inspection",
+    "content": "desc = \"Offline inspection checklist with structured hazard categorization.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 262,
+    "pattern": "inspection",
+    "content": "ac1_text = f\"Given a {p2['persona']} performing an inspection in {app_name}, when the user marks a checklist item with observation notes, then the system saves the record to local device storage and updates the active index within {latency_target}.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 264,
+    "pattern": "punchlist",
+    "content": "elif \"punch-list\" in fname_lower or \"punchlist\" in fname_lower:"
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 265,
+    "pattern": "inspection",
+    "content": "story = f\"As a [{p1['id']}], I want to export compiled inspection records into CSV and formatted print-ready text so that I can issue same-day compliance notices.\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 267,
+    "pattern": "inspection",
+    "content": "ac1_text = f\"Given logged inspection records in {app_name}, when the user initiates report export in CSV or text format, then the system compiles the log and writes the export file to the local filesystem within {latency_target}.\""
+  },
+  {
+    "file": "skills/specialists/file-storage/instructions.md",
+    "line": 5,
+    "pattern": "inspection",
+    "content": "## 1. Upload Validation and Magic-Byte Inspection"
+  },
+  {
+    "file": "scripts/capture_architect_ui.cjs",
+    "line": 35,
+    "pattern": "biovault",
+    "content": "// On ProjectSelector: click \"Open Project\" on BioVault Lab"
+  },
+  {
+    "file": "scripts/capture_architect_ui.cjs",
+    "line": 36,
+    "pattern": "biovault",
+    "content": "console.log('3. Clicking Open Project on BioVault Lab...');"
+  },
+  {
+    "file": "scripts/capture_designer_ui.cjs",
+    "line": 35,
+    "pattern": "biovault",
+    "content": "// Click Open Project on BioVault Lab"
+  },
+  {
+    "file": "scripts/capture_designer_ui.cjs",
+    "line": 36,
+    "pattern": "biovault",
+    "content": "console.log('3. Clicking Open Project on BioVault Lab...');"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 8,
+    "pattern": "specimen",
+    "content": "Tested on a NEW project idea: BioVault Lab (Clinical Specimen & Cold-Chain Custody Tracker)."
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 8,
+    "pattern": "biovault",
+    "content": "Tested on a NEW project idea: BioVault Lab (Clinical Specimen & Cold-Chain Custody Tracker)."
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 23,
+    "pattern": "biovault",
+    "content": "log(\"Starting E2E pipeline test for new project 'BioVault Lab'...\")"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 30,
+    "pattern": "biovault",
+    "content": "log(\"Step 1: Initiating BA intake for BioVault Lab...\")"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 32,
+    "pattern": "biovault",
+    "content": "\"project_name\": \"BioVault Lab\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 33,
+    "pattern": "specimen",
+    "content": "\"description\": \"A standalone desktop and local-network laboratory specimen inventory and chain-of-custody tracking tool for diagnostic pathology labs. It tracks bio-specimen accessioning, freezer cold-chain temperature logs, custodian sign-offs, and regulatory compliance audit exports.\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 33,
+    "pattern": "freezer",
+    "content": "\"description\": \"A standalone desktop and local-network laboratory specimen inventory and chain-of-custody tracking tool for diagnostic pathology labs. It tracks bio-specimen accessioning, freezer cold-chain temperature logs, custodian sign-offs, and regulatory compliance audit exports.\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 47,
+    "pattern": "biovault",
+    "content": "\"Yes, let's begin. We are building BioVault Lab to eliminate sample misplacement and compliance penalties in clinical diagnostic labs.\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "pattern": "specimen",
+    "content": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, and Quality Auditors who inspect the chain of custody. We need specimen check-in with 2D barcode generation [FR-01], cold-storage temperature excursion logging [FR-02], custodial transfer sign-off with digital confirmation [FR-03], and PDF/CSV regulatory inspection audit export [FR-04].\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "pattern": "barcode",
+    "content": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, and Quality Auditors who inspect the chain of custody. We need specimen check-in with 2D barcode generation [FR-01], cold-storage temperature excursion logging [FR-02], custodial transfer sign-off with digital confirmation [FR-03], and PDF/CSV regulatory inspection audit export [FR-04].\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "pattern": "inspection",
+    "content": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, and Quality Auditors who inspect the chain of custody. We need specimen check-in with 2D barcode generation [FR-01], cold-storage temperature excursion logging [FR-02], custodial transfer sign-off with digital confirmation [FR-03], and PDF/CSV regulatory inspection audit export [FR-04].\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 49,
+    "pattern": "specimen",
+    "content": "\"For performance and privacy: barcode scanning and specimen search must respond in under 1.5 seconds [NFR-01]. All patient and specimen data must be stored locally on lab premises with zero cloud uploads for HIPAA and CLIA compliance [NFR-02]. The local system must support at least 10,000 specimen records [NFR-03].\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 49,
+    "pattern": "barcode",
+    "content": "\"For performance and privacy: barcode scanning and specimen search must respond in under 1.5 seconds [NFR-01]. All patient and specimen data must be stored locally on lab premises with zero cloud uploads for HIPAA and CLIA compliance [NFR-02]. The local system must support at least 10,000 specimen records [NFR-03].\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 89,
+    "pattern": "biovault",
+    "content": "\"client_notes\": \"BioVault Lab PRD, scope, non-goals, and assumptions are approved for technical design.\""
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 116,
+    "pattern": "biovault",
+    "content": "log(\"\\n>>> ALL STAGES COMPLETED SUCCESSFULLY FOR BIOVAULT LAB!\")"
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "pattern": "specimen",
+    "content": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "pattern": "freezer",
+    "content": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "pattern": "barcode",
+    "content": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "pattern": "biovault",
+    "content": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 113,
+    "pattern": "punchlist",
+    "content": "\"siteaudit\", \"photo notes\", \"field operators\", \"punchlist\""
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 113,
+    "pattern": "siteaudit",
+    "content": "\"siteaudit\", \"photo notes\", \"field operators\", \"punchlist\""
+  },
+  {
+    "file": "scripts/patch_architect.py",
+    "line": 192,
+    "pattern": "inspection",
+    "content": "\"description\": f\"Internal API contract for {app_name} local desktop inspection and export workflows. Single source of truth for frontend and backend components.\","
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 3,
+    "pattern": "specimen",
+    "content": "1. BioVault Lab (Clinical Specimen Tracking) - session 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 3,
+    "pattern": "biovault",
+    "content": "1. BioVault Lab (Clinical Specimen Tracking) - session 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 4,
+    "pattern": "aerofleet",
+    "content": "2. AeroFleet Hangar (Aviation Airframe Maintenance) - session a1f0e4b8-8c3d-4952-b68a-92e105db084c"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 5,
+    "pattern": "inspection",
+    "content": "3. SiteAudit Pro (Construction Job-Site Safety Inspection) - session 5514241c-ef82-4092-b91f-a9cf94290f58"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 5,
+    "pattern": "siteaudit",
+    "content": "3. SiteAudit Pro (Construction Job-Site Safety Inspection) - session 5514241c-ef82-4092-b91f-a9cf94290f58"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 40,
+    "pattern": "biovault",
+    "content": "(\"BioVault Lab\", \"67abb028-5907-4a5b-8b24-3d069a0ca047\"),"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 41,
+    "pattern": "aerofleet",
+    "content": "(\"AeroFleet Hangar\", \"a1f0e4b8-8c3d-4952-b68a-92e105db084c\"),"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 42,
+    "pattern": "siteaudit",
+    "content": "(\"SiteAudit Pro\", \"5514241c-ef82-4092-b91f-a9cf94290f58\")"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 5,
+    "pattern": "specimen",
+    "content": "1. BioVault Lab (Clinical Specimen Tracking) - 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 5,
+    "pattern": "biovault",
+    "content": "1. BioVault Lab (Clinical Specimen Tracking) - 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 6,
+    "pattern": "aerofleet",
+    "content": "2. AeroFleet Hangar (Aviation Airframe Maintenance) - a1f0e4b8-8c3d-4952-b68a-92e105db084c"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 7,
+    "pattern": "inspection",
+    "content": "3. SiteAudit Pro (Construction Job-Site Safety Inspection, built from scratch) - 5514241c-ef82-4092-b91f-a9cf94290f58"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 7,
+    "pattern": "siteaudit",
+    "content": "3. SiteAudit Pro (Construction Job-Site Safety Inspection, built from scratch) - 5514241c-ef82-4092-b91f-a9cf94290f58"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 45,
+    "pattern": "biovault",
+    "content": "(\"BioVault Lab\", \"67abb028-5907-4a5b-8b24-3d069a0ca047\"),"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 46,
+    "pattern": "aerofleet",
+    "content": "(\"AeroFleet Hangar\", \"a1f0e4b8-8c3d-4952-b68a-92e105db084c\"),"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 47,
+    "pattern": "siteaudit",
+    "content": "(\"SiteAudit Pro\", \"5514241c-ef82-4092-b91f-a9cf94290f58\")"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 20,
+    "pattern": "aerofleet",
+    "content": "\"project_name\": \"AeroFleet Hangar\","
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 34,
+    "pattern": "aerofleet",
+    "content": "\"question\": \"What is the core problem and purpose of AeroFleet Hangar?\","
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 35,
+    "pattern": "inspection",
+    "content": "\"answer\": \"Aviation maintenance technicians and Part 145 inspectors need a high-reliability, local-first console to manage airframe inspection work orders, document line squawks, track life-limited aircraft components, and certify FAA Form 8130 airworthiness releases without cloud dependency.\""
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 60,
+    "pattern": "aerofleet",
+    "content": "# Product Requirements Document (PRD): AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 63,
+    "pattern": "aerofleet",
+    "content": "AeroFleet Hangar is an offline-first, high-precision aviation fleet airworthiness management workstation designed for Part 145 aircraft maintenance repair stations. It enables certified technicians and chief inspectors to execute work orders, resolve squawks, audit airworthiness directives, and sign off release-to-service documentation with guaranteed regulatory compliance."
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 80,
+    "pattern": "inspection",
+    "content": "| `[AC-002]` | Validation prevents work order sign-off if any required safety inspection step remains unchecked |"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 134,
+    "pattern": "aerofleet",
+    "content": "# Technical Architecture Document: AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 137,
+    "pattern": "aerofleet",
+    "content": "AeroFleet Hangar is an offline-first desktop application engineered for Part 145 aircraft repair facilities. Powered by a local SQLite relational engine, high-concurrency WAL mode, and a responsive frontend shell."
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 162,
+    "pattern": "aerofleet",
+    "content": "\"client_notes\": \"AeroFleet Hangar PRD and architecture approved for Stage 3 UI/UX design specification.\","
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 53,
+    "pattern": "inspection",
+    "content": "\"answer\": \"A local inspection tool for site engineers.\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 64,
+    "pattern": "deficiency",
+    "content": "{\"id\": \"FR-01\", \"feature\": \"Deficiency Tagging\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 65,
+    "pattern": "punchlist",
+    "content": "{\"id\": \"FR-02\", \"feature\": \"Punchlist Export\", \"priority\": \"Must\"}"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 72,
+    "pattern": "deficiency",
+    "content": "- F-001: Deficiency Tagging"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 73,
+    "pattern": "punchlist",
+    "content": "- F-002: Punchlist Export"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 16,
+    "pattern": "biovault",
+    "content": "broken_app_flow_text = \"\"\"# Application Flow & Screen Architecture: BioVault Lab"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 27,
+    "pattern": "barcode",
+    "content": "| J-01 | Sample Intake & Barcode Scanning | [P-01] | [F-001], [F-002] | S-01 -> S-02 | Scan failure [AC-001] |"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 39,
+    "pattern": "barcode",
+    "content": "| Empty | No samples scanned today | Empty box illustration + 'Scan Sample' CTA button | Clicking CTA focuses barcode input field |"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 40,
+    "pattern": "barcode",
+    "content": "| Populated | 1+ samples loaded | Table showing Barcode, Temperature, Status, Timestamp | Selecting a row opens details drawer |"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 58,
+    "pattern": "biovault",
+    "content": "broken_design_brief_text = \"\"\"# Visual Design Brief & Design System Specification: BioVault Lab"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 83,
+    "pattern": "biovault",
+    "content": "\"app_name\": \"BioVault Lab\","
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 99,
+    "pattern": "barcode",
+    "content": "{\"id\": \"FR-01\", \"feature\": \"Barcode Scanning\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 100,
+    "pattern": "specimen",
+    "content": "{\"id\": \"FR-02\", \"feature\": \"Specimen Cataloging\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 106,
+    "pattern": "biovault",
+    "content": "mock_prd_text = \"\"\"# Product Requirement Document: BioVault Lab"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 113,
+    "pattern": "barcode",
+    "content": "- [F-001] Barcode Scanning"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 114,
+    "pattern": "specimen",
+    "content": "- [F-002] Specimen Cataloging"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 175,
+    "pattern": "aerofleet",
+    "content": "# Deliberate defects in old AeroFleet output:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 186,
+    "pattern": "aerofleet",
+    "content": "old_aerofleet_af_text = \"\"\"# Application Flow & Screen Architecture: AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 263,
+    "pattern": "aerofleet",
+    "content": "old_aerofleet_db_text = \"\"\"# Visual Design Brief & Design System Specification: AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 295,
+    "pattern": "aerofleet",
+    "content": "parsed_ba={\"app_name\": \"AeroFleet Hangar\", \"qa_log\": qa_old_log},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 305,
+    "pattern": "aerofleet",
+    "content": "print(\"\\n--- Detected Fatal Flaws in Old AeroFleet Deliverable ---\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 310,
+    "pattern": "aerofleet",
+    "content": "# Assertions verifying Judge correctly caught the old AeroFleet flaws:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 311,
+    "pattern": "aerofleet",
+    "content": "assert verdict_case2.get(\"pass\") is False, \"Judge MUST FAIL old AeroFleet deliverable!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 328,
+    "pattern": "aerofleet",
+    "content": "print(\"\\n>>> PROOF COMPLETE (CASE 2): Judge successfully and deterministically REJECTED the old AeroFleet deliverable with exact defect identification across duplicate states, screen name length, and ungrounded standards!\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 332,
+    "pattern": "siteaudit",
+    "content": "# CASE 3: CURRENT / OLD SITEAUDIT PRO APP-FLOW & DESIGN BRIEF AUDIT (Round 4 Item 7)"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 333,
+    "pattern": "siteaudit",
+    "content": "# Fatal defects in previous SiteAudit output:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 336,
+    "pattern": "deficiency",
+    "content": "# 3. Ungrounded UI elements: 'PDF Summary', 'Assigned Contractor', 'ISO-standard deficiency codes', 'bounding boxes'"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 340,
+    "pattern": "siteaudit",
+    "content": "print(\"=== CASE 3: RUNNING JUDGE ON OLD SITEAUDIT DELIVERABLE (DEFECT DETECTION) ===\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 365,
+    "pattern": "siteaudit",
+    "content": "parsed_ba={\"app_name\": \"SiteAudit Pro\", \"qa_log\": siteaudit_qa_log},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 375,
+    "pattern": "siteaudit",
+    "content": "print(\"\\n--- Detected Fatal Flaws in Old SiteAudit Deliverable ---\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 380,
+    "pattern": "siteaudit",
+    "content": "# Mandatory assertion per Round 4 Item 7: Judge MUST FAIL the current SiteAudit deliverable!"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 381,
+    "pattern": "siteaudit",
+    "content": "assert verdict_case3.get(\"pass\") is False, \"Judge MUST FAIL the current/old SiteAudit app-flow.md!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 387,
+    "pattern": "siteaudit",
+    "content": "assert has_contrast_surface, \"Judge must catch contrast failure on dark surface in SiteAudit!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 391,
+    "pattern": "siteaudit",
+    "content": "assert has_template_residue, \"Judge must catch template filler residue in SiteAudit J-2!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 395,
+    "pattern": "siteaudit",
+    "content": "assert has_ungrounded_elements, \"Judge must catch ungrounded UI elements in SiteAudit!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 397,
+    "pattern": "siteaudit",
+    "content": "print(\"\\n>>> PROOF COMPLETE (CASE 3): Judge successfully and deterministically REJECTED the old SiteAudit deliverable with exact defect identification across template residue, surface contrast, and ungrounded UI elements!\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 4,
+    "pattern": "biovault",
+    "content": "1. FAILS the current broken BioVault architecture.md and schema.md (detecting cross-project contamination, generic schema, etc.)"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 5,
+    "pattern": "siteaudit",
+    "content": "2. FAILS the current SiteAudit PRD (detecting ungrounded 500 ms and 500 photo notes)"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 20,
+    "pattern": "biovault",
+    "content": "print(\"TEST 1: Upgraded Judge on Current BioVault architecture.md and schema.md\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 52,
+    "pattern": "biovault",
+    "content": "print(\"\\nDetected Defects in BioVault Architecture / Schema:\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 57,
+    "pattern": "biovault",
+    "content": "assert verdict.get(\"pass\") is False, \"Judge MUST FAIL current defective BioVault architecture and schema!\""
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 58,
+    "pattern": "biovault",
+    "content": "assert len(verdict.get(\"unsupported_claims\", [])) > 0, \"Judge MUST detect defects in current BioVault!\""
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 59,
+    "pattern": "biovault",
+    "content": "print(\"\\n>>> PROOF 1 PASSED: Upgraded Judge correctly FAILED current BioVault architecture & schema!\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 64,
+    "pattern": "siteaudit",
+    "content": "print(\"TEST 2: Upgraded Judge on Current SiteAudit PRD\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 90,
+    "pattern": "siteaudit",
+    "content": "print(\"\\nDetected Defects in SiteAudit PRD:\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 95,
+    "pattern": "siteaudit",
+    "content": "assert verdict.get(\"pass\") is False, \"Judge MUST FAIL current SiteAudit PRD with ungrounded metrics!\""
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 97,
+    "pattern": "siteaudit",
+    "content": "print(\"\\n>>> PROOF 2 PASSED: Upgraded Judge correctly FAILED current SiteAudit PRD!\")"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 10,
+    "pattern": "siteaudit",
+    "content": "print(\"=== 1. Starting Fresh BA Session (SiteAudit Pro) ===\")"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 12,
+    "pattern": "siteaudit",
+    "content": "\"project_name\": \"SiteAudit Pro\","
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 13,
+    "pattern": "inspection",
+    "content": "\"description\": \"A local offline construction site inspection and hazard log tool for civil engineers and safety inspectors with structured deficiency tagging, offline photo-note organization, and one-click compliance punch-list export.\","
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 13,
+    "pattern": "deficiency",
+    "content": "\"description\": \"A local offline construction site inspection and hazard log tool for civil engineers and safety inspectors with structured deficiency tagging, offline photo-note organization, and one-click compliance punch-list export.\","
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 38,
+    "pattern": "inspection",
+    "content": "\"Existing commercial construction platforms require persistent cloud connectivity which fails in underground basements and remote job sites, and charge expensive per-seat monthly subscriptions. Key requirements: 1) Local offline site inspection checklist with structured hazard deficiency tagging (Must Have), 2) One-click local punch-list report export in CSV and formatted print-ready text (Must Have), 3) All inspection logs and photo notes stored on local device storage with zero cloud uploads for site data privacy and basement offline reliability (Must Have), 4) Inspection log search and filter response time under 1 second across 3,000 site records (NFR). Real-time contractor cloud portal sync is strictly deferred to v2.\","
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 38,
+    "pattern": "deficiency",
+    "content": "\"Existing commercial construction platforms require persistent cloud connectivity which fails in underground basements and remote job sites, and charge expensive per-seat monthly subscriptions. Key requirements: 1) Local offline site inspection checklist with structured hazard deficiency tagging (Must Have), 2) One-click local punch-list report export in CSV and formatted print-ready text (Must Have), 3) All inspection logs and photo notes stored on local device storage with zero cloud uploads for site data privacy and basement offline reliability (Must Have), 4) Inspection log search and filter response time under 1 second across 3,000 site records (NFR). Real-time contractor cloud portal sync is strictly deferred to v2.\","
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 41,
+    "pattern": "inspection",
+    "content": "\"Target timeline is strictly 7 weeks for v1 MVP. Build budget is $7,500 with zero monthly subscription fees. Success metric: 90% of field inspectors generating daily punch-list reports on the same day as the inspection. Please finalize requirements.md.\""
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 130,
+    "pattern": "siteaudit",
+    "content": "print(\"ALL SITEAUDIT PRO E2E CHECKS PASSED!\")"
+  }
+]

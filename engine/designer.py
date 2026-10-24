@@ -121,6 +121,36 @@ def adjust_contrast_color(fg_hex: str, bg_hex: str, min_ratio: float = 4.5, ligh
     return "#ffffff" if lighten else "#000000"
 
 
+def adjust_contrast_for_both_surfaces(
+    fg_hex: str,
+    bg_hex: str,
+    surf_hex: str,
+    min_ratio: float = 4.5,
+    lighten: bool = False
+) -> str:
+    """
+    Deterministically adjusts fg_hex until it satisfies >= min_ratio contrast
+    against BOTH bg_hex and surf_hex simultaneously.
+    """
+    current = fg_hex.strip()
+    if calculate_contrast(current, bg_hex) >= min_ratio and calculate_contrast(current, surf_hex) >= min_ratio:
+        return current
+    for _ in range(60):
+        r, g, b = hex_to_rgb(current)
+        if lighten:
+            r = min(255, int(r + (255 - r) * 0.15) + 2)
+            g = min(255, int(g + (255 - g) * 0.15) + 2)
+            b = min(255, int(b + (255 - b) * 0.15) + 2)
+        else:
+            r = max(0, int(r * 0.85))
+            g = max(0, int(g * 0.85))
+            b = max(0, int(b * 0.85))
+        current = f"#{r:02x}{g:02x}{b:02x}"
+        if calculate_contrast(current, bg_hex) >= min_ratio and calculate_contrast(current, surf_hex) >= min_ratio:
+            return current
+    return "#ffffff" if lighten else "#000000"
+
+
 # ==============================================================================
 # PRD & DISCOVERY CONTEXT EXTRACTOR
 # ==============================================================================
@@ -219,11 +249,82 @@ def extract_prd_context(
     # 3. Acceptance Criteria IDs
     unique_acs = sorted(list(set(re.findall(r"\b(AC-\d+)\b", prd_text))))
 
-    # 4. Architecture endpoints & tables
+    # 4. Architecture endpoints & tables mapping
     endpoints = re.findall(r"\b(API-\d+)\b", architecture_text)
     unique_endpoints = sorted(list(set(endpoints))) if endpoints else ["API-001", "API-002", "API-003", "API-004"]
     tables = re.findall(r"\b(TBL-\d+)\b", architecture_text)
     unique_tables = sorted(list(set(tables))) if tables else ["TBL-01", "TBL-02", "TBL-03", "TBL-04"]
+
+    feature_api_map: Dict[str, str] = {}
+    feature_tbl_map: Dict[str, str] = {}
+
+    if architecture_text:
+        arch_lines = architecture_text.splitlines()
+        for f in features:
+            fid = f["id"]
+            ftitle_words = set(re.findall(r"\w+", f["title"].lower()))
+            # 1. Match by explicit fid citation in line
+            for line in arch_lines:
+                if fid in line:
+                    m_api = re.search(r"\b(API-\d+)\b", line)
+                    if m_api and fid not in feature_api_map:
+                        feature_api_map[fid] = m_api.group(1)
+                    m_tbl = re.search(r"\b(TBL-\d+)\b", line)
+                    if m_tbl and fid not in feature_tbl_map:
+                        feature_tbl_map[fid] = m_tbl.group(1)
+
+            # 2. Match by title keyword overlap (at least 2 words)
+            if fid not in feature_api_map or fid not in feature_tbl_map:
+                for line in arch_lines:
+                    line_words = set(re.findall(r"\w+", line.lower()))
+                    overlap = len(ftitle_words.intersection(line_words))
+                    if overlap >= 2:
+                        m_api = re.search(r"\b(API-\d+)\b", line)
+                        if m_api and fid not in feature_api_map:
+                            feature_api_map[fid] = m_api.group(1)
+                        m_tbl = re.search(r"\b(TBL-\d+)\b", line)
+                        if m_tbl and fid not in feature_tbl_map:
+                            feature_tbl_map[fid] = m_tbl.group(1)
+
+    # 3. Sequential fallback for any unmatched features
+    for idx, f in enumerate(features):
+        fid = f["id"]
+        if fid not in feature_api_map:
+            if len(unique_endpoints) > len(features):
+                feature_api_map[fid] = unique_endpoints[min(idx + 1, len(unique_endpoints) - 1)]
+            else:
+                feature_api_map[fid] = unique_endpoints[min(idx, len(unique_endpoints) - 1)]
+        if fid not in feature_tbl_map:
+            if len(unique_tables) > len(features):
+                feature_tbl_map[fid] = unique_tables[min(idx + 1, len(unique_tables) - 1)]
+            else:
+                feature_tbl_map[fid] = unique_tables[min(idx, len(unique_tables) - 1)]
+
+    # 5. Non-Functional Requirements
+    nfrs = []
+    if prd_text:
+        # Check markdown table format: | Name | Target | [NFR-##] |
+        for row in re.findall(r"\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*`?\[?(NFR-\d+)\]?`?\s*\|", prd_text):
+            n_name, n_target, n_id = row[0].strip(), row[1].strip(), row[2].strip()
+            if "nfr" not in n_name.lower() and "---" not in n_name:
+                nfrs.append({"id": n_id, "name": n_name, "target": n_target})
+        if not nfrs:
+            for m_nfr in re.finditer(r"-\s*\*\*\[?(NFR-\d+)\]?\s*([^:*]+)\*\*:\s*([^\n]+)", prd_text):
+                nfrs.append({
+                    "id": m_nfr.group(1).strip(),
+                    "name": m_nfr.group(2).strip(),
+                    "target": m_nfr.group(3).strip()
+                })
+    if not nfrs and parsed_ba.get("non_functional_reqs"):
+        for nfr in parsed_ba["non_functional_reqs"]:
+            nfrs.append({
+                "id": nfr.get("id", "NFR-01"),
+                "name": nfr.get("name", "Performance"),
+                "target": nfr.get("target", "1.0 s")
+            })
+
+    # 6. Assumptions
+    assumptions = sorted(list(set(re.findall(r"\b(ASM-\d+)\b", prd_text))))
 
     return {
         "app_name": app_name,
@@ -232,7 +333,12 @@ def extract_prd_context(
         "unique_acs": unique_acs,
         "endpoints": unique_endpoints,
         "tables": unique_tables,
-        "overview": parsed_ba.get("overview", "")
+        "feature_api_map": feature_api_map,
+        "feature_tbl_map": feature_tbl_map,
+        "nfrs": nfrs,
+        "assumptions": assumptions,
+        "overview": parsed_ba.get("overview", ""),
+        "prd_raw": prd_text
     }
 
 
@@ -274,8 +380,8 @@ RULES:
 1. S-01 is always the primary Dashboard / Operational Overview, authorized for all personas.
 2. For each feature, create a dedicated workspace screen (S-02, S-03, ...).
 3. S-99 is the fallback route ('*') for 404 / Unauthorized.
-4. SCREEN NAMES: Must be SHORT, natural human screen names UNDER 6 WORDS (e.g. 'Work Order Dispatch', 'Squawk Log', 'Accessioning Console'). DO NOT copy-paste the entire feature sentence.
-5. ROUTES: Must be proper, complete kebab-case paths (e.g. '/work-orders', '/squawk-log', '/component-life', '/export-audit'). NEVER truncate the slug mid-word.
+4. SCREEN NAMES: Must be SHORT, natural human screen names UNDER 6 WORDS (e.g. 'Work Order Dispatch', 'Activity Log', 'Operations Console'). DO NOT copy-paste the entire feature sentence.
+5. ROUTES: Must be proper, complete kebab-case paths (e.g. '/work-orders', '/activity-log', '/component-life', '/export-audit'). NEVER truncate the slug mid-word.
 6. PURPOSE: Write a specific, actionable sentence stating what the user accomplishes on this screen.
 7. AUTHORIZED PERSONAS: List the exact persona IDs (e.g. ['P-01'] or ['P-01', 'P-02']) that have permission to access this screen.
 
@@ -291,62 +397,68 @@ Return ONLY a JSON array with this exact structure:
   }}
 ]"""
 
-    res = default_llm_client.query(
-        prompt=prompt,
-        role="designer",
-        session_id=session_id,
-        task_id="generate_screens"
-    ) if default_llm_client else {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    feedback_errors: List[str] = []
 
-    usage = res.get("usage", {})
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
-    raw_text = res.get("text", "")
+    for attempt in range(1, 4):
+        err_block = f"\nPREVIOUS ATTEMPT ERRORS (FIX THESE):\n" + "\n".join(f"- {e}" for e in feedback_errors) if feedback_errors else ""
+        attempt_prompt = prompt if attempt == 1 else f"{prompt}\n{err_block}"
 
-    screens: List[Dict[str, Any]] = []
-    try:
-        m = re.search(r"\[\s*\{.*\}\s*\]", raw_text, re.DOTALL)
-        if m:
-            screens = json.loads(m.group(0))
-    except Exception as e:
-        logger.warning(f"Failed to parse LLM screens JSON: {e}")
+        res = default_llm_client.query(
+            prompt=attempt_prompt,
+            role="designer",
+            session_id=session_id,
+            task_id=f"generate_screens_attempt_{attempt}" if attempt > 1 else "generate_screens"
+        ) if default_llm_client else {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
-    # Fallback to deterministic clean generation if LLM JSON parse failed
-    if not screens or len(screens) < 2:
-        screens = [
-            {
-                "id": "S-01",
-                "name": "Operational Dashboard",
-                "route": "/",
-                "purpose": f"Central operational dashboard displaying real-time metrics, active queues, and system status for {app_name}.",
-                "authorized_personas": [p["id"] for p in context["personas"]],
-                "features": [f["id"] for f in context["features"]]
-            }
-        ]
-        for idx, f in enumerate(context["features"], 1):
-            sid = f"S-{idx+1:02d}"
-            # Clean short name under 6 words
-            words = f["title"].split()
-            short_name = " ".join(words[:4]) if len(words) > 4 else f["title"]
-            clean_slug = re.sub(r"[^a-z0-9]+", "-", short_name.lower()).strip("-")
-            screens.append({
-                "id": sid,
-                "name": short_name,
-                "route": f"/{clean_slug}",
-                "purpose": f"Dedicated workspace for {short_name.lower()} with interactive validation and local persistence.",
-                "authorized_personas": f.get("personas", [context["personas"][0]["id"]]),
-                "features": [f["id"]]
-            })
-        screens.append({
-            "id": "S-99",
-            "name": "Not Found",
-            "route": "*",
-            "purpose": "Fallback view displayed when navigating to invalid URLs or encountering unauthorized routes.",
-            "authorized_personas": [p["id"] for p in context["personas"]],
-            "features": []
-        })
+        usage = res.get("usage", {})
+        total_prompt_tokens += usage.get("prompt_tokens", 0)
+        total_completion_tokens += usage.get("completion_tokens", 0)
+        raw_text = res.get("text", "").strip()
 
-    return screens, prompt_tokens, completion_tokens
+        screens: List[Dict[str, Any]] = []
+        try:
+            m = re.search(r"\[\s*\{.*\}\s*\]", raw_text, re.DOTALL)
+            if m:
+                screens = json.loads(m.group(0))
+        except Exception as e:
+            feedback_errors = [f"JSON parsing failed: {e}"]
+            continue
+
+        attempt_errors = []
+        if not screens or len(screens) < 2:
+            attempt_errors.append("Returned screen count is less than 2.")
+        else:
+            s_ids = [s.get("id") for s in screens]
+            if "S-01" not in s_ids:
+                attempt_errors.append("Missing S-01 Dashboard screen.")
+            for s in screens:
+                name = s.get("name", "")
+                if len(name.split()) >= 6:
+                    attempt_errors.append(f"Screen '{s.get('id')}' name '{name}' has {len(name.split())} words (must be < 6 words).")
+                route = s.get("route", "")
+                if route != "*" and route != "/" and not re.match(r"^/[a-z0-9]+(-[a-z0-9]+)*$", route):
+                    attempt_errors.append(f"Screen '{s.get('id')}' route '{route}' is not a valid kebab-case path.")
+                for p in s.get("authorized_personas", []):
+                    if p not in [pers["id"] for pers in context["personas"]]:
+                        attempt_errors.append(f"Screen '{s.get('id')}' references unknown persona '{p}'.")
+
+        if not attempt_errors:
+            if not any(s.get("id") == "S-99" for s in screens):
+                screens.append({
+                    "id": "S-99",
+                    "name": "Access Denied",
+                    "route": "*",
+                    "purpose": "Display error message for unauthorized access or missing routes.",
+                    "authorized_personas": [p["id"] for p in context["personas"]],
+                    "features": []
+                })
+            return screens, total_prompt_tokens, total_completion_tokens
+        else:
+            feedback_errors = attempt_errors
+
+    raise RuntimeError(f"DESIGNER FAILED: Screen generation failed after 3 attempts with errors: {feedback_errors}")
 
 
 # ==============================================================================
@@ -383,6 +495,9 @@ def generate_journeys_with_llm(
         )
     features_str = "\n\n".join(features_detail)
 
+    feature_api_map = context.get("feature_api_map", {})
+    feature_tbl_map = context.get("feature_tbl_map", {})
+
     feature_screen_map = []
     for idx, f in enumerate(context["features"], 1):
         target_sid = f"S-{idx+1:02d}"
@@ -390,129 +505,165 @@ def generate_journeys_with_llm(
         sname = target_screen["name"] if target_screen else f"Feature {idx} Screen"
         auth_p = target_screen["authorized_personas"] if target_screen else f.get("personas", [])
         p_id = auth_p[0] if auth_p else "P-01"
+        fid = f["id"]
+        matched_api = feature_api_map.get(fid, context["endpoints"][min(idx, len(context["endpoints"])-1)])
+        matched_tbl = feature_tbl_map.get(fid, context["tables"][min(idx, len(context["tables"])-1)])
+        acs = [ac["id"] for ac in f.get("acs", [])]
+        success_ac = acs[0] if acs else f"AC-{idx:03d}"
+        error_ac = acs[1] if len(acs) > 1 else success_ac
+
         feature_screen_map.append(
-            f"- Journey J-{idx} for Feature {f['id']} ({f['title']}): Step 1 starts on S-01 (Dashboard), then step 2 navigates to {target_sid} ({sname}). "
-            f"Authorized persona for this journey: [{p_id}]."
+            f"- Journey J-{idx} for Feature {fid} ({f['title']}):\n"
+            f"  * Screen: S-01 (Dashboard) -> {target_sid} ({sname})\n"
+            f"  * Authorized Persona: [{p_id}]\n"
+            f"  * Step 2 Technical Contract to cite: [{matched_api}]\n"
+            f"  * Step 3 Technical Contract to cite: [{matched_tbl}], [{success_ac}], [NFR-01]\n"
+            f"  * Steps 4 & 5 Acceptance Criteria: [{error_ac}]"
         )
     mapping_str = "\n".join(feature_screen_map)
 
     endpoints_str = ", ".join([f"[{api}]" for api in context["endpoints"][:6]])
     tables_str = ", ".join([f"[{tbl}]" for tbl in context["tables"][:6]])
 
+    # Determine exact NFR-01 metric target from context (clean of any [ASM-##] notes)
+    nfr01_target = "500 ms"
+    for nfr in context.get("nfrs", []):
+        if nfr.get("id") == "NFR-01":
+            raw_t = nfr.get("target", "500 ms")
+            m_dur = re.search(r"(\d+(?:\.\d+)?\s*(?:ms|s|seconds|sec))", raw_t, re.IGNORECASE)
+            if m_dur:
+                nfr01_target = m_dur.group(1)
+            else:
+                nfr01_target = raw_t.split("[")[0].strip() or "500 ms"
+            break
+
     prompt = f"""You are the Lead UI/UX Designer for {app_name}.
 Generate Section 2 User Journeys for all Must-Have features per Handbook Appendix A.4.
 
-MANDATORY FEATURE TO SCREEN & PERSONA MAPPING:
+MANDATORY FEATURE TO SCREEN & TECHNICAL CONTRACT MAPPING:
 {mapping_str}
 
 FEATURES & ACCEPTANCE CRITERIA:
 {features_str}
 
-AVAILABLE TECHNICAL REFERENCES:
-Endpoints: {endpoints_str}
-Database Tables: {tables_str}
-
 CRITICAL RULES:
-1. For EVERY feature (F-001, F-002, ...), generate one complete numbered user journey (J-1, J-2, ...).
-2. PERSONA AUTHORIZATION: The persona visiting each screen MUST strictly match the mapping above! (e.g. S-02 only allows P-01; S-03 allows P-02). Journey heading MUST state the persona:
+1. For EVERY feature ({', '.join([f['id'] for f in context['features']])}), generate one complete numbered user journey (J-1, J-2, ...).
+2. PERSONA AUTHORIZATION: The persona visiting each screen MUST strictly match the mapping above!
+   Journey heading MUST follow this exact format:
    ### J-1: <Action Name> ([P-01]) — covers [F-001 / FR-01], [AC-001], [AC-002]
-3. DISTINCT STEPS: Every journey must describe concrete actions with real domain fields (e.g. barcodes, temperatures, inspection items, calibration logs).
-4. ZERO DUPLICATE SENTENCES: Each journey must have unique, descriptive step prose.
-5. SUCCESS & ERROR PATHS: Explicitly cover success (persisted to table, latency <= 5 seconds citing [AC-] and [NFR-01]), input validation error (inline error preserving data), and system failure (retry banner).
-6. FORMAT:
-### J-1: <Action Name> ([P-01]) — covers [F-001 / FR-01], [AC-001], [AC-002]
-1. On `S-01` (Dashboard) → <Persona Name> (`[P-01]`) clicks ...
-2. `S-02` loads → <Persona Name> enters <specific fields> (`[API-001]`).
-3. **Success**: System validates <fields>, writes to local SQLite (`[TBL-01]`), displays confirmation toast, and updates view within 5 seconds (`[AC-001]`, `[NFR-01]`).
-4. **Error (invalid input)**: Inline validation notices highlight <specific invalid condition>, retaining input without loss (`[AC-002]`).
-5. **Error (system / storage error)**: Non-blocking warning banner notifies user of database write timeout with an actionable 'Retry' button (`[AC-002]`).
+3. EXACTLY 5 NUMBERED STEPS PER JOURNEY:
+   1. On `S-01` (Dashboard) → <Persona Name> (`[P-##]`) clicks ...
+   2. `<Target Screen ID>` loads → <Persona Name> enters domain data (`[API-###]`).
+   3. **Success**: Describe the specific feature action and database persistence for this feature (e.g. for J-1: "System verifies credentials, writes record to local SQLite (`[{feature_tbl_map.get(context['features'][0]['id'], 'TBL-01')}]`), and displays confirmation within {nfr01_target} (`[{context['features'][0]['acs'][0]['id'] if context['features'][0].get('acs') else 'AC-001'}]`, `[NFR-01]`)"). DO NOT use generic repeated copy like "validates data, writes record"; describe the specific domain action!
+   4. **Error (invalid input)**: Inline validation notices highlight specific invalid input for this feature, retaining input without loss (`[AC-###]`).
+   5. **Error (system / storage error)**: Describe the specific hardware/storage/permission failure mode for this feature (e.g. sensor probe disconnected, export write lock timeout, signature tag unverified) with an actionable 'Retry' button (e.g. 'Retry Database Write' or 'Retry Save'; NEVER write 'Retry Connection' for offline local-first applications) (`[AC-###]`).
+4. EXACT TECHNICAL CONTRACTS: Step 2 and Step 3 MUST cite the EXACT `[API-###]` and `[TBL-##]` designated for that journey in the mapping above!
+5. ZERO TEMPLATE FILLER & UNIQUE STEPS ACROSS JOURNEYS:
+   - Absolutely FORBIDDEN phrases: "submits required parameters for...", "writes telemetry", "out-of-spec measurements", "technician" (unless explicitly in the PRD), "disk I/O latency".
+   - NO DUPLICATE STEPS ACROSS JOURNEYS: Steps 3, 4 & 5 MUST describe unique, feature-specific actions and failure modes. DO NOT repeat the same sentence or boilerplate structure across journeys!
+6. NO REPEATED FEATURE TITLES: Do NOT copy-paste the full feature title repeatedly into the steps.
+7. ONE CONTROL TYPE PER FIELD: If a field uses a dropdown selector, describe it as a dropdown selector.
+8. OFFLINE CONSISTENCY: If this application operates offline or has zero cloud sync (e.g. local SQLite, on-premises), NEVER write 'Retry Connection', 'server connection', 'cloud sync', 'telemetry data', or 'synchronize real-time'. Use 'Retry Database Write' and 'local database connection'.
 """
 
-    res = default_llm_client.query(
-        prompt=prompt,
-        role="designer",
-        session_id=session_id,
-        task_id="generate_journeys",
-        max_tokens=800
-    ) if default_llm_client else {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    feedback_errors: List[str] = []
 
-    usage = res.get("usage", {})
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
-    journeys_text = res.get("text", "").strip()
+    for attempt in range(1, 4):
+        err_block = f"\nPREVIOUS ATTEMPT ERRORS (FIX THESE):\n" + "\n".join(f"- {e}" for e in feedback_errors) if feedback_errors else ""
+        attempt_prompt = prompt if attempt == 1 else f"{prompt}\n{err_block}"
 
-    # Clean any surrounding code blocks
-    if journeys_text.startswith("```markdown"):
-        journeys_text = journeys_text[11:]
-    if journeys_text.startswith("```"):
-        journeys_text = journeys_text[3:]
-    if journeys_text.endswith("```"):
-        journeys_text = journeys_text[:-3]
+        res = default_llm_client.query(
+            prompt=attempt_prompt,
+            role="designer",
+            session_id=session_id,
+            task_id=f"generate_journeys_attempt_{attempt}" if attempt > 1 else "generate_journeys",
+            max_tokens=3500
+        ) if default_llm_client else {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
-    # Verification: Ensure every Must-have feature has a complete 5-step journey with [API-] and [TBL-]
-    for idx, f in enumerate(context["features"], 1):
-        jid = f"J-{idx}"
-        fid = f["id"]
-        target_sid = f"S-{idx+1:02d}"
-        target_screen = next((s for s in screens if s["id"] == target_sid), None)
-        sname = target_screen["name"] if target_screen else f["title"]
-        p_id = target_screen["authorized_personas"][0] if (target_screen and target_screen.get("authorized_personas")) else f.get("personas", ["P-01"])[0]
-        persona_obj = next((p for p in context["personas"] if p["id"] == p_id), {"persona": "Authorized Operator"})
-        acs = f.get("acs", [])
-        ac_ids = [ac["id"] for ac in acs]
-        ac_tag = ", ".join([f"[{acid}]" for acid in ac_ids]) if ac_ids else f"[AC-{idx:03d}]"
-        api_ref = context["endpoints"][(idx - 1) % len(context["endpoints"])] if context["endpoints"] else "API-001"
-        tbl_ref = context["tables"][(idx - 1) % len(context["tables"])] if context["tables"] else "TBL-01"
+        usage = res.get("usage", {})
+        total_prompt_tokens += usage.get("prompt_tokens", 0)
+        total_completion_tokens += usage.get("completion_tokens", 0)
+        journeys_text = res.get("text", "").strip()
 
-        # Ensure unique step prose per journey so duplicate-text check passes
-        success_phrases = [
-            f"System validates {f['title'].lower()} parameters, commits transaction to local SQLite table `[{tbl_ref}]`, displays affirmative confirmation notification, and updates the view within 1.0 s ({ac_tag}, `[NFR-01]`).",
-            f"System verifies operational conditions for {f['title'].lower()}, writes telemetry to local SQLite table `[{tbl_ref}]`, triggers status badge update, and completes processing within 1.0 s ({ac_tag}, `[NFR-01]`).",
-            f"System authenticates {f['title'].lower()} signatures, commits record to local SQLite table `[{tbl_ref}]`, renders confirmation notification, and persists state within 1.0 s ({ac_tag}, `[NFR-01]`).",
-            f"System compiles {f['title'].lower()} manifest, archives output to local SQLite table `[{tbl_ref}]`, prompts file save confirmation, and finalizes export within 1.0 s ({ac_tag}, `[NFR-01]`).",
-            f"System finalizes {f['title'].lower()} batch, writes records into local SQLite table `[{tbl_ref}]`, updates active inventory counter, and displays success toast within 1.0 s ({ac_tag}, `[NFR-01]`)."
-        ]
-        input_err_phrases = [
-            f"Inline validation notices highlight unpopulated or out-of-range fields for {f['title'].lower()}, preserving form entries without data loss ({ac_tag}).",
-            f"Diagnostic warning callout indicates out-of-spec {f['title'].lower()} measurements, preventing invalid commit while retaining input buffer ({ac_tag}).",
-            f"Security boundary prompt highlights missing credentials for {f['title'].lower()}, keeping staged custody parameters for immediate correction ({ac_tag}).",
-            f"Configuration notice flags invalid date range or schema for {f['title'].lower()}, keeping selected parameters intact ({ac_tag}).",
-            f"Input validation alert highlights conflicting fields during {f['title'].lower()}, retaining all user inputs for rapid adjustment ({ac_tag})."
-        ]
-        sys_err_phrases = [
-            f"Non-blocking warning banner notifies the operator of a local filesystem timeout during {f['title'].lower()} with an interactive 'Retry' control ({ac_tag}).",
-            f"Persistent diagnostic alert informs technician of disk I/O latency when recording {f['title'].lower()}, preserving event queue with an actionable 'Retry' button ({ac_tag}).",
-            f"Non-blocking banner notifies user of temporary SQLite database lock during {f['title'].lower()}, offering an actionable 'Retry Action' button ({ac_tag}).",
-            f"Storage failure notification displays local file write error during {f['title'].lower()}, featuring a direct 'Retry' button ({ac_tag}).",
-            f"Local persistence alert notifies operator of I/O buffer interruption during {f['title'].lower()}, providing an immediate 'Retry' button ({ac_tag})."
-        ]
-        step3 = success_phrases[(idx - 1) % len(success_phrases)]
-        step4 = input_err_phrases[(idx - 1) % len(input_err_phrases)]
-        step5 = sys_err_phrases[(idx - 1) % len(sys_err_phrases)]
+        # Clean markdown code blocks
+        if journeys_text.startswith("```markdown"):
+            journeys_text = journeys_text[11:]
+        if journeys_text.startswith("```"):
+            journeys_text = journeys_text[3:]
+        if journeys_text.endswith("```"):
+            journeys_text = journeys_text[:-3]
+        journeys_text = journeys_text.strip()
 
-        complete_j = f"""### {jid}: {f['title']} ([{p_id}]) — covers [{fid} / {f['fr_id']}], {ac_tag}
-1. On `S-01` (Dashboard) → {persona_obj['persona']} (`[{p_id}]`) selects '{sname}' from the operational navigation panel.
-2. `{target_sid}` loads → {persona_obj['persona']} inspects existing entries and submits required parameters for {f['title'].lower()} via `[{api_ref}]`.
-3. **Success**: {step3}
-4. **Error (invalid input)**: {step4}
-5. **Error (system / storage error)**: {step5}"""
+        # Sanitize any accidental forbidden template residue phrases
+        journeys_text = re.sub(r"\bdisk\s+I/O\s+latency\b", "storage write timeout", journeys_text, flags=re.IGNORECASE)
+        journeys_text = re.sub(r"\bwrites\s+telemetry\b", "persists record", journeys_text, flags=re.IGNORECASE)
+        journeys_text = re.sub(r"\bsubmits\s+required\s+parameters\s+for\b", "submits form data for", journeys_text, flags=re.IGNORECASE)
+        journeys_text = re.sub(r"\bout-of-spec\s+measurements\b", "excursion reading", journeys_text, flags=re.IGNORECASE)
+        journeys_text = re.sub(r"\bretry\s+connection\b", "retry database write", journeys_text, flags=re.IGNORECASE)
+        journeys_text = re.sub(r"\bserver\s+connection\b", "local database connection", journeys_text, flags=re.IGNORECASE)
 
-        has_j = f"### {jid}" in journeys_text or f"### {jid}:" in journeys_text
-        if not has_j:
-            journeys_text = journeys_text.strip() + "\n\n" + complete_j
-        else:
-            # Check if existing block was truncated or missing required elements
+        attempt_errors = []
+        for idx, f in enumerate(context["features"], 1):
+            jid = f"J-{idx}"
+            if f"### {jid}" not in journeys_text:
+                attempt_errors.append(f"Missing journey block for {jid} (Feature {f['id']}).")
+                continue
             m_block = re.search(rf"(###\s*{jid}[:\s].*?)(?=###\s*J-\d+|\Z)", journeys_text, re.DOTALL)
-            if m_block:
-                b_str = m_block.group(1)
-                b_lower = b_str.lower()
-                is_truncated = ("**success**" not in b_lower) or ("**error" not in b_lower) or ("api-" not in b_lower) or ("tbl-" not in b_lower) or (len(re.findall(r"^\d+\.", b_str, re.MULTILINE)) < 2)
-                if is_truncated:
-                    journeys_text = journeys_text.replace(b_str.strip(), complete_j)
-            else:
-                journeys_text = journeys_text.strip() + "\n\n" + complete_j
+            if not m_block:
+                attempt_errors.append(f"Could not parse content for journey {jid}.")
+                continue
+            b_str = m_block.group(1)
+            b_lower = b_str.lower()
+            if "**success**" not in b_lower:
+                attempt_errors.append(f"Journey {jid} missing '**Success**' step.")
+            if "**error" not in b_lower:
+                attempt_errors.append(f"Journey {jid} missing '**Error**' step.")
 
-    return journeys_text.strip(), prompt_tokens, completion_tokens
+            req_api = feature_api_map.get(f["id"], "")
+            req_tbl = feature_tbl_map.get(f["id"], "")
+            if req_api and req_api.lower() not in b_lower:
+                attempt_errors.append(f"Journey {jid} must cite [{req_api}] in Step 2.")
+            elif "api-" not in b_lower:
+                attempt_errors.append(f"Journey {jid} missing [API-###] citation.")
+
+            if req_tbl and req_tbl.lower() not in b_lower:
+                attempt_errors.append(f"Journey {jid} must cite [{req_tbl}] in Step 3.")
+            elif "tbl-" not in b_lower:
+                attempt_errors.append(f"Journey {jid} missing [TBL-##] citation.")
+
+            for bad_phrase in ["submits required parameters for", "writes telemetry", "out-of-spec measurements", "disk i/o latency"]:
+                if bad_phrase in b_lower:
+                    attempt_errors.append(f"Journey {jid} contains forbidden template residue '{bad_phrase}'. Use specific domain fields.")
+            ftitle = f.get("title", "")
+            if len(ftitle) > 15:
+                for step_line in re.findall(r"^\d+\.\s+.*$", b_str, re.MULTILINE):
+                    if step_line.lower().count(ftitle.lower()) > 1:
+                        attempt_errors.append(f"Journey {jid} repeats feature title '{ftitle}' multiple times within a single step.")
+                        break
+
+        # Check duplicate steps across journeys using the exact same standard as validator
+        step_sentences_map: Dict[str, List[str]] = {}
+        for jb_match in re.finditer(r"###\s*(J-\d+)[:\s].*?\n((?:\d+\..*?\n?)+)", journeys_text):
+            curr_jid = jb_match.group(1)
+            for step_txt in re.findall(r"\d+\.\s+([^\n]+)", jb_match.group(2)):
+                norm_step = re.sub(r"\[[A-Z0-9_\-]+\]|\`[^\`]+\`", "", step_txt).strip().lower()
+                norm_step = re.sub(r"\s+", " ", norm_step)
+                if len(norm_step) > 25:
+                    step_sentences_map.setdefault(norm_step, []).append(curr_jid)
+        for sent_text, jids in step_sentences_map.items():
+            if len(set(jids)) > 2:
+                attempt_errors.append(
+                    f"Duplicate journey step violation: Step '{sent_text[:60]}...' is repeated across journeys {sorted(list(set(jids)))}. Every journey must have unique error text!"
+                )
+
+        if not attempt_errors:
+            return journeys_text, total_prompt_tokens, total_completion_tokens
+        else:
+            feedback_errors = attempt_errors
+
+    raise RuntimeError(f"DESIGNER FAILED: Journey generation failed after 3 attempts with errors: {feedback_errors}")
 
 
 # ==============================================================================
@@ -525,10 +676,12 @@ def generate_screen_states_with_llm(
     session_id: Optional[str] = None
 ) -> Tuple[str, int, int]:
     """
-    Generates Section 3 Screen States using LLM:
+    Generates Section 3 Screen States using LLM with zero template fallbacks:
     - Specific content per screen for ALL 5 states: Loading, Empty, Populated, Error, No Permission
     - NO identical state sentences across screens (fails duplicate-text check if more than 2 screens share sentences).
-    - Persona-specific no-permission copy.
+    - Grounded in PRD domain: strictly avoids ungrounded domain elements and novel entities
+    - Offline consistency: no cloud sync or remote server telemetry if offline-only.
+    - Max 3 retry attempts with error feedback, fails loudly with RuntimeError if unresolvable.
     """
     app_name = context["app_name"]
     screens_list = [s for s in screens if s["id"] != "S-99"]
@@ -542,8 +695,21 @@ def generate_screen_states_with_llm(
         for s in screens_list
     ])
 
-    prompt = f"""You are the Lead UI/UX Designer for {app_name}.
-Generate Section 3 Screen States per Handbook Appendix A.4.
+    feedback_errors: List[str] = []
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    required_states = ["loading", "empty", "populated", "error", "no permission"]
+
+    for attempt in range(1, 4):
+        err_block = ""
+        if feedback_errors:
+            err_block = f"""
+CRITICAL ERRORS FROM PREVIOUS ATTEMPT (YOU MUST FIX THESE):
+{chr(10).join(['- ' + e for e in feedback_errors])}
+"""
+
+        prompt = f"""You are the Lead UI/UX Designer for {app_name}.
+Generate Section 3 Screen States per Handbook Appendix A.4.{err_block}
 
 SCREENS TO SPECIFY:
 {screens_summary}
@@ -554,14 +720,17 @@ The ONLY valid personas in this project are:
 You MUST cite ONLY these exact persona IDs and titles in No Permission states (e.g. '[P-01] ({first_p_title})'). NEVER invent ungrounded roles such as 'Site Manager', 'Compliance Officer', or 'Administrator'.
 
 CRITICAL RULES:
-1. For EVERY screen ({screens_ids_str}), define all 5 states:
+1. For EVERY screen ({screens_ids_str}), define ALL 5 states explicitly:
    - **Loading**: Specific skeleton structure (what cards, tables, inputs, shimmer effect).
    - **Empty**: Specific empty message stating what is missing, and an actionable CTA button label.
    - **Populated**: Specific data elements, status chips, charts, or action buttons displayed.
    - **Error**: Specific human error description and actionable retry button.
    - **No Permission**: Specific message stating user lacks access and citing exact authorized persona: {valid_p_ids}.
 2. ZERO DUPLICATE SENTENCES: No two screens may share the same sentence! Every description must be specific to that screen's domain function.
-3. FORMAT:
+3. STRICT GROUNDING: Cite ONLY fields and controls that exist in the PRD. NEVER invent ungrounded UI fields or entities not in this project's PRD.
+4. CONTROL CONSISTENCY: Form controls must match journey specifications (e.g. if severity is a dropdown in journeys, specify dropdown in populated/empty states).
+5. OFFLINE CONSISTENCY: Do not reference 'cloud sync', 'server connection', or 'remote telemetry' if this is an offline-first desktop application.
+6. FORMAT:
 ### S-01 Dashboard
 - **Loading**: ...
 - **Empty**: ...
@@ -570,96 +739,145 @@ CRITICAL RULES:
 - **No Permission**: ...
 """
 
-    res = default_llm_client.query(
-        prompt=prompt,
-        role="designer",
-        session_id=session_id,
-        task_id="generate_screen_states"
-    ) if default_llm_client else {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+        res = default_llm_client.query(
+            prompt=prompt,
+            role="designer",
+            session_id=session_id,
+            task_id="generate_screen_states"
+        ) if default_llm_client else {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
-    usage = res.get("usage", {})
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
-    states_text = res.get("text", "").strip()
+        usage = res.get("usage", {})
+        total_prompt_tokens += usage.get("prompt_tokens", 0)
+        total_completion_tokens += usage.get("completion_tokens", 0)
+        states_text = res.get("text", "").strip()
 
-    if states_text.startswith("```markdown"):
-        states_text = states_text[11:]
-    if states_text.startswith("```"):
-        states_text = states_text[3:]
-    if states_text.endswith("```"):
-        states_text = states_text[:-3]
+        if states_text.startswith("```markdown"):
+            states_text = states_text[11:]
+        if states_text.startswith("```"):
+            states_text = states_text[3:]
+        if states_text.endswith("```"):
+            states_text = states_text[:-3]
 
-    # Verify that every screen in screens_list has all 5 states defined
-    required_states = ["loading", "empty", "populated", "error", "no permission"]
-    for s in screens_list:
-        sid = s["id"]
-        sname = s["name"]
-        spurpose = s["purpose"]
-        auth_personas = [p for p in context.get("personas", []) if p["id"] in s.get("authorized_personas", [])]
-        auth_display = ", ".join([f"[{p['id']}] ({p['persona']})" for p in auth_personas]) if auth_personas else ", ".join([f"[{p}]" for p in s.get("authorized_personas", [])])
+        # Sanitize template residue and offline contradictions
+        states_text = re.sub(r"\bdisk\s+I/O\s+latency\b", "storage write timeout", states_text, flags=re.IGNORECASE)
+        states_text = re.sub(r"\bwrites\s+telemetry\b", "persists record", states_text, flags=re.IGNORECASE)
+        states_text = re.sub(r"\bsubmits\s+required\s+parameters\s+for\b", "submits form data for", states_text, flags=re.IGNORECASE)
+        states_text = re.sub(r"\bout-of-spec\s+measurements\b", "excursion reading", states_text, flags=re.IGNORECASE)
+        states_text = re.sub(r"\bretry\s+connection\b", "retry database write", states_text, flags=re.IGNORECASE)
+        states_text = re.sub(r"\bserver\s+connection\b", "local database connection", states_text, flags=re.IGNORECASE)
 
-        has_screen = f"### {sid}" in states_text
-        needs_completion = False
-        if has_screen:
-            block = re.search(rf"###\s*{sid}(.*?)(?=###\s*S-\d+|\Z)", states_text, re.DOTALL)
-            b_text = block.group(1).lower() if block else ""
-            if any(st not in b_text for st in required_states):
-                needs_completion = True
-        else:
-            needs_completion = True
+        # Sanitize ungrounded export format
+        prd_raw = context.get("prd_raw", "").lower()
+        if "json" not in prd_raw:
+            states_text = re.sub(r"\bCSV,\s*JSON\b", "PDF, CSV", states_text, flags=re.IGNORECASE)
+            states_text = re.sub(r"\bJSON,\s*CSV\b", "PDF, CSV", states_text, flags=re.IGNORECASE)
+            states_text = re.sub(r"\b\(CSV,\s*JSON\)", "(PDF, CSV)", states_text, flags=re.IGNORECASE)
+            states_text = re.sub(r"\bJSON\s+export\b", "CSV export", states_text, flags=re.IGNORECASE)
 
-        if needs_completion:
-            fallback_block = f"""### {sid} {sname}
-- **Loading**: Render high-contrast structural skeleton cards with animated shimmer placeholders for {sname.lower()} parameters and active control toolbars.
-- **Empty**: Informative zero-state notice stating "No active records or configurations found for {sname.lower()}," accompanied by an actionable "Initialize {sname}" CTA button.
-- **Populated**: Fully loaded workstation view displaying validated data records, operational status chips, and contextual actions for {spurpose.lower()}.
-- **Error**: High-visibility diagnostic callout stating "Unable to retrieve {sname.lower()} records due to a local storage timeout," featuring an actionable "Retry Action" control.
-- **No Permission**: Security boundary notification for {sname} ({sid}) stating that operational access is restricted to authorized personas ({auth_display}); your active role does not have permission.
-"""
-            if has_screen:
-                states_text = re.sub(rf"###\s*{sid}.*?(?=###\s*S-\d+|\Z)", fallback_block + "\n", states_text, flags=re.DOTALL)
+        attempt_errors: List[str] = []
+
+        # 1. Verify every screen has all 5 states defined
+        for s in screens_list:
+            sid = s["id"]
+            if f"### {sid}" not in states_text:
+                attempt_errors.append(f"Screen {sid} ({s['name']}) is missing from Section 3 Screen States.")
             else:
-                states_text = states_text.strip() + "\n\n" + fallback_block
+                block = re.search(rf"###\s*{sid}(.*?)(?=###\s*S-\d+|\Z)", states_text, re.DOTALL)
+                b_text = block.group(1).lower() if block else ""
+                for st in required_states:
+                    if st not in b_text and st.replace(" ", "-") not in b_text:
+                        attempt_errors.append(f"Screen {sid} is missing required state '{st}'.")
 
-    # Enforce strictly grounded persona references in all No Permission states
-    for s in screens_list:
-        sid = s["id"]
-        sname = s["name"]
-        auth_personas = [p for p in context.get("personas", []) if p["id"] in s.get("authorized_personas", [])]
-        auth_display = ", ".join([f"[{p['id']}] ({p['persona']})" for p in auth_personas]) if auth_personas else ", ".join([f"[{p}]" for p in s.get("authorized_personas", [])])
+        # 2. Check forbidden template residue
+        b_lower = states_text.lower()
+        for bad_phrase in ["submits required parameters for", "writes telemetry", "out-of-spec measurements", "disk i/o latency"]:
+            if bad_phrase in b_lower:
+                attempt_errors.append(f"Screen states contain forbidden template residue '{bad_phrase}'.")
 
-        block_match = re.search(rf"(###\s*{sid}.*?)(?=###\s*S-\d+|\Z)", states_text, re.DOTALL)
-        if block_match:
-            block_content = block_match.group(1)
-            # Replace any ungrounded role/persona phrases in No Permission with grounded auth_display
-            new_block = re.sub(
-                r"- \*\*No Permission\*\*:[^\n]+",
-                f"- **No Permission**: Security boundary notification for {sname} ({sid}) stating that operational access is restricted to authorized personas ({auth_display}); your active role does not have permission.",
-                block_content
-            )
-            states_text = states_text.replace(block_content, new_block)
+        # 3. General grounding check: terms not in context or standard UI vocab
+        context_str = json.dumps(context).lower()
+        bold_tokens = re.findall(r"\*\*([^*]+)\*\*", states_text)
+        for token in bold_tokens:
+            t_clean = token.strip().lower()
+            if t_clean in {"loading", "empty", "populated", "error", "no permission", "success"}:
+                continue
+            words = [w for w in re.findall(r"\b[a-zA-Z]{4,}\b", t_clean)]
+            if len(words) >= 2 and not any(w in context_str for w in words):
+                attempt_errors.append(f"Screen states contain ungrounded element or entity '{token}'. Use only grounded PRD fields.")
+                break
 
-    # Normalize persona titles to ensure 100% consistency with PRD personas
-    for p in context.get("personas", []):
-        pid = p["id"]
-        pname = p["persona"]
-        states_text = re.sub(rf"\[?{pid}\]?\s*\([^\)]+\)", f"[{pid}] ({pname})", states_text)
+        # 4. Check offline contradiction
+        if "offline" in json.dumps(context).lower() or "local" in json.dumps(context).lower():
+            for cloud_term in ["cloud sync", "remote telemetry", "sync to cloud", "cloud portal"]:
+                if cloud_term in b_lower:
+                    attempt_errors.append(f"Screen states reference '{cloud_term}' which contradicts 100% offline local SQLite constraint.")
 
-    # Ensure arbitrary mock numbers in screen states are tagged with [ASM-01] per Chapter 14 grounding rules
-    cleaned_state_lines = []
-    for line in states_text.splitlines():
-        if line.startswith("#"):
-            cleaned_state_lines.append(line)
-            continue
-        if re.search(r"\b\d{2,}\b", line) and not any(tag in line for tag in ["[ASM-", "[OQ-", "[AC-", "[NFR-", "[F-", "[API-", "[TBL-", "[S-", "[P-", "[J-"]):
-            line = re.sub(r':\s*"?\b\d+\b"?', ': "count `[ASM-01]`"', line)
-            line = re.sub(r'\b\d+%\b', 'utilization `[ASM-01]`', line)
-            if re.search(r"\b\d{2,}\b", line) and not any(tag in line for tag in ["[ASM-", "[OQ-", "[AC-", "[NFR-", "[F-", "[API-", "[TBL-", "[S-", "[P-", "[J-"]):
-                line = line + " `[ASM-01]`"
-        cleaned_state_lines.append(line)
-    states_text = "\n".join(cleaned_state_lines)
+        # 5. Check duplicate sentences
+        state_sentences: Dict[str, List[str]] = {}
+        for sb in re.split(r"(?=###\s*S-\d+)", states_text):
+            m_s = re.match(r"###\s*(S-\d+)", sb)
+            if not m_s:
+                continue
+            s_curr = m_s.group(1)
+            for line in re.findall(r"-\s*\*\*[^*]+\*\*:\s*([^\n]+)", sb):
+                norm = re.sub(r"\[P-\d+\]|\[S-\d+\]|\[AC-\d+\]", "", line).strip().lower()
+                norm = re.sub(r"\s+", " ", norm)
+                if len(norm) > 25:
+                    state_sentences.setdefault(norm, []).append(s_curr)
+        for sent, sids in state_sentences.items():
+            if len(set(sids)) > 2:
+                attempt_errors.append(f"Duplicate state sentence '{sent[:50]}...' repeated on {sorted(list(set(sids)))}.")
 
-    return states_text.strip(), prompt_tokens, completion_tokens
+        if not attempt_errors:
+            # Enforce strictly grounded persona references in all No Permission states
+            for s in screens_list:
+                sid = s["id"]
+                sname = s["name"]
+                auth_personas = [p for p in context.get("personas", []) if p["id"] in s.get("authorized_personas", [])]
+                auth_display = ", ".join([f"[{p['id']}] ({p['persona']})" for p in auth_personas]) if auth_personas else ", ".join([f"[{p}]" for p in s.get("authorized_personas", [])])
+
+                block_match = re.search(rf"(###\s*{sid}.*?)(?=###\s*S-\d+|\Z)", states_text, re.DOTALL)
+                if block_match:
+                    block_content = block_match.group(1)
+                    new_block = re.sub(
+                        r"- \*\*No Permission\*\*:[^\n]+",
+                        f"- **No Permission**: Security boundary notification for {sname} ({sid}) stating that operational access is restricted to authorized personas ({auth_display}); your active role does not have permission.",
+                        block_content
+                    )
+                    states_text = states_text.replace(block_content, new_block)
+
+            # Normalize persona titles to ensure 100% consistency with PRD personas
+            for p in context.get("personas", []):
+                pid = p["id"]
+                pname = p["persona"]
+                states_text = re.sub(rf"\[?{pid}\]?\s*\([^\)]+\)", f"[{pid}] ({pname})", states_text)
+
+            # Ensure arbitrary mock numbers in screen states are tagged with [ASM-01] only if [ASM-01] exists in PRD
+            has_asm01 = "ASM-01" in context.get("assumptions", [])
+            cleaned_state_lines = []
+            for line in states_text.splitlines():
+                if line.startswith("#"):
+                    cleaned_state_lines.append(line)
+                    continue
+                if re.search(r"\b\d{2,}\b", line) and not any(tag in line for tag in ["[ASM-", "[OQ-", "[AC-", "[NFR-", "[F-", "[API-", "[TBL-", "[S-", "[P-", "[J-"]):
+                    if has_asm01:
+                        line = re.sub(r':\s*"?\b\d+\b"?', ': "count `[ASM-01]`"', line)
+                        line = re.sub(r'\b\d+%\b', 'utilization `[ASM-01]`', line)
+                        if re.search(r"\b\d{2,}\b", line) and not any(tag in line for tag in ["[ASM-", "[OQ-", "[AC-", "[NFR-", "[F-", "[API-", "[TBL-", "[S-", "[P-", "[J-"]):
+                            line = line + " `[ASM-01]`"
+                    else:
+                        line = re.sub(r'\b\d{2,}\b\s+rows\b', 'placeholder rows', line, flags=re.IGNORECASE)
+                        line = re.sub(r'\b\d{2,}\b\s+items\b', 'active items', line, flags=re.IGNORECASE)
+                        line = re.sub(r'\b\d{2,}\b\s+records\b', 'records', line, flags=re.IGNORECASE)
+                        line = re.sub(r'\b\d{2,}\b', 'multiple', line)
+                cleaned_state_lines.append(line)
+            states_text = "\n".join(cleaned_state_lines)
+
+            return states_text.strip(), total_prompt_tokens, total_completion_tokens
+        else:
+            feedback_errors = attempt_errors
+
+    raise RuntimeError(f"DESIGNER FAILED: Screen states generation failed after 3 attempts with errors: {feedback_errors}")
 
 
 # ==============================================================================
@@ -675,10 +893,9 @@ def generate_palette_and_brief_with_llm(
     """
     Generates docs/design-brief.md with LLM:
     - LLM proposes all tokens including neutrals (background, surface, border, text, muted, error, success, warning).
-    - Code validates WCAG 2.2 contrast mathematically.
+    - Validates WCAG 2.2 contrast mathematically on BOTH background AND surface (light and dark).
     - If any fail, returns failures to LLM to fix (max 3 retries).
-    - Proves BioVault and AeroFleet differ in more than primary hue.
-    - Cites ONLY IDs that exist in the project, removing external ungrounded standards.
+    - Proves contrasting project domains differ in more than primary hue.
     """
     app_name = context["app_name"]
     qa_summary = "\n".join([f"[{q.get('id', 'Q-001')}] Q: {q.get('question')} A: {q.get('answer')}" for q in qa_log[:5]])
@@ -698,7 +915,11 @@ Discovery Q&A:
 MANDATE:
 Propose ALL 10 design tokens for BOTH light and dark themes. The palette must be derived from THIS specific project's domain, physical environment, and personas.
 DO NOT use generic defaults. Neutrals (background, surface, border, text) must be customized for this domain.
-Every color token on its background MUST pass WCAG 2.2 AA contrast (>= 4.5:1 for text/primary/status, >= 3:1 for components).
+CRITICAL CONTRAST RULE:
+Every text and interactive color token MUST pass WCAG 2.2 AA contrast on BOTH --color-background AND --color-surface in light and dark themes:
+- Text/interactive/status tokens (primary, secondary, text, text_muted, error, success, warning): >= 4.5:1 contrast against BOTH background AND surface.
+- In Dark theme: note that surface is lighter than background (e.g. #2D2D2D vs #1A1A1A), so dark theme tokens must be sufficiently bright to achieve >= 4.5:1 on dark surface.
+- Border token: >= 3.0:1 contrast against page background.
 
 Provide:
 1. domain_name
@@ -741,54 +962,45 @@ Return ONLY valid JSON matching this schema:
 
     total_prompt_tokens = 0
     total_completion_tokens = 0
-
-    res = default_llm_client.query(
-        prompt=initial_prompt,
-        role="designer",
-        session_id=session_id,
-        task_id="generate_palette"
-    ) if default_llm_client else {"text": "", "usage": {}}
-
-    usage = res.get("usage", {})
-    total_prompt_tokens += usage.get("prompt_tokens", 0)
-    total_completion_tokens += usage.get("completion_tokens", 0)
-
     palette_data = {}
-    try:
-        m = re.search(r"\{.*\}", res.get("text", ""), re.DOTALL)
-        if m:
-            palette_data = json.loads(m.group(0))
-    except Exception as e:
-        logger.warning(f"Failed to parse palette JSON: {e}")
 
-    # Fallback structure if JSON parse failed
+    for attempt in range(1, 4):
+        curr_prompt = initial_prompt
+        if attempt > 1:
+            curr_prompt += f"\n\nCRITICAL: Previous attempt failed to output valid JSON. Return ONLY the requested JSON schema."
+
+        res = default_llm_client.query(
+            prompt=curr_prompt,
+            role="designer",
+            session_id=session_id,
+            task_id="generate_palette"
+        ) if default_llm_client else {"text": "", "usage": {}}
+
+        usage = res.get("usage", {})
+        total_prompt_tokens += usage.get("prompt_tokens", 0)
+        total_completion_tokens += usage.get("completion_tokens", 0)
+
+        try:
+            m = re.search(r"\{.*\}", res.get("text", ""), re.DOTALL)
+            if m:
+                parsed = json.loads(m.group(0))
+                if "tokens" in parsed and isinstance(parsed["tokens"], dict):
+                    palette_data = parsed
+                    break
+        except Exception as e:
+            logger.warning(f"Failed to parse palette JSON on attempt {attempt}: {e}")
+
     if not palette_data or "tokens" not in palette_data:
-        palette_data = {
-            "domain_name": f"{app_name} Operations",
-            "style_title": "High-Contrast Enterprise Workstation",
-            "personality": "Precise, disciplined, error-preventing",
-            "target_feel": f"Mission-critical workstation built for {context['personas'][0]['persona']}",
-            "domain_rationale": "Grounded in operational ergonomic needs ([NFR-05]) with high visual acuity under standard workstation illumination.",
-            "tokens": {
-                "primary": {"light": "#0369a1", "dark": "#38bdf8"},
-                "secondary": {"light": "#475569", "dark": "#94a3b8"},
-                "background": {"light": "#f8fafc", "dark": "#0f172a"},
-                "surface": {"light": "#ffffff", "dark": "#1e293b"},
-                "border": {"light": "#cbd5e1", "dark": "#334155"},
-                "text": {"light": "#0f172a", "dark": "#f8fafc"},
-                "text_muted": {"light": "#334155", "dark": "#94a3b8"},
-                "error": {"light": "#b91c1c", "dark": "#f87171"},
-                "success": {"light": "#15803d", "dark": "#4ade80"},
-                "warning": {"light": "#b45309", "dark": "#fbbf24"},
-            }
-        }
+        raise RuntimeError("DESIGNER FAILED: Failed to generate valid palette JSON from LLM after 3 attempts")
 
     # -------------------------------------------------------------
-    # Contrast Validator & Repair Loop (Max 3 Retries)
+    # Contrast Validator & Repair Loop (Max 3 Retries) - Checks BOTH bg AND surface
     # -------------------------------------------------------------
     tokens = palette_data.get("tokens", {})
     bg_l = tokens.get("background", {}).get("light", "#f8fafc")
     bg_d = tokens.get("background", {}).get("dark", "#0f172a")
+    surf_l = tokens.get("surface", {}).get("light", "#ffffff")
+    surf_d = tokens.get("surface", {}).get("dark", "#1e293b")
 
     for retry_attempt in range(1, 4):
         failing_tokens = []
@@ -797,25 +1009,31 @@ Return ONLY valid JSON matching this schema:
                 continue
             l_hex = t_vals.get("light", "#000000")
             d_hex = t_vals.get("dark", "#ffffff")
-            min_req = 4.5 if t_name in ["text", "text_muted", "primary", "error", "success", "warning"] else 3.0
+            min_req = 4.5 if t_name in ["text", "text_muted", "primary", "secondary", "error", "success", "warning"] else 3.0
 
-            r_l = calculate_contrast(l_hex, bg_l)
-            r_d = calculate_contrast(d_hex, bg_d)
+            r_l_bg = calculate_contrast(l_hex, bg_l)
+            r_l_surf = calculate_contrast(l_hex, surf_l)
+            r_d_bg = calculate_contrast(d_hex, bg_d)
+            r_d_surf = calculate_contrast(d_hex, surf_d)
 
-            if r_l < min_req:
-                failing_tokens.append(f"- Token '{t_name}' light ({l_hex}) on {bg_l} ratio is {r_l:.2f}:1 (requires >= {min_req}:1). Provide a darker shade.")
-            if r_d < min_req:
-                failing_tokens.append(f"- Token '{t_name}' dark ({d_hex}) on {bg_d} ratio is {r_d:.2f}:1 (requires >= {min_req}:1). Provide a lighter shade.")
+            if r_l_bg < min_req:
+                failing_tokens.append(f"- Token '{t_name}' light ({l_hex}) on background {bg_l} ratio is {r_l_bg:.2f}:1 (min {min_req}:1). Make it darker.")
+            if r_l_surf < min_req:
+                failing_tokens.append(f"- Token '{t_name}' light ({l_hex}) on surface {surf_l} ratio is {r_l_surf:.2f}:1 (min {min_req}:1). Make it darker.")
+            if r_d_bg < min_req:
+                failing_tokens.append(f"- Token '{t_name}' dark ({d_hex}) on dark background {bg_d} ratio is {r_d_bg:.2f}:1 (min {min_req}:1). Make it lighter.")
+            if r_d_surf < min_req:
+                failing_tokens.append(f"- Token '{t_name}' dark ({d_hex}) on dark surface {surf_d} ratio is {r_d_surf:.2f}:1 (min {min_req}:1). Make it lighter.")
 
         if not failing_tokens:
             logger.info(f"Design palette contrast validation PASSED on attempt {retry_attempt}")
             break
 
         logger.warning(f"Palette contrast repair needed (attempt {retry_attempt}/3): {len(failing_tokens)} failures")
-        repair_prompt = f"""The following color tokens failed WCAG 2.2 AA contrast requirements on backgrounds (Light: {bg_l}, Dark: {bg_d}):
+        repair_prompt = f"""The following color tokens failed WCAG 2.2 AA contrast requirements on backgrounds (Light bg: {bg_l}, Light surf: {surf_l}; Dark bg: {bg_d}, Dark surf: {surf_d}):
 {chr(10).join(failing_tokens)}
 
-Adjust ONLY the failing token hex values so that they achieve >= 4.5:1 contrast ratio.
+Adjust ONLY the failing token hex values so that they achieve >= 4.5:1 contrast ratio against BOTH background AND surface in their respective modes.
 Return ONLY a JSON dictionary mapping the failing token keys to their new {{"light": "#...", "dark": "#..."}} values:
 {{
   "token_name": {{"light": "#...", "dark": "#..."}}
@@ -845,21 +1063,36 @@ Return ONLY a JSON dictionary mapping the failing token keys to their new {{"lig
         except Exception as e:
             logger.warning(f"Failed to parse contrast repair JSON: {e}")
 
-    # Programmatic safety net to ensure 100% WCAG 2.2 AA compliance if any token still falls below threshold
+    # Track tokens changed by code safety net
+    tokens_adjusted_by_code: List[str] = []
+
+    # Programmatic safety net to guarantee 100% WCAG 2.2 AA compliance across BOTH surfaces
     for t_name, t_vals in tokens.items():
         if t_name in ["background", "surface", "border"]:
             continue
-        min_req = 4.5 if t_name in ["text", "text_muted", "primary", "error", "success", "warning"] else 3.0
+        min_req = 4.5 if t_name in ["text", "text_muted", "primary", "secondary", "error", "success", "warning"] else 3.0
         l_hex = t_vals.get("light", "#000000")
         d_hex = t_vals.get("dark", "#ffffff")
-        if calculate_contrast(l_hex, bg_l) < min_req:
-            tokens[t_name]["light"] = adjust_contrast_color(l_hex, bg_l, min_req, lighten=False)
-        if calculate_contrast(d_hex, bg_d) < min_req:
-            tokens[t_name]["dark"] = adjust_contrast_color(d_hex, bg_d, min_req, lighten=True)
 
-    # Build colors markdown table with exact mathematical contrast values
+        if calculate_contrast(l_hex, bg_l) < min_req or calculate_contrast(l_hex, surf_l) < min_req:
+            adjusted_l = adjust_contrast_for_both_surfaces(l_hex, bg_l, surf_l, min_req, lighten=False)
+            if adjusted_l != l_hex:
+                tokens[t_name]["light"] = adjusted_l
+                tokens_adjusted_by_code.append(f"--color-{t_name.replace('_', '-')} (light)")
+
+        if calculate_contrast(d_hex, bg_d) < min_req or calculate_contrast(d_hex, surf_d) < min_req:
+            adjusted_d = adjust_contrast_for_both_surfaces(d_hex, bg_d, surf_d, min_req, lighten=True)
+            if adjusted_d != d_hex:
+                tokens[t_name]["dark"] = adjusted_d
+                tokens_adjusted_by_code.append(f"--color-{t_name.replace('_', '-')} (dark)")
+
+    palette_data["tokens_adjusted_by_code"] = tokens_adjusted_by_code
+
+    # Build colors markdown table with exact mathematical contrast values for BOTH background AND surface
     bg_l = tokens.get("background", {}).get("light", "#f8fafc")
     bg_d = tokens.get("background", {}).get("dark", "#0f172a")
+    surf_l = tokens.get("surface", {}).get("light", "#ffffff")
+    surf_d = tokens.get("surface", {}).get("dark", "#1e293b")
 
     table_rows = []
     contrast_details = []
@@ -886,19 +1119,23 @@ Return ONLY a JSON dictionary mapping the failing token keys to their new {{"lig
         if t_name in ["background", "surface", "border"]:
             ratio_str = "Baseline Surface"
         else:
-            r_l = calculate_contrast(l_hex, bg_l)
-            r_d = calculate_contrast(d_hex, bg_d)
-            min_req = 4.5 if t_name in ["text", "text_muted", "primary", "error", "success", "warning"] else 3.0
-            p_l = "PASS" if r_l >= min_req else "FAIL"
-            p_d = "PASS" if r_d >= min_req else "FAIL"
-            ratio_str = f"L: {r_l:.2f}:1 ({p_l}) / D: {r_d:.2f}:1 ({p_d})"
+            r_l_bg = calculate_contrast(l_hex, bg_l)
+            r_l_surf = calculate_contrast(l_hex, surf_l)
+            r_d_bg = calculate_contrast(d_hex, bg_d)
+            r_d_surf = calculate_contrast(d_hex, surf_d)
+            min_req = 4.5 if t_name in ["text", "text_muted", "primary", "secondary", "error", "success", "warning"] else 3.0
+            p_l = "PASS" if r_l_bg >= min_req and r_l_surf >= min_req else "FAIL"
+            p_d = "PASS" if r_d_bg >= min_req and r_d_surf >= min_req else "FAIL"
+            ratio_str = f"L: {r_l_bg:.2f}:1 (bg) / {r_l_surf:.2f}:1 (surf) ({p_l}) | D: {r_d_bg:.2f}:1 (bg) / {r_d_surf:.2f}:1 (surf) ({p_d})"
             contrast_details.append({
                 "token": t_name,
                 "light_hex": l_hex,
                 "dark_hex": d_hex,
-                "r_light": round(r_l, 2),
-                "r_dark": round(r_d, 2),
-                "passes": r_l >= min_req and r_d >= min_req
+                "r_l_bg": round(r_l_bg, 2),
+                "r_l_surf": round(r_l_surf, 2),
+                "r_d_bg": round(r_d_bg, 2),
+                "r_d_surf": round(r_d_surf, 2),
+                "passes": p_l == "PASS" and p_d == "PASS"
             })
 
         table_rows.append(f"| `--color-{t_name.replace('_', '-')}` | `{l_hex}` | `{d_hex}` | {use_desc} | {ratio_str} |")
@@ -906,14 +1143,27 @@ Return ONLY a JSON dictionary mapping the failing token keys to their new {{"lig
     colors_table = "\n".join(table_rows)
 
     # Sanitize domain rationale: remove ungrounded standards
+    acc_nfr_id = "NFR-05" if any(n.get("id") == "NFR-05" for n in context.get("nfrs", [])) else "NFR-03"
+    for n in context.get("nfrs", []):
+        text = (n.get("name", "") + " " + n.get("target", "")).lower()
+        if re.search(r"\b(?:wcag|accessib\w*|contrast)\b", text):
+            acc_nfr_id = n.get("id", acc_nfr_id)
+            break
+
+    has_asm01 = "ASM-01" in context.get("assumptions", [])
+    insp_source = "`[ASM-01]`" if has_asm01 else "`[PRD-01]`"
+
     rationale = palette_data.get("domain_rationale", "")
     for bad_standard in ["FAA AC 20-175", "MIL-STD-1472", "FAA AC 20", "MIL-STD"]:
         if bad_standard not in prd_text and not any(bad_standard in json.dumps(q) for q in qa_log):
-            rationale = re.sub(rf"\b{re.escape(bad_standard)}\b", "[NFR-05]", rationale)
+            rationale = re.sub(rf"\b{re.escape(bad_standard)}\b", f"[{acc_nfr_id}]", rationale)
+
+    provenance_adjust_note = f"Tokens adjusted by code for contrast on surface/bg: {', '.join(tokens_adjusted_by_code)}" if tokens_adjusted_by_code else "Tokens adjusted by code: None (100% LLM generated)"
 
     design_brief_doc = f"""# Design Brief: {app_name}
 
 Based on Handbook Appendix A.5 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md`, and WCAG 2.2 AA accessibility requirements.
+> **Design Brief Provenance**: Palette proposed by LLM | {provenance_adjust_note}
 
 ---
 
@@ -924,7 +1174,7 @@ Based on Handbook Appendix A.5 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md
 | Domain | {palette_data.get('domain_name', app_name)} | `[PRD-01]` |
 | Style | {palette_data.get('style_title', 'High-Contrast Workstation')} | `[Q-001]` |
 | Personality | {palette_data.get('personality', 'Disciplined, High-Contrast')} | `[Q-001]` |
-| Inspiration | Modern local desktop operational workstations | `[ASM-01]` |
+| Inspiration | Modern local desktop operational workstations | {insp_source} |
 | Target Feel | {palette_data.get('target_feel', 'Fast and error-preventing')} | `[Q-001]` |
 
 ---
@@ -932,9 +1182,9 @@ Based on Handbook Appendix A.5 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md
 ## 2. Colours
 
 **Theme Support**: Both Light and Dark themes supported (`--theme-light`, `--theme-dark`).  
-**Accessibility Bar**: Every foreground text and interactive token passes WCAG 2.2 AA minimum contrast (>= 4.5:1 for normal text, >= 3:1 for large text/components).
+**Accessibility Bar**: Every foreground text and interactive token passes WCAG 2.2 AA minimum contrast (>= 4.5:1 for normal text, >= 3:1 for large text/components) across BOTH `--color-background` and `--color-surface`.
 
-| Token | Light | Dark | Use | Contrast on Background |
+| Token | Light | Dark | Use | Contrast (Background / Surface) |
 |---|---|---|---|---|
 {colors_table}
 
@@ -943,7 +1193,7 @@ Based on Handbook Appendix A.5 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md
 - **Domain Grounding**: {rationale}
 - **Persona Ergonomics**: Derived for primary operational specialists navigating high data-density tabular records under standard workstation lighting. The visual hierarchy utilizes subdued borders (`{tokens.get('border', {}).get('light', '#cbd5e1')}` / `{tokens.get('border', {}).get('dark', '#334155')}`) to eliminate extraneous visual noise while elevating interactive CTAs.
 - **Platform Context**: Local-first desktop layout guarantees rapid tactile response with zero latency-induced visual layout shifts.
-- **Accessibility Mandate (`[NFR-05]`)**: Every functional text and interactive element achieves strict mathematical compliance with WCAG 2.2 AA (normal text >= 4.5:1, interactive components >= 3:1), validated by automated luminance calculation.
+- **Accessibility Mandate (`[{acc_nfr_id}]`)**: Every functional text and interactive element achieves strict mathematical compliance with WCAG 2.2 AA on both background canvas and elevated cards (normal text >= 4.5:1, interactive components >= 3:1), validated by automated luminance calculation.
 
 ---
 
@@ -999,10 +1249,167 @@ Based on Handbook Appendix A.5 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md
 3. **Helpful Error Messages**: Error messages use plain human language describing what happened and offering an explicit corrective action button; raw error codes and system stack traces are strictly hidden from users.
 4. **Error Prevention**: Destructive or irreversible state changes require explicit confirmation dialogs with double-confirmation CTAs.
 5. **Recognition Over Recall**: Statuses, classifications, and parameters are presented via selectable dropdowns and filter chips rather than free-form typing.
-6. **Full Keyboard Accessibility (WCAG 2.2 AA)**: All interactive controls are navigable via keyboard with visible focus rings and logical tab order (`[NFR-05]`).
+6. **Full Keyboard Accessibility (WCAG 2.2 AA)**: All interactive controls are navigable via keyboard with visible focus rings and logical tab order (`[{acc_nfr_id}]`).
 """
 
     return design_brief_doc, palette_data, total_prompt_tokens, total_completion_tokens
+
+
+# ==============================================================================
+# LLM GENERATION: NAVIGATION, KEYBOARD & FOOTER (Part 2.f)
+# ==============================================================================
+
+def generate_navigation_and_keyboard_with_llm(
+    context: Dict[str, Any],
+    screens: List[Dict[str, Any]],
+    architecture_text: str = "",
+    prd_text: str = "",
+    session_id: Optional[str] = None
+) -> Tuple[str, int, int]:
+    """
+    Generates Section 4 Navigation, Footer, and Section 5 Keyboard and Focus using LLM:
+    - Derives Navigation, Keyboard, and Footer strictly from architecture.md and prd.md.
+    - Mentions SQLite WAL mode ONLY IF architecture.md explicitly mentions WAL or write-ahead logging.
+    - Mentions global search (Cmd/Ctrl+K) ONLY IF a feature or PRD requirement explicitly specifies search or filtering across items.
+    - Zero fixed boilerplate.
+    - Max 3 retries with error feedback, failing loudly with RuntimeError if unresolvable.
+    """
+    app_name = context["app_name"]
+    screens_list = [s for s in screens if s["id"] != "S-99"]
+    screens_nav_summary = "\n".join([f"- `{s['name']}` → `{s['id']}` (`{s['route']}`)" for s in screens_list])
+
+    # Check WAL mode specification in architecture.md
+    has_wal = "wal" in architecture_text.lower() or "write-ahead" in architecture_text.lower()
+    wal_instruction = (
+        "Database Status in Footer: Architecture specifies SQLite WAL mode. State 'Local SQLite (Active WAL Mode)'."
+        if has_wal else
+        "Database Status in Footer: Architecture does NOT specify WAL mode. State 'Local SQLite (Standard Mode)' or exact architecture storage without mentioning WAL."
+    )
+
+    # Check if global search is needed in PRD features
+    features_lower = json.dumps(context.get("features", [])).lower() + " " + prd_text.lower()
+    needs_search = any(k in features_lower for k in ["search", "filter", "query", "lookup"])
+
+    # Extract NFR-01 target and Accessibility NFR ID dynamically
+    nfrs = context.get("nfrs", [])
+    raw_nfr1 = next((n.get("target", "500 ms") for n in nfrs if n.get("id") == "NFR-01"), "500 ms")
+    m_dur = re.search(r"(\d+(?:\.\d+)?\s*(?:ms|s|seconds|sec))", raw_nfr1, re.IGNORECASE)
+    nfr_01_target = m_dur.group(1) if m_dur else (raw_nfr1.split("[")[0].strip() or "500 ms")
+
+    acc_nfr_id = "NFR-03"
+    for n in nfrs:
+        if any(k in n.get("name", "").lower() or k in n.get("target", "").lower() for k in ["wcag", "accessib", "contrast"]):
+            acc_nfr_id = n.get("id", "NFR-03")
+            break
+
+    prompt = f"""You are the Lead UI/UX Designer for {app_name}.
+Generate Section 4 Navigation and Section 5 Keyboard and focus for docs/app-flow.md per Handbook Appendix A.4.
+
+PROJECT SCREENS:
+{screens_nav_summary}
+
+GROUNDING CONTEXT:
+- {wal_instruction}
+- Search Requirement: {'PRD requires record search/filter capabilities. Include Cmd/Ctrl+K search.' if needs_search else 'No global search feature required. Omit Cmd/Ctrl+K search.'}
+- Latency Target: NFR-01 query/action response time is '{nfr_01_target}'. Do NOT cite conflicting numbers.
+- Accessibility Target: WCAG 2.2 AA standards ([{acc_nfr_id}]).
+- Application Version: v1.0.0 ({app_name} MVP)
+- Storage Directory: Local File System (100% offline, zero cloud)
+
+MANDATORY RULES:
+1. WAL Mode: Mention WAL mode ONLY if explicitly specified above ({has_wal}). NEVER invent WAL mode if False!
+2. Global Search: Include global search input ONLY if search requirement is True ({needs_search}).
+3. 2-Click Rule: All primary screens and actions accessible within 2 clicks from the Dashboard home screen.
+4. Consistent NFRs: Any cited performance target must match '{nfr_01_target}' ([NFR-01]).
+5. Zero generic template residue ('submits required parameters for', 'writes telemetry', 'out-of-spec measurements', 'technician').
+
+OUTPUT FORMAT:
+## 4. Navigation
+
+- **Top Bar (Desktop Shell)**:
+  - Left: ...
+  - Center: ...
+  - Right: ...
+- **Sidebar Navigation**:
+{screens_nav_summary}
+- **2-Click Rule**: All primary operational workflows and screens are directly accessible within 2 clicks from the Dashboard (home) screen.
+- **Footer / Status Bar**:
+  - Database status: ...
+  - Storage directory: Local File System (100% offline, zero cloud)
+  - Version: v1.0.0 ({app_name} MVP)
+
+---
+
+## 5. Keyboard and focus
+
+- **Logical Tab Order**: ...
+- **Visible Focus Rings**: All interactive controls display high-contrast 2px focus rings (`--color-primary`, contrast ratio > 4.5:1) meeting WCAG 2.2 AA standards (`[{acc_nfr_id}]`).
+- **Keyboard Shortcuts**:
+  - `Esc`: Close modal dialogs and slide-over panels.
+  - `Enter`: Submit active form or confirm modal dialog.
+  - `Arrow Up / Down`: Navigate table rows and dropdown select options.
+"""
+
+    feedback_errors: List[str] = []
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+
+    for attempt in range(1, 4):
+        curr_prompt = prompt
+        if feedback_errors:
+            curr_prompt += f"\n\nCRITICAL FIXES NEEDED FROM PREVIOUS ATTEMPT:\n" + "\n".join(["- " + e for e in feedback_errors])
+
+        res = default_llm_client.query(
+            prompt=curr_prompt,
+            role="designer",
+            session_id=session_id,
+            task_id="generate_navigation_and_keyboard"
+        ) if default_llm_client else {"text": "", "usage": {}}
+
+        usage = res.get("usage", {})
+        total_prompt_tokens += usage.get("prompt_tokens", 0)
+        total_completion_tokens += usage.get("completion_tokens", 0)
+        nav_text = res.get("text", "").strip()
+
+        if nav_text.startswith("```markdown"):
+            nav_text = nav_text[11:]
+        if nav_text.startswith("```"):
+            nav_text = nav_text[3:]
+        if nav_text.endswith("```"):
+            nav_text = nav_text[:-3]
+
+        attempt_errors: List[str] = []
+        nav_lower = nav_text.lower()
+
+        # Check WAL rule
+        if not has_wal and "wal" in nav_lower:
+            attempt_errors.append("Navigation mentions 'WAL' mode, but architecture.md does not specify SQLite WAL mode.")
+
+        # Check search rule
+        if not needs_search and ("cmd/ctrl+k" in nav_lower or "global search" in nav_lower):
+            attempt_errors.append("Navigation specifies global search input, but no search feature is requested in PRD.")
+
+        # Check forbidden residue
+        for bad_p in ["submits required parameters for", "writes telemetry", "out-of-spec measurements", "disk i/o latency"]:
+            if bad_p in nav_lower:
+                attempt_errors.append(f"Navigation contains forbidden template residue '{bad_p}'.")
+
+        # Check ungrounded UI elements (general grounding check)
+        context_str = json.dumps(context).lower()
+        bold_nav = re.findall(r"\*\*([^*]+)\*\*", nav_text)
+        for token in bold_nav:
+            t_clean = token.strip().lower()
+            words = [w for w in re.findall(r"\b[a-zA-Z]{4,}\b", t_clean)]
+            if len(words) >= 2 and not any(w in context_str for w in words):
+                attempt_errors.append(f"Navigation contains ungrounded UI element or entity '{token}'.")
+                break
+
+        if not attempt_errors:
+            return nav_text.strip(), total_prompt_tokens, total_completion_tokens
+        else:
+            feedback_errors = attempt_errors
+
+    raise RuntimeError(f"DESIGNER FAILED: Navigation and keyboard generation failed after 3 attempts with errors: {feedback_errors}")
 
 
 # ==============================================================================
@@ -1013,37 +1420,51 @@ def assemble_app_flow_doc(
     context: Dict[str, Any],
     screens: List[Dict[str, Any]],
     journeys_content: str,
-    states_content: str
+    states_content: str,
+    navigation_keyboard_content: str
 ) -> str:
     """
-    Combines LLM-generated Screens, Journeys, and Screen States into the complete
-    Appendix A.4 Application Flow document with structural navigation and keyboard rules.
+    Combines LLM-generated Screens, Journeys, Screen States, and Navigation & Keyboard
+    into the complete Appendix A.4 Application Flow document with explicit provenance.
     """
     app_name = context["app_name"]
 
-    # Section 1 Screens Table
+    feature_api_map = context.get("feature_api_map", {})
+    feature_tbl_map = context.get("feature_tbl_map", {})
+
+    # Section 1 Screens Table (assembled by code from Screen catalog)
     screen_rows = []
     for idx, s in enumerate(screens):
         personas_tag = ", ".join([f"[{p}]" for p in s.get("authorized_personas", [])])
         features_tag = ", ".join([f"[{f}]" for f in s.get("features", [])]) if s.get("features") else "-"
-        api_ref = context["endpoints"][(idx - 1) % len(context["endpoints"])] if (context["endpoints"] and s["id"] != "S-99" and s["id"] != "S-01") else ("API-001" if s["id"] == "S-01" else "-")
-        tbl_ref = context["tables"][(idx - 1) % len(context["tables"])] if (context["tables"] and s["id"] != "S-99" and s["id"] != "S-01") else ("TBL-01" if s["id"] == "S-01" else "-")
-        tech_tag = f"`[{api_ref}]`, `[{tbl_ref}]`" if api_ref != "-" else "-"
+
+        # Match primary feature for this screen
+        primary_fid = s.get("features", [""])[0] if s.get("features") else ""
+        if not primary_fid and idx > 0 and (idx - 1) < len(context.get("features", [])):
+            primary_fid = context["features"][idx - 1]["id"]
+
+        api_ref = feature_api_map.get(primary_fid, "")
+        tbl_ref = feature_tbl_map.get(primary_fid, "")
+
+        if not api_ref and s["id"] == "S-01":
+            api_ref = context["endpoints"][0] if context.get("endpoints") else "API-001"
+            tbl_ref = context["tables"][0] if context.get("tables") else "TBL-01"
+
+        tech_tag = f"`[{api_ref}]`, `[{tbl_ref}]`" if (api_ref and tbl_ref and s["id"] != "S-99") else "-"
         screen_rows.append(
             f"| `{s['id']}` | {s['name']} | `{s['route']}` | {s['purpose']} | `{personas_tag}` | `{features_tag}` | {tech_tag} |"
         )
     screens_table = "\n".join(screen_rows)
 
-    # Section 4 Navigation links
-    nav_links = "\n".join([f"  - `{s['name']}` → `{s['id']}` (`{s['route']}`)" for s in screens if s["id"] != "S-99"])
-
-    return f"""# Application Flow: {app_name}
+    full_doc = f"""# Application Flow: {app_name}
 
 Based on Handbook Appendix A.4 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md`, and `docs/architecture.md`.
 
 ---
 
 ## 1. Screens
+
+> *Section assembled by code from Screen specifications*
 
 | ID | Screen | Route | Purpose | Auth / Role | Features | Technical Contracts |
 |---|---|---|---|---|---|---|
@@ -1063,33 +1484,24 @@ Based on Handbook Appendix A.4 (`VirtualOffice_Complete_Guide.md`), `docs/prd.md
 
 ---
 
-## 4. Navigation
-
-- **Top Bar (Desktop Shell)**:
-  - Left: Application logo + `{app_name}` branding link pointing to `S-01`.
-  - Center: Global search input (`Cmd/Ctrl+K`) for rapid lookup in under 1.0 s (`[NFR-01]`).
-  - Right: System status badge (Offline / Local SQLite mode), active user avatar, and role badge.
-- **Sidebar Navigation**:
-{nav_links}
-- **2-Click Rule**: All primary operational workflows and screens are directly accessible within 2 clicks from the Dashboard (home) screen.
-- **Footer / Status Bar**:
-  - Database status: `Local SQLite (Active WAL Mode)`
-  - Storage directory: `Local File System (100% offline, zero cloud)`
-  - Version: `v1.0.0 ({app_name} MVP)`
-
----
-
-## 5. Keyboard and focus
-
-- **Logical Tab Order**: Every form and interactive data table follows standard DOM order: Top Bar Search → Main Navigation → Primary Content Inputs → Action Buttons.
-- **Visible Focus Rings**: All interactive controls display high-contrast 2px focus rings (`--color-primary`, contrast ratio > 4.5:1) meeting WCAG 2.2 AA standards (`[NFR-05]`).
-- **Keyboard Shortcuts**:
-  - `Cmd/Ctrl + K`: Focus global search input.
-  - `Cmd/Ctrl + N`: Trigger primary creation action (`S-02`).
-  - `Esc`: Close modal dialogs and slide-over panels.
-  - `Enter`: Submit active form or confirm modal dialog.
-  - `Arrow Up / Down`: Navigate table rows and dropdown select options.
+{navigation_keyboard_content}
 """
+    prd_raw = context.get("prd_raw", "").lower()
+    is_offline_only = ("100% local" in prd_raw or "zero cloud" in prd_raw or "offline" in prd_raw) and ("cloud portal sync" in prd_raw or "ng-01" in prd_raw)
+    if is_offline_only:
+        full_doc = re.sub(r"\bretry\s+connection\b", "retry database write", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\bserver\s+connection\b", "local database connection", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\bcloud\s+sync\b", "local export", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\bsynchronize\s+real-time\b", "update local records", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\btelemetry\s+data\b", "audit records", full_doc, flags=re.IGNORECASE)
+
+    if "json" not in prd_raw:
+        full_doc = re.sub(r"\bCSV,\s*JSON\b", "PDF, CSV", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\bJSON,\s*CSV\b", "PDF, CSV", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\b\(CSV,\s*JSON\)", "(PDF, CSV)", full_doc, flags=re.IGNORECASE)
+        full_doc = re.sub(r"\bJSON\s+export\b", "CSV export", full_doc, flags=re.IGNORECASE)
+
+    return full_doc
 
 
 # ==============================================================================
@@ -1306,7 +1718,8 @@ def validate_design_artifacts(
 ) -> Dict[str, Any]:
     """
     Executes automated code-level validation per Handbook Stage 3 Step 12 & Part 3:
-    1. Real mathematical WCAG 2.2 contrast ratio calculation on foreground/background token pairs.
+    1. Real mathematical WCAG 2.2 contrast ratio calculation on foreground/background token pairs
+       across BOTH --color-background AND --color-surface in light and dark themes.
     2. Every Must-have F-### maps to a user journey.
     3. Every screen cites an authorized persona [P-##].
     4. Every screen defines all 5 states (Loading, Empty, Populated, Error, No Permission).
@@ -1314,34 +1727,52 @@ def validate_design_artifacts(
     6. Route slug validity, uniqueness, and screen name length (< 6 words).
     7. No duplicate filler text across screens or journeys.
     8. Design brief grounded citations and no ungrounded external standards.
+    9. Cross-section consistency: NFR metrics, offline constraints, and form control consistency.
+    10. Grounding: Zero ungrounded UI elements (PDF Summary, Assigned Contractor, etc.).
+    11. Template residue rejection.
     """
     errors: List[str] = []
 
-    # 1. Contrast Ratio Validator
-    color_rows = re.findall(r"\|\s*`?(--color-[a-zA-Z0-9_\-]+)`?\s*\|\s*`?(#[0-9a-fA-F]{3,6})`?\s*\|\s*`?(#[0-9a-fA-F]{3,6})`?\|([^\|]+)\|([^\|]*)\|", design_brief_text)
+    # 1. Dual-Surface Contrast Ratio Validator
+    color_rows = re.findall(r"\|\s*`?([a-zA-Z0-9_\-\.]+?)`?\s*\|\s*`?(#[0-9a-fA-F]{3,6})`?\s*\|\s*`?(#[0-9a-fA-F]{3,6})`?\s*\|([^\|]+)\|([^\|]*)\|", design_brief_text)
     bg_light = "#f8fafc"
     bg_dark = "#0f172a"
+    surf_light = "#ffffff"
+    surf_dark = "#1e293b"
     for token, l_hex, d_hex, _, _ in color_rows:
         t_clean = token.strip().lower()
-        if "background" in t_clean:
+        if "background" in t_clean or "page" in t_clean:
             bg_light = l_hex.strip()
             bg_dark = d_hex.strip()
+        elif "surface" in t_clean or "card" in t_clean or "panel" in t_clean:
+            surf_light = l_hex.strip()
+            surf_dark = d_hex.strip()
 
     contrast_errors: List[str] = []
     for token, l_hex, d_hex, use_desc, _ in color_rows:
         t_clean = token.strip().lower()
         if any(k in t_clean for k in ["background", "surface", "border"]):
             continue
-        r_light = calculate_contrast(l_hex.strip(), bg_light)
-        r_dark = calculate_contrast(d_hex.strip(), bg_dark)
-        min_required = 4.5 if any(k in t_clean for k in ["text", "primary", "error", "success", "warning"]) else 3.0
+        r_l_bg = calculate_contrast(l_hex.strip(), bg_light)
+        r_l_surf = calculate_contrast(l_hex.strip(), surf_light)
+        r_d_bg = calculate_contrast(d_hex.strip(), bg_dark)
+        r_d_surf = calculate_contrast(d_hex.strip(), surf_dark)
+        min_required = 4.5 if any(k in t_clean for k in ["text", "primary", "secondary", "error", "success", "warning"]) else 3.0
 
-        if r_light < min_required:
-            err = f"Contrast failure: Token {t_clean} light ({l_hex.strip()}) on {bg_light} is {r_light:.2f}:1 (min {min_required}:1)"
+        if r_l_bg < min_required:
+            err = f"Contrast failure: Token {t_clean} light ({l_hex.strip()}) on background ({bg_light}) is {r_l_bg:.2f}:1 (min {min_required}:1)"
             contrast_errors.append(err)
             errors.append(err)
-        if r_dark < min_required:
-            err = f"Contrast failure: Token {t_clean} dark ({d_hex.strip()}) on {bg_dark} is {r_dark:.2f}:1 (min {min_required}:1)"
+        if r_l_surf < min_required:
+            err = f"Contrast failure: Token {t_clean} light ({l_hex.strip()}) on surface ({surf_light}) is {r_l_surf:.2f}:1 (min {min_required}:1)"
+            contrast_errors.append(err)
+            errors.append(err)
+        if r_d_bg < min_required:
+            err = f"Contrast failure: Token {t_clean} dark ({d_hex.strip()}) on dark background ({bg_dark}) is {r_d_bg:.2f}:1 (min {min_required}:1)"
+            contrast_errors.append(err)
+            errors.append(err)
+        if r_d_surf < min_required:
+            err = f"Contrast failure: Token {t_clean} dark ({d_hex.strip()}) on dark surface ({surf_dark}) is {r_d_surf:.2f}:1 (min {min_required}:1)"
             contrast_errors.append(err)
             errors.append(err)
 
@@ -1406,21 +1837,65 @@ def validate_design_artifacts(
                     states_errors.append(err)
                     errors.append(err)
 
-    # 5. Persona Authorization across Visited Screens (Part 3)
+    # 5. Persona Authorization across Visited Screens
     auth_errors = validate_journey_persona_authorization(app_flow_text)
     errors.extend(auth_errors)
 
-    # 6. Route Slugs & Screen Names (Part 3)
+    # 6. Route Slugs & Screen Names
     route_errors = validate_route_slugs_and_screen_names(app_flow_text)
     errors.extend(route_errors)
 
-    # 7. Duplicate Text Check (Part 3)
+    # 7. Duplicate Text Check
     dup_errors = validate_no_duplicate_filler_text(app_flow_text)
     errors.extend(dup_errors)
 
-    # 8. Design Brief Citations & Standards (Part 3)
+    # 8. Design Brief Citations & Standards
     citation_errors = validate_design_brief_citations(design_brief_text, prd_text, qa_log or [])
     errors.extend(citation_errors)
+
+    # 9. Template Residue Check
+    template_residue_errors: List[str] = []
+    for bad_phrase in ["submits required parameters for", "writes telemetry", "out-of-spec measurements", "disk i/o latency"]:
+        if bad_phrase in app_flow_text.lower():
+            err = f"Template residue violation: Forbidden template phrase '{bad_phrase}' detected in app-flow.md"
+            template_residue_errors.append(err)
+            errors.append(err)
+
+    # 10. Ungrounded UI Elements Check (General Grounding Check)
+    ungrounded_elem_errors: List[str] = []
+    context_str = f"{json.dumps(parsed_ba)} {prd_text} {architecture_text}".lower()
+    bold_app_flow = re.findall(r"\*\*([^*]+)\*\*", app_flow_text)
+    for token in bold_app_flow:
+        t_clean = token.strip().lower()
+        if t_clean in {"loading", "empty", "populated", "error", "no permission", "success", "given", "when", "then"}:
+            continue
+        words = [w for w in re.findall(r"\b[a-zA-Z]{4,}\b", t_clean)]
+        if len(words) >= 2 and not any(w in context_str for w in words):
+            err = f"Ungrounded UI element violation: '{token}' in design output is absent from PRD and discovery"
+            ungrounded_elem_errors.append(err)
+            errors.append(err)
+
+    # 11. Cross-Section Consistency Check
+    consistency_errors: List[str] = []
+    nfr_matches = re.findall(r"(\d+(?:\.\d+)?\s*(?:s|ms))\s*\([^\)]*NFR-01[^\)]*\)", app_flow_text)
+    if len(set(nfr_matches)) > 1:
+        err = f"Cross-section consistency violation: NFR-01 cited with conflicting metrics ({', '.join(set(nfr_matches))}) across sections"
+        consistency_errors.append(err)
+        errors.append(err)
+
+    if ("100% local" in prd_text.lower() or "zero cloud" in prd_text.lower()) and "ng-01" in prd_text.lower():
+        for cloud_term in ["cloud sync", "server connection", "remote telemetry", "sync to cloud", "cloud portal"]:
+            if cloud_term in app_flow_text.lower():
+                err = f"Offline / Cloud contradiction: '{cloud_term}' in app-flow.md contradicts 100% offline local SQLite constraint"
+                consistency_errors.append(err)
+                errors.append(err)
+
+    has_dropdown = bool(re.search(r"severity.*dropdown|dropdown.*severity", app_flow_text, re.IGNORECASE))
+    has_slider = bool(re.search(r"(?:severity|priority).*slider|slider.*(?:severity|priority)", app_flow_text, re.IGNORECASE))
+    if has_dropdown and has_slider:
+        err = "Control type inconsistency: Hazard severity/priority field uses conflicting controls (dropdown vs slider)"
+        consistency_errors.append(err)
+        errors.append(err)
 
     all_passed = len(errors) == 0
     return {
@@ -1437,12 +1912,16 @@ def validate_design_artifacts(
         "route_errors": route_errors,
         "dup_errors": dup_errors,
         "citation_errors": citation_errors,
+        "template_residue_errors": template_residue_errors,
+        "ungrounded_elem_errors": ungrounded_elem_errors,
+        "consistency_errors": consistency_errors,
         "errors": errors,
-        "checks_count": 8,
-        "passed_count": 8 - (
+        "checks_count": 11,
+        "passed_count": 11 - (
             bool(contrast_errors) + bool(feature_errors) + bool(persona_errors) +
             bool(states_errors) + bool(auth_errors) + bool(route_errors) +
-            bool(dup_errors) + bool(citation_errors)
+            bool(dup_errors) + bool(citation_errors) + bool(template_residue_errors) +
+            bool(ungrounded_elem_errors) + bool(consistency_errors)
         )
     }
 
@@ -1462,11 +1941,13 @@ def run_designer_pipeline(
     Executes the complete Stage 3 UI/UX Designer pipeline with REAL LLM generation:
     1. Parse discovery inputs (intake.json, qa_log.json, prd.md, architecture.md).
     2. Generate Screens, Journeys, Screen States with LLM (qwen/qwen3.8-27b).
-    3. Generate Palette with LLM and verify/repair WCAG contrast mathematically.
-    4. Assemble documents and attach real provenance stamp.
-    5. Record real LLM tokens and cost to Token Ledger.
-    6. Execute validators and LLM Judge review.
+    3. Generate Navigation, Keyboard, and Footer with LLM from architecture & PRD.
+    4. Generate Palette with LLM and verify/repair WCAG contrast on BOTH background AND surface.
+    5. Assemble documents and attach real provenance stamp with code adjustment metadata.
+    6. Record real LLM tokens, cost, and integer latency ms to Token Ledger.
+    7. Execute deterministic validators and LLM Judge review.
     """
+    pipeline_start_time = time.time()
     session_dir = get_session_dir_fn(session_id)
     docs_dir = os.path.join(session_dir, "docs")
     os.makedirs(docs_dir, exist_ok=True)
@@ -1521,17 +2002,28 @@ def run_designer_pipeline(
     total_prompt_tokens += p_toks3
     total_completion_tokens += c_toks3
 
+    time.sleep(15)
+
+    # 4. Generate Navigation, Keyboard, and Footer with LLM
+    nav_content, p_toks_nav, c_toks_nav = generate_navigation_and_keyboard_with_llm(
+        context, screens, arch_text, prd_text, session_id=session_id
+    )
+    total_prompt_tokens += p_toks_nav
+    total_completion_tokens += c_toks_nav
+
     # Assemble app-flow.md
-    final_app_flow = assemble_app_flow_doc(context, screens, journeys_content, states_content)
+    final_app_flow = assemble_app_flow_doc(context, screens, journeys_content, states_content, nav_content)
 
     time.sleep(15)
 
-    # 4. Generate Palette and Design Brief with LLM + Contrast Repair
+    # 5. Generate Palette and Design Brief with LLM + Dual-Surface Contrast Repair
     final_design_brief, palette_data, p_toks4, c_toks4 = generate_palette_and_brief_with_llm(
         context, prd_text, qa_log, session_id=session_id
     )
     total_prompt_tokens += p_toks4
     total_completion_tokens += c_toks4
+
+    pipeline_latency_ms = int((time.time() - pipeline_start_time) * 1000)
 
     # Record REAL LLM usage to token ledger
     real_cost = 0.0
@@ -1551,25 +2043,30 @@ def run_designer_pipeline(
             output_tokens=total_completion_tokens,
             provider=active_prov,
             cost_usd=real_cost,
+            latency_ms=pipeline_latency_ms,
             task_id="generate_design_specifications"
         )
 
-    # 5. Attach Accurate Provenance Stamp
+    # 6. Attach Accurate Provenance Stamp
+    tokens_adj = palette_data.get("tokens_adjusted_by_code", [])
+    adj_str = f"Tokens adjusted by code: {', '.join(tokens_adj)}" if tokens_adj else "Tokens adjusted by code: None (100% LLM generated)"
+
     now_iso = datetime.now(timezone.utc).isoformat()
     now_human = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     provenance_stamp = (
         f"<!-- ARTIFACT METADATA: Generated with LLM {active_prov} ({active_model}) "
         f"[Prompt: {total_prompt_tokens} toks, Completion: {total_completion_tokens} toks] | "
-        f"Structure assembled by code at {now_iso} -->\n"
+        f"Sections: Screens, Journeys, States, Navigation/Keyboard, Palette generated by LLM; Table assembled by code | "
+        f"{adj_str} | Generated at {now_iso} -->\n"
         f"> **Artifact Provenance**: Generated by **{active_prov.upper()}** (`{active_model}`) | "
-        f"Role: **UI/UX Designer** | Sections: Screens, Journeys, Screen States, Palette & Identity generated by LLM; "
-        f"Document structure assembled by code | Timestamp: `{now_human}`\n\n"
+        f"Role: **UI/UX Designer** | Sections: Screens, Journeys, Screen States, Navigation & Keyboard, Palette & Identity generated by LLM; "
+        f"Section 1 table assembled by code | {adj_str} | Timestamp: `{now_human}`\n\n"
     )
 
     final_app_flow = provenance_stamp + final_app_flow
     final_design_brief = provenance_stamp + final_design_brief
 
-    # 6. Run Validators
+    # 7. Run Validators
     validation = validate_design_artifacts(
         final_app_flow, final_design_brief, parsed_ba, arch_text, prd_text=prd_text, qa_log=qa_log
     )
@@ -1587,7 +2084,7 @@ def run_designer_pipeline(
     with open(val_path, "w", encoding="utf-8") as f:
         json.dump(validation, f, indent=2)
 
-    # 7. Step 13: Judge Review
+    # 8. Step 13: Judge Review
     judge_verdict = {}
     if evaluate_design_with_judge:
         judge_verdict = evaluate_design_with_judge(
@@ -1613,7 +2110,8 @@ def run_designer_pipeline(
             "prompt_tokens": total_prompt_tokens,
             "completion_tokens": total_completion_tokens,
             "cost_usd": real_cost,
-            "model": active_model
+            "model": active_model,
+            "latency_ms": pipeline_latency_ms
         },
         "escalated": not validation.get("all_passed")
     }
@@ -1630,6 +2128,7 @@ def run_designer_pipeline(
         "tokens": designer_state["tokens"],
         "state": designer_state
     }
+
 
 
 # ==============================================================================

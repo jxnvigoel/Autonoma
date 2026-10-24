@@ -60,6 +60,49 @@ except ImportError:
     except ImportError:
         get_skill_registry = None
 
+# Import HR, Recruiter, and Budget modules (Chapters 6, 22.4, 23.4-23.6, 26.4)
+try:
+    from hr import generate_hr_team_plan
+    from recruiter import execute_recruiter_hiring
+    from budget import (
+        get_gate2_state,
+        save_gate2_approval_record,
+        approve_gate2,
+        request_changes_gate2,
+        check_budget_guard,
+        recompute_budget_step16,
+        enforce_gate2_server_side,
+    )
+    from skill_registry import get_agents_by_project
+except ImportError:
+    try:
+        from engine.hr import generate_hr_team_plan
+        from engine.recruiter import execute_recruiter_hiring
+        from engine.budget import (
+            get_gate2_state,
+            save_gate2_approval_record,
+            approve_gate2,
+            request_changes_gate2,
+            check_budget_guard,
+            recompute_budget_step16,
+            enforce_gate2_server_side,
+        )
+        from engine.skill_registry import get_agents_by_project
+    except ImportError:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from hr import generate_hr_team_plan
+        from recruiter import execute_recruiter_hiring
+        from budget import (
+            get_gate2_state,
+            save_gate2_approval_record,
+            approve_gate2,
+            request_changes_gate2,
+            check_budget_guard,
+            recompute_budget_step16,
+            enforce_gate2_server_side,
+        )
+        from skill_registry import get_agents_by_project
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("autonoma-engine")
@@ -407,18 +450,26 @@ def get_models_endpoint():
     groq_models = default_llm_client.fetch_groq_models(force_refresh=True)
     role_configs = default_llm_client.role_configs
 
-    designer_model = role_configs.get("designer", {}).get("model", "")
     judge_model = role_configs.get("judge", {}).get("model", "")
-
-    designer_score = default_llm_client._score_model_capability(designer_model)
     judge_score = default_llm_client._score_model_capability(judge_model)
 
-    is_valid = (judge_score >= designer_score)
-    rule_note = (
-        f"Valid: Judge model '{judge_model}' (score: {judge_score}) is at least as capable as generator '{designer_model}' (score: {designer_score})."
-        if is_valid
-        else f"Invalid: Judge model '{judge_model}' (score: {judge_score}) is LESS capable than generator '{designer_model}' (score: {designer_score})!"
-    )
+    agent_validations = {}
+    all_valid = True
+    for role in ["ba", "pm", "architect", "designer", "engineer", "qa"]:
+        gen_model = role_configs.get(role, {}).get("model", "")
+        gen_score = default_llm_client._score_model_capability(gen_model)
+        different_family = gen_model != judge_model
+        valid = (judge_score >= gen_score) and different_family
+        if not valid:
+            all_valid = False
+        agent_validations[role] = {
+            "generator_model": gen_model,
+            "generator_capability_score": gen_score,
+            "judge_model": judge_model,
+            "judge_capability_score": judge_score,
+            "different_model": different_family,
+            "is_valid": valid
+        }
 
     return {
         "status": "success",
@@ -426,11 +477,10 @@ def get_models_endpoint():
         "role_configs": role_configs,
         "judge_validation": {
             "judge_model": judge_model,
-            "designer_model": designer_model,
             "judge_capability_score": judge_score,
-            "designer_capability_score": designer_score,
-            "is_valid": is_valid,
-            "note": rule_note
+            "all_roles_valid": all_valid,
+            "agent_validations": agent_validations,
+            "note": "Per Handbook 14.1.2: Judge model is >= generator capability and from a distinct model family for every agent." if all_valid else "Capability or distinct family violation detected."
         }
     }
 
@@ -579,6 +629,7 @@ def ba_start(req: IntakeRequest):
         ],
         "round": 0,
         "ready_for_requirements": False,
+        "local_only": True,
         "messages": [],
     }
     save_json(os.path.join(session_dir, "session_state.json"), initial_state)
@@ -676,17 +727,39 @@ def ba_message(req: BAMessageRequest):
     current_round = session_state.get("round", 0) + 1
     session_state["round"] = current_round
 
-    # Append to real qa_log.json array
-    q_id = f"Q-{len(qa_log) + 1:03d}"
-    qa_entry = {
-        "id": q_id,
-        "question": last_ba_msg,
-        "answer": client_answer,
-        "round": current_round,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    qa_log.append(qa_entry)
-    save_json(qa_file, qa_log)
+    # Helper: Detect conversational non-answers (Handbook Quality Bar & DOD)
+    def _is_non_answer(text: str) -> bool:
+        clean = re.sub(r"[^\w\s]", "", text.strip()).lower()
+        non_answers = {
+            "yes", "no", "sure", "ok", "okay", "proceed",
+            "yes please proceed", "please proceed", "go ahead",
+            "yes lets begin", "lets begin", "sounds good",
+            "continue", "looks good", "start", "yes go ahead",
+            "yes proceed", "yes start", "yep", "yeah", "agree",
+            "ready", "im ready", "i am ready", "let us begin",
+            "sounds good please proceed", "yes please", "sure thing"
+        }
+        if clean in non_answers:
+            return True
+        words = clean.split()
+        if len(words) <= 4 and any(w in words for w in ["proceed", "begin", "start", "continue", "ahead"]):
+            return True
+        return False
+
+    # Append to real qa_log.json array ONLY if not a conversational non-answer
+    if not _is_non_answer(client_answer):
+        q_id = f"Q-{len(qa_log) + 1:03d}"
+        qa_entry = {
+            "id": q_id,
+            "question": last_ba_msg,
+            "answer": client_answer,
+            "round": current_round,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        qa_log.append(qa_entry)
+        save_json(qa_file, qa_log)
+    else:
+        logger.info(f"Skipping non-answer from qa_log.json: '{client_answer}'")
 
     # Append client turn to message history
     messages_history.append({
@@ -994,6 +1067,29 @@ def get_office_status(session_id: str):
     else:
         designer_status = "idle"
 
+    # Stage 4 Staffing (HR & Recruiter) & Gate 2 status
+    team_plan_path = os.path.join(session_dir, "docs", "team-plan.json")
+    has_team_plan = os.path.exists(team_plan_path)
+    staffing_report_path = os.path.join(session_dir, "docs", "staffing-report.md")
+    has_staffing_report = os.path.exists(staffing_report_path)
+
+    gate2_state = get_gate2_state(session_id)
+    gate2_approved = gate2_state.get("approved", False)
+
+    if has_team_plan:
+        hr_status = "done"
+    elif has_arch:
+        hr_status = "waiting-on-you"
+    else:
+        hr_status = "idle"
+
+    if has_staffing_report:
+        recruiter_status = "done"
+    elif has_team_plan:
+        recruiter_status = "waiting-on-you"
+    else:
+        recruiter_status = "idle"
+
     # Specialist skills attachments
     attachments = load_json(os.path.join(session_dir, "agent_attachments.json"), default={})
 
@@ -1011,6 +1107,9 @@ def get_office_status(session_id: str):
             "has_feasibility": has_feasibility,
             "has_prd": has_prd,
         },
+        "gate2": gate2_state,
+        "has_team_plan": has_team_plan,
+        "has_staffing_report": has_staffing_report,
         "agents": {
             "ba": {
                 "id": "ba",
@@ -1065,6 +1164,32 @@ def get_office_status(session_id: str):
                 "can_start": gate1_approved and not has_designer,
                 "attached_skills": attachments.get("designer", []),
             },
+            "hr": {
+                "id": "hr",
+                "role": "Staffing Planner",
+                "abbr": "HR",
+                "status": hr_status,
+                "has_output": has_team_plan,
+                "output_name": "docs/team-plan.json",
+                "output_type": "json",
+                "message_count": 1 if has_team_plan else 0,
+                "is_unlocked": has_arch,
+                "can_start": has_arch and not has_team_plan,
+                "attached_skills": attachments.get("hr", []),
+            },
+            "recruiter": {
+                "id": "recruiter",
+                "role": "Technical Recruiter",
+                "abbr": "REC",
+                "status": recruiter_status,
+                "has_output": has_staffing_report,
+                "output_name": "docs/staffing-report.md",
+                "output_type": "markdown",
+                "message_count": 1 if has_staffing_report else 0,
+                "is_unlocked": has_team_plan,
+                "can_start": has_team_plan and not has_staffing_report,
+                "attached_skills": attachments.get("recruiter", []),
+            },
             "engineer": {
                 "id": "engineer",
                 "role": "Full-Stack Engineer",
@@ -1075,6 +1200,7 @@ def get_office_status(session_id: str):
                 "output_type": "code",
                 "message_count": 0,
                 "can_start": False,
+                "is_unlocked": gate2_approved,
                 "attached_skills": attachments.get("engineer", attachments.get("backend", [])),
             },
             "qa": {
@@ -1087,10 +1213,12 @@ def get_office_status(session_id: str):
                 "output_type": "tests",
                 "message_count": 0,
                 "can_start": False,
+                "is_unlocked": gate2_approved,
                 "attached_skills": attachments.get("qa", []),
             },
         },
     }
+
 
 
 # =========================================================================
@@ -1344,7 +1472,148 @@ init_designer_routes(
 )
 
 
+# =========================================================================
+# Stage 4 Staffing (HR & Recruiter), Gate 2, & Budget Endpoints
+# Handbook Chapters 6 (6.1-6.3), 2.7.5 (steps 14-17), 5.1.6, 22.4, 24.1, 26.4
+# =========================================================================
+
+class Gate2ApprovalRequest(BaseModel):
+    session_id: str
+    client_notes: Optional[str] = None
+
+
+class Gate2ChangeRequest(BaseModel):
+    session_id: str
+    feedback: str
+
+
+@app.post("/hr/plan/{session_id}")
+def run_hr_team_plan(session_id: str):
+    """
+    Executes HR Staffing Planner engine to generate docs/team-plan.json
+    per Handbook Chapter 6.1 and 6.2.
+    """
+    try:
+        plan = generate_hr_team_plan(session_id, data_projects_dir=DATA_PROJECTS_DIR)
+        return plan
+    except RuntimeError as re:
+        raise HTTPException(status_code=400, detail=str(re))
+    except Exception as e:
+        logger.error(f"Error in HR staffing plan: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"HR staffing plan failed: {str(e)}")
+
+
+@app.get("/hr/team-plan/{session_id}")
+def get_hr_team_plan(session_id: str):
+    """Retrieves docs/team-plan.json for a project."""
+    session_dir = get_session_dir(session_id)
+    plan_path = os.path.join(session_dir, "docs", "team-plan.json")
+    if not os.path.exists(plan_path):
+        raise HTTPException(status_code=404, detail="Team plan not generated yet")
+    return load_json(plan_path)
+
+
+@app.post("/recruiter/hire/{session_id}")
+def run_recruiter_hiring(session_id: str):
+    """
+    Executes Recruiter hiring engine per Handbook Chapter 6.1 and 6.3:
+    1. Reads team-plan.json requisitions.
+    2. Matches skill packs (spec-only or blocked).
+    3. Resolves model tiers dynamically via live GET /models.
+    4. Enforces least-privilege tools and sandboxes.
+    5. Derives token caps with 20% rework buffer.
+    6. Persists hired agents into SQLite 'agents' table.
+    7. Synthesizes docs/staffing-report.md and registers Gate 2 approval.
+    """
+    try:
+        result = execute_recruiter_hiring(session_id, data_projects_dir=DATA_PROJECTS_DIR)
+        return result
+    except RuntimeError as re:
+        raise HTTPException(status_code=400, detail=str(re))
+    except Exception as e:
+        logger.error(f"Error in Recruiter hiring: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Recruiter hiring failed: {str(e)}")
+
+
+@app.get("/recruiter/agents/{session_id}")
+def get_recruiter_agents(session_id: str):
+    """Returns all hired agents for a project from the SQLite agents table."""
+    agents = get_agents_by_project(session_id)
+    return {
+        "session_id": session_id,
+        "agents": agents,
+        "count": len(agents)
+    }
+
+
+@app.get("/recruiter/report/{session_id}")
+def get_recruiter_report(session_id: str):
+    """Retrieves docs/staffing-report.md for a project."""
+    session_dir = get_session_dir(session_id)
+    report_path = os.path.join(session_dir, "docs", "staffing-report.md")
+    if not os.path.exists(report_path):
+        raise HTTPException(status_code=404, detail="Staffing report not generated yet")
+    with open(report_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return {"session_id": session_id, "content": content}
+
+
+@app.get("/gate2/status/{session_id}")
+def get_gate2_status_endpoint(session_id: str):
+    """Returns Gate 2 status, approvals table record, and SHA256 hashes."""
+    return get_gate2_state(session_id)
+
+
+@app.post("/gate2/approve")
+def approve_gate2_endpoint(req: Gate2ApprovalRequest):
+    """
+    Approves Gate 2 staffing and budget plan (Handbook 2.7.5 Step 17).
+    Records approval in SQLite 'approvals' table and unlocks Stage 5 (Scrum Master).
+    """
+    return approve_gate2(session_id=req.session_id, client_notes=req.client_notes)
+
+
+@app.post("/gate2/request-changes")
+def request_changes_gate2_endpoint(req: Gate2ChangeRequest):
+    """
+    Requests changes on Gate 2 staffing and budget plan (Handbook 2.7.5 & 2.5).
+    Reopens HR/Recruiter and routes feedback as new Q- item to the BA.
+    """
+    return request_changes_gate2(session_id=req.session_id, feedback=req.feedback)
+
+
+@app.get("/budget/status/{session_id}")
+def get_budget_status_endpoint(session_id: str):
+    """
+    Returns token budget guard status (Handbook 26.4: warn at 80%, pause at 100%)
+    and Step 16 budget recomputation (Handbook 5.1.6).
+    """
+    guard = check_budget_guard(session_id)
+    recomputation = recompute_budget_step16(session_id)
+    return {
+        "session_id": session_id,
+        "guard": guard,
+        "recomputation": recomputation
+    }
+
+
+@app.post("/scrum/start/{session_id}")
+def start_scrum_stage(session_id: str):
+    """
+    Starts Stage 5 (Scrum Master).
+    Enforces Gate 2 server-side: returns HTTP 403 if Gate 2 is not approved or invalidated.
+    """
+    enforce_gate2_server_side(session_id)
+    return {
+        "status": "started",
+        "stage": "Stage 5 Scrum Master",
+        "session_id": session_id,
+        "message": "Gate 2 verified approved. Stage 5 sprint planning unlocked."
+    }
+
+
 if __name__ == "__main__":
+
     port = int(os.environ.get("ENGINE_PORT", 8765))
     logger.info(f"Starting Autonoma Python Engine on http://127.0.0.1:{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

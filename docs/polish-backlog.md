@@ -79,10 +79,12 @@ This backlog tracks observations, edge cases, and quality improvements identifie
 ### Item 8: Pluggable Specialist Skill Pack Architecture & Verification
 - **Requirement**: Pluggable layer of specialist skill packs per Handbook Chapters 3, 6, 12, 19, 23, and 24.
   - Manifest-based auto-discovery scanning `skills/` and `skills/specialists/` without code changes.
-  - Recruiter tool allowance enforcement per Table 6.1.3; returns `"blocked"` when no pack matches (never invents one).
-  - Deterministic 0-token signal detection matching requirements codes (`F-###`, `FR-###`, `API-###`) with evidence citations.
+  - Recruiter tool allowance enforcement per Handbook Section 6.1.3 (Least privilege); returns `"blocked"` when no pack matches (never invents one).
+  - Model tier routing per Handbook Section 6.1.2 (Staffing by model tier): High (Architect, devs, Tech Lead, Judge), Medium (PM, Designer, QA, Perf, DevOps), Low (BA relay, HR, Recruiter, Scrum).
+  - Handbook Chapter 12 discipline & Section 12.2 / 12.4 for Full-stack vertical slices.
+  - Deterministic 0-token signal detection matching requirements codes (`F-###`, `FR-###`, `API-###`) with evidence citations, negation context, and peripheral keyword suppression.
   - Stable cacheable prompt assembly prefix order (`operating-rules.md` + `role.md` + specialist `instructions.md` + task context) with token cap.
-  - Composite Judge evaluation enforcing role criteria + specialist must-pass criteria (idempotency keys, zero raw card data, webhook HMAC signatures).
+  - Composite Judge evaluation enforcing role criteria + specialist must-pass criteria (idempotency keys, zero raw card data, webhook HMAC signatures with constant-time compare & replay window).
   - Virtual Office UI integration: Skill badges in Agent Roster & Command Center, and dedicated Skill Library modal.
 - **Status**: **CLEARED & VERIFIED**
 - **Resolution**:
@@ -90,8 +92,9 @@ This backlog tracks observations, edge cases, and quality improvements identifie
   - Built 4 grounded specialist packs: `payments`, `auth`, `notifications`, `file-storage`.
   - Extended `engine/judge.py` with `audit_backend_code_for_specialists` and `evaluate_backend_deliverable_with_judge`.
   - Upgraded Virtual Office UI (`SkillLibraryModal.tsx`, `AgentRoster.tsx`, `CommandCenter.tsx`, `VirtualOffice.tsx`, `Header.tsx`).
-  - Added comprehensive test suite `tests/test_skill_registry.py` (6 tests passing 100% green).
+  - Added comprehensive test suite `tests/test_skill_registry.py` (11 tests passing 100% green).
   - Verified TypeScript compilation with `npx tsc --noEmit` (0 errors).
+  - **Runtime Clarification**: As of the current virtual office phase, **no Backend agent runtime exists yet** (Backend, Frontend, Fullstack, DevOps, QA, and Perf roles are currently specification-only per Handbook 6.3.4 Step 1). All backend capabilities and specialist packs are evaluated through unit tests and Judge audits against the composite specifications.
 
 ## Stage 3 Designer Round 3: Provenance Audit & Real LLM Generation (Resolved 2026-10-23)
 
@@ -111,6 +114,28 @@ This backlog tracks observations, edge cases, and quality improvements identifie
   - Verified `scripts/test_judge_on_broken_design.py` asserting FAIL on Case 1 (14 defects) and Case 2 (17 defects).
   - BioVault Lab, AeroFleet Hangar, and SiteAudit Pro all achieved Validators PASS (0 errors) and Judge PASS (24/24).
   - TypeScript build clean (`npx tsc --noEmit` = 0 errors).
+
+## Stage 3 Designer Round 4: Fallback Elimination, Dual-Surface Contrast, Navigation Generation & Definition of Done (Resolved 2026-10-23)
+
+### Item 10: Complete Fallback Removal, Dual-Surface Contrast Validation, Dynamic Navigation & Judge Pre-Gates
+- **Requirement**: Designer Round 4 + Definition of Done per Handbook Chapters 8, 14, Appendices A.4 & A.5:
+  1. Complete elimination of silent template fallbacks in `engine/designer.py` (retry with feedback up to 3 attempts, then fail loudly with `DESIGNER FAILED`).
+  2. Identify and eliminate origin of SiteAudit J-2 residue (`submits required parameters for`, `writes telemetry`, `out-of-spec measurements`, `technician`, `disk I/O latency`).
+  3. Ledger reconciliation: explain why IDs 247, 248, 267, 268 appeared missing (truncated by `LIMIT 6` in terminal query); ensure every LLM section has an `llm_calls` row (`generate_screens`, `generate_journeys`, `generate_screen_states`, `generate_navigation_and_keyboard`, `generate_palette`); stamp code-assembled sections with `> *Section assembled by code from Screen specifications*`; fix latency `Total` to integer ms.
+  4. Dual-surface WCAG 2.2 AA contrast: check all text and interactive tokens against BOTH `--color-background` AND `--color-surface` in light and dark themes ($\ge 4.5:1$ text/status, $\ge 3.0:1$ components); flag any token adjusted by code in the brief's provenance line.
+  5. Cross-section consistency: same NFR-01 metric everywhere; no offline vs real-time cloud sync contradictions; single control type per field across journeys and states.
+  6. Grounding: reject ungrounded UI elements (`PDF Summary`, `Assigned Contractor`, `ISO-standard deficiency codes`, `bounding boxes`); generate Navigation, Keyboard, and Footer dynamically with LLM from `architecture.md` / `prd.md` (WAL only if architecture specifies WAL, global search only if features require it).
+  7. Judge calibration: run all checks as deterministic gates before LLM Judge; Judge quotes text behind each score; Judge model (`openai/gpt-oss-120b`, 120B) is distinct and larger than generator for every agent role; verify Judge fails deliberately broken copies across 3 cases including previous SiteAudit deliverable.
+  8. Definition of Done: clean TypeScript build (`npx tsc --noEmit` = 0) and zero errors across 3 unrelated project domains (BioVault Lab, AeroFleet Hangar, and SiteAudit Pro built from scratch).
+- **Status**: **CLEARED & VERIFIED**
+- **Resolution**:
+  - Identified origin of SiteAudit J-2 residue in `engine/designer.py` lines 467–514 (`success_phrases`, `input_err_phrases`, `sys_err_phrases` template fallback when LLM output was truncated). Removed all template fallbacks and replaced with strict 3-attempt retry loops that feed back errors and fail loudly.
+  - Implemented `generate_navigation_and_keyboard_with_llm` in `engine/designer.py` producing dynamic Navigation, Footer, and Keyboard rules derived from `architecture.md` and `prd.md`.
+  - Added dual-surface mathematical contrast validation (`adjust_contrast_for_both_surfaces`, `calculate_contrast`) against BOTH background and surface across light and dark modes in `engine/designer.py` and `engine/judge.py`. Tracked code adjustments in `tokens_adjusted_by_code` and stamped in provenance lines.
+  - Implemented deterministic pre-gates in `engine/judge.py` rejecting template residue, ungrounded UI elements, NFR metric conflicts, and cloud sync contradictions with exact text quotes.
+  - Verified `scripts/test_judge_on_broken_design.py` catching 14 flaws on Case 1, 29 flaws on Case 2, and 16 flaws on Case 3 (old SiteAudit deliverable).
+  - Executed end-to-end across BioVault Lab, AeroFleet Hangar, and SiteAudit Pro.
+  - Verified `npx tsc --noEmit` exits with 0 errors.
 
 
 

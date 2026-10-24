@@ -87,13 +87,13 @@ class LLMClient:
             },
             "pm": {
                 "provider": "groq",
-                "model": "openai/gpt-oss-120b",
+                "model": "qwen/qwen3.8-27b",
                 "temperature": 0.3,
                 "max_tokens": 8192
             },
             "architect": {
                 "provider": "groq",
-                "model": "openai/gpt-oss-120b",
+                "model": "qwen/qwen3.8-27b",
                 "temperature": 0.2,
                 "max_tokens": 8192
             },
@@ -101,7 +101,7 @@ class LLMClient:
                 "provider": "groq",
                 "model": "qwen/qwen3.8-27b",  # Distinct generator family (Alibaba Cloud 27B)
                 "temperature": 0.2,
-                "max_tokens": 800
+                "max_tokens": 4096
             },
             "judge": {
                 "provider": "groq",
@@ -155,11 +155,40 @@ class LLMClient:
     def set_project_local_only(self, session_id: str, local_only: bool) -> None:
         self._project_local_only[session_id] = local_only
         logger.info(f"Project '{session_id}' local-only override set to: {local_only}")
+        project_dir = os.path.join(PROJECT_ROOT, "data", "projects", session_id)
+        if os.path.exists(project_dir):
+            state_file = os.path.join(project_dir, "session_state.json")
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    data["local_only"] = local_only
+                    with open(state_file, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+                except Exception as e:
+                    logger.warning(f"Could not persist local_only to {state_file}: {e}")
 
     def is_project_local_only(self, session_id: Optional[str]) -> bool:
         if not session_id:
             return False
-        return self._project_local_only.get(session_id, False)
+        if session_id in self._project_local_only:
+            return self._project_local_only[session_id]
+
+        project_dir = os.path.join(PROJECT_ROOT, "data", "projects", session_id)
+        if os.path.exists(project_dir):
+            state_file = os.path.join(project_dir, "session_state.json")
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if "local_only" in data:
+                            val = bool(data["local_only"])
+                            self._project_local_only[session_id] = val
+                            return val
+                except Exception:
+                    pass
+        # Projects default to cloud (Groq) unless local_only is explicitly set to True
+        return False
 
     def fetch_groq_models(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
@@ -235,27 +264,25 @@ class LLMClient:
             return
 
         largest_model = groq_models[0]["id"]
-        # Judge is assigned the most capable model
+        # Judge is assigned the most capable model (e.g. openai/gpt-oss-120b)
         judge_model = largest_model
 
-        # Generator candidates from distinct family or smaller model
+        # Generator candidates from distinct family (e.g. qwen/qwen3.8-27b)
         gen_candidates = [
             m["id"] for m in groq_models
             if "qwen" in m["id"].lower()
         ]
-        designer_model = gen_candidates[0] if gen_candidates else (groq_models[1]["id"] if len(groq_models) > 1 else largest_model)
+        generator_model = gen_candidates[0] if gen_candidates else (groq_models[1]["id"] if len(groq_models) > 1 else largest_model)
 
-        for role in ["ba", "pm", "architect", "engineer", "qa", "general"]:
+        # Per Handbook Chapter 14: Judge model must be different from and >= generator for EVERY agent
+        for role in ["ba", "pm", "architect", "designer", "engineer", "qa", "general"]:
             if self.role_configs.get(role, {}).get("provider") == "groq":
-                self.role_configs[role]["model"] = largest_model
-
-        if self.role_configs.get("designer", {}).get("provider") == "groq":
-            self.role_configs["designer"]["model"] = designer_model
+                self.role_configs[role]["model"] = generator_model
 
         if self.role_configs.get("judge", {}).get("provider") == "groq":
             self.role_configs["judge"]["model"] = judge_model
 
-        logger.info(f"LLM Client refreshed models -> Generator (Designer): '{designer_model}', Judge: '{judge_model}'")
+        logger.info(f"LLM Client refreshed models -> Generator (All Agents): '{generator_model}', Judge: '{judge_model}'")
 
     def log_fallback(self, session_id: Optional[str], role: str, original_model: str, error: str, duration_ms: int) -> None:
         fallback_record = {
@@ -356,6 +383,7 @@ class LLMClient:
         task_id: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        target_role: Optional[str] = None,
         force_provider: Optional[str] = None,
         force_model: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -367,6 +395,7 @@ class LLMClient:
         4. Handles 429 and timeouts with exponential backoff and retry-after headers.
         5. Falls back to Ollama ONLY after retries are exhausted.
         6. Logs token usage and real cost to the Token Ledger.
+        7. Enforces Judge model differs from generator for every agent (Handbook 14.1).
         """
         start_time = time.time()
         role_key = role.lower()
@@ -378,6 +407,23 @@ class LLMClient:
         model = force_model or (OLLAMA_DEFAULT_MODEL if provider == "ollama" else config.get("model"))
         temp = temperature if temperature is not None else config.get("temperature", 0.3)
         max_tok = max_tokens if max_tokens is not None else config.get("max_tokens", 4096)
+
+        # Enforce distinct Judge model per Handbook 14.1 & DOD Part 1.4:
+        # Judge model MUST differ from the generator model for every agent.
+        if role_key == "judge" and provider == "groq" and not force_model:
+            tgt = (target_role or ("pm" if "prd" in (task_id or "") else "architect" if "arch" in (task_id or "") else "designer" if "design" in (task_id or "") else "ba")).lower()
+            target_cfg = self.role_configs.get(tgt, {})
+            target_model = target_cfg.get("model", "")
+            if model == target_model:
+                if target_model == "openai/gpt-oss-120b":
+                    model = "llama-3.3-70b-versatile"
+                elif target_model == "qwen/qwen3.8-27b":
+                    model = "openai/gpt-oss-120b"
+                else:
+                    model = "openai/gpt-oss-120b" if target_model != "openai/gpt-oss-120b" else "llama-3.3-70b-versatile"
+                logger.info(f"Enforced distinct Judge model: '{model}' (generator '{tgt}' uses '{target_model}')")
+
+        fallback_triggered = False
 
         # 1. Enforce GROQ_API_KEY if Groq is target provider
         if provider == "groq":
@@ -399,6 +445,8 @@ class LLMClient:
                 )
                 latency_ms = int((time.time() - start_time) * 1000)
                 result["latency_ms"] = latency_ms
+                result["is_fallback"] = False
+                result["is_degraded"] = False
 
                 # Record to Token Ledger
                 self._record_to_ledger(
@@ -420,6 +468,7 @@ class LLMClient:
                 logger.warning(f"Groq call failed after retries for role '{role}': {e}. Falling back to Ollama.")
                 latency_ms = int((time.time() - start_time) * 1000)
                 self.log_fallback(session_id, role_key, model, str(e), latency_ms)
+                fallback_triggered = True
 
                 # Fallback execution on Ollama
                 provider = "ollama"
@@ -434,6 +483,8 @@ class LLMClient:
         )
         latency_ms = int((time.time() - start_time) * 1000)
         result["latency_ms"] = latency_ms
+        result["is_fallback"] = fallback_triggered
+        result["is_degraded"] = fallback_triggered or (not is_local_only and provider == "ollama")
 
         self._record_to_ledger(
             session_id=session_id,
@@ -523,9 +574,14 @@ class LLMClient:
                                 pass
 
                     if "reduce max_tokens" in res.text:
-                        old_tok = payload.get("max_tokens", 800)
-                        payload["max_tokens"] = max(400, int(old_tok * 0.7))
-                        logger.info(f"Groq OTPM limit signaled. Dynamically reduced max_tokens from {old_tok} to {payload['max_tokens']}.")
+                        old_tok = payload.get("max_tokens", 4096)
+                        m_lim = re.search(r"Limit\s+(\d+)", res.text)
+                        if m_lim:
+                            limit_val = int(m_lim.group(1))
+                            payload["max_tokens"] = max(500, min(old_tok, limit_val - 50))
+                        else:
+                            payload["max_tokens"] = max(800, int(old_tok * 0.7))
+                        logger.info(f"Groq OTPM limit signaled. Dynamically adjusted max_tokens from {old_tok} to {payload['max_tokens']}.")
 
                     logger.warning(
                         f"Groq HTTP 429 Rate Limit encountered on attempt {attempt+1}/{max_retries+1} for model '{model}'. "
@@ -690,6 +746,7 @@ def query_llm(
     task_id: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    target_role: Optional[str] = None,
     force_provider: Optional[str] = None,
     force_model: Optional[str] = None
 ) -> str:
@@ -702,7 +759,36 @@ def query_llm(
         task_id=task_id,
         temperature=temperature,
         max_tokens=max_tokens,
+        target_role=target_role,
         force_provider=force_provider,
         force_model=force_model
     )
     return res.get("text", "")
+
+
+def query_llm_with_meta(
+    prompt: str,
+    system: Optional[str] = None,
+    role: str = "general",
+    session_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    target_role: Optional[str] = None,
+    force_provider: Optional[str] = None,
+    force_model: Optional[str] = None
+) -> Tuple[str, Dict[str, Any]]:
+    """Returns (text, metadata_dict) where metadata_dict contains is_fallback, is_degraded, model, provider, etc."""
+    res = default_llm_client.query(
+        prompt=prompt,
+        system=system,
+        role=role,
+        session_id=session_id,
+        task_id=task_id,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        target_role=target_role,
+        force_provider=force_provider,
+        force_model=force_model
+    )
+    return res.get("text", ""), res

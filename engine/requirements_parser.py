@@ -1,26 +1,58 @@
+"""
+Requirements Parser and LLM Extractor
+Per Virtual Office Handbook Section 2.7.3 (Step 6), Chapter 3 (Grounding),
+Chapter 4 (Business Analyst), Chapter 5 (PM), and Appendix A.1.
+
+Rule: LLM writes, code validates.
+- LLM extracts structured requirements JSON from intake.json and qa_log.json.
+- Every extracted item must cite its supporting Q-### ID.
+- Code strictly validates: schema, Q- existence, substantive answers (no non-answers),
+  uniqueness, no chat filler, sentence quality.
+- Retry loop (max 3) with fed-back errors; fail loudly if validation cannot pass.
+- Code handles ID numbering (P-01, FR-001, NFR-001) and Markdown layout only.
+"""
+
+import os
 import re
 import json
-from typing import Dict, Any, List, Optional, Tuple
+import logging
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional, Tuple, Set
+
+try:
+    from llm_client import query_llm_with_meta, default_llm_client
+except ImportError:
+    try:
+        from engine.llm_client import query_llm_with_meta, default_llm_client
+    except ImportError:
+        query_llm_with_meta = None
+        default_llm_client = None
+
+logger = logging.getLogger("autonoma-engine.requirements_parser")
 
 
-def is_deferred_text(text: str) -> bool:
-    """Detects if requirement text is deferred to v2 / out of scope / won't have."""
-    t = text.lower()
-    return any(w in t for w in ["deferred", "won't have", "wont have", "v2", "out of scope", "post-v1", "later"])
+NON_ANSWER_PHRASES = {
+    "yes", "no", "sure", "ok", "okay", "proceed",
+    "yes please proceed", "please proceed", "go ahead",
+    "yes lets begin", "lets begin", "sounds good",
+    "continue", "looks good", "start", "yes go ahead",
+    "yes proceed", "yes start", "yep", "yeah", "agree",
+    "ready", "im ready", "i am ready", "let us begin",
+    "sounds good please proceed", "yes please", "sure thing",
+    "yes please proceed with the prd", "proceed with prd",
+    "yes please proceed to the next step"
+}
 
 
-def is_nfr_text(text: str) -> bool:
-    """Detects if requirement text belongs to Non-Functional Requirements rather than Functional Features."""
-    t = text.lower()
-    nfr_indicators = [
-        "latency", "response time", "load time", "sub-", "under 1 second", "under 2s",
-        "stored locally", "sqlite", "local storage", "zero cloud", "offline", "data privacy",
-        "data stored", "encryption", "wcag", "accessibility", "throughput", "capacity",
-        "concurrent", "uptime", "availability", "records", "volume",
-        "operating system", "windows", "macos", "linux", "desktop os", "contrast",
-        "keyboard navigation", "hipaa", "clia", "gdpr"
-    ]
-    return any(ind in t for ind in nfr_indicators)
+def is_non_answer(text: str) -> bool:
+    """Detects conversational non-answers, chat filler, or affirmations without substantive content."""
+    clean = re.sub(r"[^\w\s]", "", text.strip()).lower()
+    if clean in NON_ANSWER_PHRASES:
+        return True
+    words = clean.split()
+    if len(words) <= 5 and any(w in words for w in ["proceed", "begin", "start", "continue", "ahead", "agree"]):
+        return True
+    return False
 
 
 def validate_asm_oq_text(text: str) -> Tuple[bool, str]:
@@ -32,7 +64,6 @@ def validate_asm_oq_text(text: str) -> Tuple[bool, str]:
     if len(t) < 30:
         return False, f"Too short ({len(t)} characters, minimum 30 required)"
 
-    # Check for placeholder variables or tokens
     placeholder_patterns = [
         r"\bis\s+[xyz]\b",
         r"\b[xyz]\s*$",
@@ -45,36 +76,232 @@ def validate_asm_oq_text(text: str) -> Tuple[bool, str]:
         if re.search(p, t, re.IGNORECASE):
             return False, f"Contains placeholder matching pattern '{p}'"
 
-    # Check for fragment prefixes
     fragment_prefixes = ["reason:", "risk:", "source:", "status:", "note:", "because:", "mitigation:"]
     for fp in fragment_prefixes:
         if t.lower().startswith(fp):
             return False, f"Fragment starting with '{fp}'"
 
-    # Check for complete sentence punctuation
     if not (t.endswith(".") or t.endswith("?") or t.endswith("]")):
         return False, "Not a complete sentence (must end with punctuation)"
 
     return True, ""
 
 
-def parse_ba_data(
+def validate_extracted_requirements_json(
+    data: Dict[str, Any],
+    qa_map: Dict[str, Dict[str, Any]]
+) -> Tuple[bool, List[str]]:
+    """
+    Strict deterministic code validator for extracted requirements JSON.
+    Errors are fed back to the LLM for retry (max 3).
+    """
+    errors: List[str] = []
+
+    if not isinstance(data, dict):
+        return False, ["Root output must be a JSON object"]
+
+    # 1. Required top-level keys
+    req_keys = [
+        "app_overview", "problem", "personas", "functional_requirements",
+        "non_functional_requirements", "goals", "non_goals", "success_metrics"
+    ]
+    for rk in req_keys:
+        if rk not in data:
+            errors.append(f"Missing required top-level key: '{rk}'")
+
+    if errors:
+        return False, errors
+
+    # Helper for Q- validation
+    def _check_qid(qid: str, field_desc: str):
+        if not qid:
+            errors.append(f"{field_desc} is missing supporting source Q-### citation")
+            return
+        clean_qid = qid.strip("[] ")
+        if clean_qid not in qa_map:
+            errors.append(f"{field_desc} cites non-existent discovery turn '{clean_qid}'")
+        else:
+            ans = qa_map[clean_qid].get("answer", "")
+            if is_non_answer(ans):
+                errors.append(f"{field_desc} cites discovery turn '{clean_qid}' which contains a non-answer ('{ans}')")
+
+    # 2. App overview
+    overview = data.get("app_overview", {})
+    if not isinstance(overview, dict):
+        errors.append("app_overview must be a JSON object")
+    else:
+        for field in ["app_name", "description", "category", "platforms"]:
+            val = str(overview.get(field, "")).strip()
+            if not val or len(val) < 3:
+                errors.append(f"app_overview.{field} must be a non-empty descriptive string")
+        _check_qid(overview.get("source_qid", ""), "app_overview")
+
+    # 3. Problem statement
+    prob = data.get("problem", {})
+    if not isinstance(prob, dict):
+        errors.append("problem must be a JSON object")
+    else:
+        for field in ["today", "core_problem", "shortcomings"]:
+            val = str(prob.get(field, "")).strip()
+            if not val or len(val) < 25:
+                errors.append(f"problem.{field} must be a substantive statement (at least 25 characters)")
+            if is_non_answer(val):
+                errors.append(f"problem.{field} contains chat filler or a non-answer: '{val}'")
+            _check_qid(prob.get(f"{field}_source_qid", "") or prob.get("source_qid", ""), f"problem.{field}")
+
+    # 4. Personas (unique names, valid Q- citations, distinct contexts)
+    personas = data.get("personas", [])
+    if not isinstance(personas, list) or len(personas) < 1:
+        errors.append("personas must be a non-empty array with at least 1 persona")
+    else:
+        seen_persona_names: Set[str] = set()
+        for idx, p in enumerate(personas):
+            prefix = f"personas[{idx}]"
+            name = str(p.get("name", "")).strip()
+            if not name:
+                errors.append(f"{prefix}.name is required")
+            elif name.lower() in seen_persona_names:
+                errors.append(f"Duplicate persona name: '{name}'")
+            else:
+                seen_persona_names.add(name.lower())
+
+            goal = str(p.get("goal", "")).strip()
+            if not goal or len(goal) < 15:
+                errors.append(f"{prefix}.goal must be a descriptive sentence")
+
+            pain = str(p.get("pain_point", "")).strip()
+            if not pain or len(pain) < 15:
+                errors.append(f"{prefix}.pain_point must be a descriptive sentence")
+
+            _check_qid(p.get("source_qid", ""), f"{prefix} ('{name}')")
+
+    # 5. Functional requirements (unique titles, valid priorities, substantive descriptions)
+    frs = data.get("functional_requirements", [])
+    if not isinstance(frs, list) or len(frs) < 1:
+        errors.append("functional_requirements must be a non-empty array")
+    else:
+        seen_titles: Set[str] = set()
+        seen_descs: Set[str] = set()
+        for idx, fr in enumerate(frs):
+            prefix = f"functional_requirements[{idx}]"
+            title = str(fr.get("title", "")).strip()
+            if not title:
+                errors.append(f"{prefix}.title is required")
+            elif title.lower() in seen_titles:
+                errors.append(f"Duplicate feature title in FR: '{title}'")
+            else:
+                seen_titles.add(title.lower())
+
+            desc = str(fr.get("description", "")).strip()
+            if not desc or len(desc) < 20:
+                errors.append(f"{prefix}.description must be at least 20 characters")
+            elif desc.lower() in seen_descs:
+                errors.append(f"Duplicate feature description in FR: '{desc[:40]}...'")
+            else:
+                seen_descs.add(desc.lower())
+
+            priority = str(fr.get("priority", "Must")).strip().capitalize()
+            if priority not in {"Must", "Should", "Could", "Wont", "Won't"}:
+                errors.append(f"{prefix}.priority must be MoSCoW (Must, Should, Could, or Won't)")
+
+            _check_qid(fr.get("source_qid", ""), f"{prefix} ('{title}')")
+
+    # 6. Non-functional requirements (valid categories, concrete targets)
+    nfrs = data.get("non_functional_requirements", [])
+    if not isinstance(nfrs, list) or len(nfrs) < 2:
+        errors.append("non_functional_requirements must contain at least 2 constraints")
+    else:
+        for idx, nfr in enumerate(nfrs):
+            prefix = f"non_functional_requirements[{idx}]"
+            cat = str(nfr.get("category", "")).strip()
+            target = str(nfr.get("target", "")).strip()
+            if not cat or not target:
+                errors.append(f"{prefix} must include both 'category' and 'target'")
+            _check_qid(nfr.get("source_qid", ""), f"{prefix} ('{cat}')")
+
+    # 7. Goals and Non-Goals
+    goals = data.get("goals", [])
+    if not isinstance(goals, list) or len(goals) < 1:
+        errors.append("goals must be an array with at least 1 goal")
+    else:
+        for idx, g in enumerate(goals):
+            prefix = f"goals[{idx}]"
+            if not str(g.get("goal", "")).strip():
+                errors.append(f"{prefix}.goal is required")
+            _check_qid(g.get("source_qid", ""), prefix)
+
+    non_goals = data.get("non_goals", [])
+    if not isinstance(non_goals, list) or len(non_goals) < 1:
+        errors.append("non_goals must be an array with at least 1 non-goal (required to prevent scope creep per Handbook 5.2.4)")
+    else:
+        seen_ng: Set[str] = set()
+        for idx, ng in enumerate(non_goals):
+            prefix = f"non_goals[{idx}]"
+            ng_text = str(ng.get("non_goal", "")).strip()
+            if not ng_text:
+                errors.append(f"{prefix}.non_goal is required")
+            elif ng_text.lower() in seen_ng:
+                errors.append(f"Duplicate non-goal: '{ng_text}'")
+            else:
+                seen_ng.add(ng_text.lower())
+
+            if not str(ng.get("why", "")).strip():
+                errors.append(f"{prefix}.why is required (reason why deferred)")
+            _check_qid(ng.get("source_qid", ""), prefix)
+
+    # 8. Success metrics
+    metrics = data.get("success_metrics", [])
+    if not isinstance(metrics, list) or len(metrics) < 1:
+        errors.append("success_metrics must be an array with at least 1 metric")
+    else:
+        seen_metrics: Set[str] = set()
+        for idx, m in enumerate(metrics):
+            prefix = f"success_metrics[{idx}]"
+            m_name = str(m.get("metric", "")).strip()
+            if not m_name:
+                errors.append(f"{prefix}.metric is required")
+            elif m_name.lower() in seen_metrics:
+                errors.append(f"Duplicate metric name: '{m_name}'")
+            else:
+                seen_metrics.add(m_name.lower())
+
+            if not str(m.get("target", "")).strip():
+                errors.append(f"{prefix}.target is required")
+            if not str(m.get("how_measured", "")).strip():
+                errors.append(f"{prefix}.how_measured is required")
+            _check_qid(m.get("source_qid", ""), prefix)
+
+    # 9. Assumptions and Open Questions sentence checks
+    for idx, asm in enumerate(data.get("assumptions", [])):
+        txt = str(asm.get("text", "")).strip()
+        is_val, err_msg = validate_asm_oq_text(txt)
+        if not is_val:
+            errors.append(f"assumptions[{idx}] text invalid: {err_msg}")
+
+    for idx, oq in enumerate(data.get("open_questions", [])):
+        txt = str(oq.get("text", "")).strip()
+        is_val, err_msg = validate_asm_oq_text(txt)
+        if not is_val:
+            errors.append(f"open_questions[{idx}] text invalid: {err_msg}")
+
+    return len(errors) == 0, errors
+
+
+def extract_requirements_with_llm(
     intake_data: Dict[str, Any],
     qa_log: List[Dict[str, Any]],
-    requirements_text: str = ""
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Parses real BA discovery outputs (intake.json, qa_log.json, docs/requirements.md)
-    into structured entities strictly grounded in cited IDs (Q-###, P-##, FR-##, NFR-##, ASM-##, OQ-##).
-    Enforces strict FR vs NFR vs Non-Goal classification per Handbook Section 4.1.2 & Appendix A.1.
+    LLM extraction step:
+    Extracts structured requirements JSON from intake.json and qa_log.json.
+    Validates strictly with code validator.
+    Retries up to 3 times feeding back errors.
+    Fails loudly if invalid (NO CANNED FALLBACK).
     """
-    app_name = intake_data.get("project_name", "Untitled Project").strip()
-    description = intake_data.get("description", "").strip()
-    target_users = intake_data.get("target_users", "").strip()
-    timeline = intake_data.get("timeline", "8 weeks").strip()
-    budget = intake_data.get("budget", "$5,000 MVP budget").strip()
+    if not query_llm_with_meta:
+        raise RuntimeError("LLM client query_llm_with_meta is unavailable")
 
-    # Build QA map with exact IDs
     qa_map: Dict[str, Dict[str, Any]] = {}
     for idx, item in enumerate(qa_log):
         qid = item.get("id") or f"Q-{idx+1:03d}"
@@ -82,457 +309,442 @@ def parse_ba_data(
             "id": qid,
             "question": item.get("question", "").strip(),
             "answer": item.get("answer", "").strip(),
-            "round": item.get("round", idx + 1),
+        }
+
+    system_prompt = (
+        "You are the Virtual Office Lead Business Analyst. "
+        "Your task is to analyze the client intake and full interview Q&A log, "
+        "and extract a complete, grounded, structured requirements JSON document. "
+        "CRITICAL RULES (Handbook Chapter 3 & 4):\n"
+        "1. Every extracted item MUST cite its exact supporting source Q-### ID.\n"
+        "2. NEVER cite a turn where the client gave a non-answer (e.g. 'Yes, please proceed').\n"
+        "3. Problem fields ('today', 'core_problem', 'shortcomings') must be substantive sentences describing the real domain workflow.\n"
+        "4. Feature titles and descriptions must be unique and specific to this project.\n"
+        "5. Separate FRs (user actions and workflows) from NFRs (latency, offline, platform, privacy, accessibility).\n"
+        "6. Return ONLY valid JSON with no markdown wrapping or preamble."
+    )
+
+    base_prompt = f"""CLIENT INTAKE:
+{json.dumps(intake_data, indent=2)}
+
+DISCOVERY Q&A LOG:
+{json.dumps(qa_log, indent=2)}
+
+Output a valid JSON object matching this exact structure:
+{{
+  "app_overview": {{
+    "app_name": "Project Name",
+    "description": "One-line description",
+    "category": "Domain Category",
+    "platforms": "Target Platforms / Offline Desktop",
+    "source_qid": "Q-001"
+  }},
+  "problem": {{
+    "today": "What users do today and their workarounds",
+    "today_source_qid": "Q-001",
+    "core_problem": "The single biggest pain and consequence",
+    "core_problem_source_qid": "Q-002",
+    "shortcomings": "Why existing tools fall short",
+    "shortcomings_source_qid": "Q-002"
+  }},
+  "personas": [
+    {{
+      "name": "Persona Role Title",
+      "context": "Context of operations",
+      "goal": "Primary operational goal",
+      "pain_point": "Biggest pain point",
+      "source_qid": "Q-001"
+    }}
+  ],
+  "functional_requirements": [
+    {{
+      "title": "Clear Feature Title",
+      "description": "Substantive feature description",
+      "priority": "Must",
+      "source_qid": "Q-003"
+    }}
+  ],
+  "non_functional_requirements": [
+    {{
+      "category": "Latency / Storage / Platform / Accessibility",
+      "target": "Verifiable target metric",
+      "source_qid": "Q-004"
+    }}
+  ],
+  "entities": [
+    {{
+      "name": "Entity Name",
+      "description": "What it represents",
+      "source_qid": "Q-003"
+    }}
+  ],
+  "goals": [
+    {{
+      "goal": "Verifiable MVP Goal",
+      "source_qid": "Q-001"
+    }}
+  ],
+  "non_goals": [
+    {{
+      "non_goal": "Explicitly deferred capability",
+      "why": "Reason why deferred to v2",
+      "source_qid": "Q-002"
+    }}
+  ],
+  "success_metrics": [
+    {{
+      "metric": "Metric Name",
+      "target": "Measurable threshold",
+      "how_measured": "Query or audit check",
+      "source_qid": "Q-001"
+    }}
+  ],
+  "assumptions": [
+    {{
+      "text": "Specific assumption sentence pending client confirmation at Gate 1.",
+      "status": "awaiting client at Gate 1"
+    }}
+  ],
+  "open_questions": [
+    {{
+      "text": "Specific open question sent to client via BA.",
+      "to": "client"
+    }}
+  ]
+}}"""
+
+    current_prompt = base_prompt
+    max_attempts = 3
+    last_errors = []
+
+    for attempt in range(1, max_attempts + 1):
+        logger.info(f"Extracting requirements with LLM (attempt {attempt}/{max_attempts})...")
+        raw_text, meta = query_llm_with_meta(
+            prompt=current_prompt,
+            system=system_prompt,
+            role="ba",
+            session_id=session_id,
+            task_id="extract_requirements_json"
+        )
+
+        clean_text = raw_text.strip()
+        if clean_text.startswith("```"):
+            clean_text = re.sub(r"^```[a-zA-Z]*\n", "", clean_text)
+            clean_text = re.sub(r"\n```$", "", clean_text).strip()
+
+        try:
+            extracted_json = json.loads(clean_text)
+        except Exception as e:
+            last_errors = [f"JSON parse error: {e}"]
+            current_prompt = (
+                f"{base_prompt}\n\n"
+                f"ERROR ON ATTEMPT {attempt}: The output was not valid JSON ({e}). "
+                f"You MUST return ONLY a strictly valid JSON object."
+            )
+            continue
+
+        is_valid, errors = validate_extracted_requirements_json(extracted_json, qa_map)
+        if is_valid:
+            logger.info(f"Requirements LLM extraction passed code validation on attempt {attempt}.")
+            return extracted_json
+
+        logger.warning(f"Requirements extraction failed validation on attempt {attempt}: {errors}")
+        last_errors = errors
+        current_prompt = (
+            f"{base_prompt}\n\n"
+            f"ERRORS ON ATTEMPT {attempt}:\n"
+            + "\n".join(f"- {err}" for err in errors)
+            + "\n\nPlease fix every single error listed above and return the corrected complete JSON object."
+        )
+
+    # Fail loudly - NO canned fallback
+    raise ValueError(
+        f"Requirements LLM extraction failed validation after {max_attempts} attempts. "
+        f"Errors: {json.dumps(last_errors, indent=2)}"
+    )
+
+
+def format_requirements_markdown(extracted: Dict[str, Any], qa_map: Dict[str, Any]) -> str:
+    """
+    Renders the verified extracted data into Appendix A.1 Markdown format.
+    Assigns sequential standard IDs (P-01, FR-001, NFR-001, G-01, NG-01, M-01, ASM-01, OQ-01).
+    Code handles formatting and ID numbering only.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    now_human = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    stamp = (
+        f"<!-- ARTIFACT METADATA: Assembled by code at {now_iso} -->\n"
+        f"> **Artifact Provenance**: Assembled by code | "
+        f"Role: **Business Analyst** | Timestamp: `{now_human}`\n\n"
+    )
+
+    overview = extracted.get("app_overview", {})
+    prob = extracted.get("problem", {})
+    app_name = overview.get("app_name", "Untitled Project")
+
+    md = f"{stamp}# Requirements Document: {app_name}\n\n"
+
+    # 1. Problem Statement
+    today_src = prob.get("today_source_qid", overview.get("source_qid", "Q-001"))
+    prob_src = prob.get("core_problem_source_qid", today_src)
+    short_src = prob.get("shortcomings_source_qid", prob_src)
+
+    md += "## 1. Problem Statement\n"
+    md += f"- **Today**: {prob.get('today', '')} [{today_src}]\n"
+    md += f"- **Core Problem**: {prob.get('core_problem', '')} [{prob_src}]\n"
+    md += f"- **Why Existing Tools Fall Short**: {prob.get('shortcomings', '')} [{short_src}]\n\n"
+
+    # 2. Personas
+    md += "## 2. Personas\n"
+    for idx, p in enumerate(extracted.get("personas", []), start=1):
+        pid = f"P-{idx:02d}"
+        md += f"- **{pid}**: {p.get('name', 'Operator')} - Goal: {p.get('goal', '')} | Pain: {p.get('pain_point', '')} [{p.get('source_qid', 'Q-001')}]\n"
+    md += "\n"
+
+    # 3. Functional Requirements
+    md += "## 3. Functional Requirements\n"
+    for idx, fr in enumerate(extracted.get("functional_requirements", []), start=1):
+        fid = f"FR-{idx:03d}"
+        prio = fr.get("priority", "Must").capitalize()
+        md += f"- **{fid}**: {fr.get('title', '')} ({prio}) - {fr.get('description', '')} [{fr.get('source_qid', 'Q-001')}]\n"
+    md += "\n"
+
+    # 4. Non-Functional Requirements
+    md += "## 4. Non-Functional Requirements\n"
+    for idx, nfr in enumerate(extracted.get("non_functional_requirements", []), start=1):
+        nid = f"NFR-{idx:02d}"
+        md += f"- **{nid}**: {nfr.get('category', '')} - Target: {nfr.get('target', '')} [{nfr.get('source_qid', 'Q-001')}]\n"
+    md += "\n"
+
+    # 5. Goals & Non-Goals
+    md += "## 5. Goals & Non-Goals\n"
+    md += "### Goals (v1 MVP)\n"
+    for idx, g in enumerate(extracted.get("goals", []), start=1):
+        gid = f"G-{idx:02d}"
+        md += f"- **{gid}**: {g.get('goal', '')} [{g.get('source_qid', 'Q-001')}]\n"
+    md += "\n### Non-Goals (Out of Scope for v1)\n"
+    for idx, ng in enumerate(extracted.get("non_goals", []), start=1):
+        ngid = f"NG-{idx:02d}"
+        md += f"- **{ngid}**: {ng.get('non_goal', '')} - Why: {ng.get('why', '')} [{ng.get('source_qid', 'Q-001')}]\n"
+    md += "\n"
+
+    # 6. Success Metrics
+    md += "## 6. Success Metrics\n"
+    for idx, m in enumerate(extracted.get("success_metrics", []), start=1):
+        mid = f"M-{idx:02d}"
+        md += f"- **{mid}**: {m.get('metric', '')} - Target: {m.get('target', '')} (Measured by: {m.get('how_measured', '')}) [{m.get('source_qid', 'Q-001')}]\n"
+    md += "\n"
+
+    # 7. Assumptions & Open Questions
+    assumptions = extracted.get("assumptions", [])
+    if assumptions:
+        md += "## 7. Assumptions\n"
+        for idx, asm in enumerate(assumptions, start=1):
+            asmid = f"ASM-{idx:02d}"
+            md += f"- **{asmid}**: {asm.get('text', '')} ({asm.get('status', 'awaiting client at Gate 1')})\n"
+        md += "\n"
+
+    open_questions = extracted.get("open_questions", [])
+    if open_questions:
+        md += "## 8. Open Questions\n"
+        for idx, oq in enumerate(open_questions, start=1):
+            oqid = f"OQ-{idx:02d}"
+            md += f"- **{oqid}**: {oq.get('text', '')} (to: {oq.get('to', 'client')})\n"
+        md += "\n"
+
+    return md
+
+
+def parse_ba_data(
+    intake_data: Dict[str, Any],
+    qa_log: List[Dict[str, Any]],
+    requirements_text: str = "",
+    session_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Entry point for downstream PM, Architect, and Designer agents.
+    Uses LLM extraction validated by code.
+    No regex heuristics, zero canned fallbacks.
+    """
+    extracted = extract_requirements_with_llm(intake_data, qa_log, session_id=session_id)
+
+    qa_map: Dict[str, Dict[str, Any]] = {}
+    for idx, item in enumerate(qa_log):
+        qid = item.get("id") or f"Q-{idx+1:03d}"
+        qa_map[qid] = {
+            "id": qid,
+            "question": item.get("question", "").strip(),
+            "answer": item.get("answer", "").strip(),
         }
 
     first_qid = list(qa_map.keys())[0] if qa_map else "Q-001"
+    overview = extracted.get("app_overview", {})
+    prob = extracted.get("problem", {})
 
-    # Identify specific Q-### sources based on actual conversation turns
-    today_qid = first_qid
-    problem_qid = first_qid
-    shortcomings_qid = first_qid
-    features_qid = first_qid
-    metrics_qid = first_qid
-    timeline_qid = first_qid
+    app_name = overview.get("app_name", intake_data.get("project_name", "Untitled Project"))
+    description = overview.get("description", intake_data.get("description", ""))
+    category = overview.get("category", "")
+    platforms = overview.get("platforms", "")
 
-    today_text = ""
-    problem_text = ""
-    shortcomings_text = ""
+    today_qid = prob.get("today_source_qid", first_qid)
+    problem_qid = prob.get("core_problem_source_qid", first_qid)
+    shortcomings_qid = prob.get("shortcomings_source_qid", first_qid)
 
-    for qid, qdata in qa_map.items():
-        ans = qdata["answer"]
-        ans_lower = ans.lower()
+    today_text = prob.get("today", "")
+    problem_text = prob.get("core_problem", "")
+    shortcomings_text = prob.get("shortcomings", "")
 
-        # Identify 'Today' workflow turn
-        if any(w in ans_lower for w in ["today", "walk", "paper", "currently", "clipboards", "handwritten", "spreadsheets", "manually typing"]):
-            today_qid = qid
-            today_text = ans.replace("Today,", "").replace("Today", "").strip().rstrip(".")
-            if not today_text.endswith("."):
-                today_text += "."
+    # Personas
+    personas = []
+    for idx, p in enumerate(extracted.get("personas", []), start=1):
+        personas.append({
+            "id": f"P-{idx:02d}",
+            "persona": p.get("name", "User"),
+            "context": p.get("context", f"Operations in {app_name}"),
+            "goal": p.get("goal", ""),
+            "pain_point": p.get("pain_point", ""),
+            "does": p.get("does", f"Execute operational workflows in {app_name}"),
+            "can": "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1",
+            "cannot": "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1",
+            "source": p.get("source_qid", first_qid)
+        })
 
-        # Identify 'Core Problem' turn
-        if any(w in ans_lower for w in ["core problem", "tenable", "untenable", "error rate", "delayed", "shutdown", "fines", "struggle to format", "waste hours"]):
-            problem_qid = qid
-            problem_text = ans.replace("The core problem is that", "").replace("The core problem is", "").strip().rstrip(".")
-            if not problem_text.endswith("."):
-                problem_text += "."
+    # Functional Requirements
+    discovered_features = []
+    for idx, fr in enumerate(extracted.get("functional_requirements", []), start=1):
+        fid = f"FR-{idx:03d}"
+        discovered_features.append({
+            "id": fid,
+            "feature": fr.get("title", ""),
+            "description": fr.get("description", ""),
+            "priority": fr.get("priority", "Must").capitalize(),
+            "source": fr.get("source_qid", first_qid),
+            "raw": fr.get("title", "")
+        })
 
-        # Identify 'Why Existing Tools Fall Short' turn
-        if any(w in ans_lower for w in ["existing", "commercial", "cloud connectivity", "fail in", "expensive", "per-seat", "fall short"]):
-            shortcomings_qid = qid
-            # Extract just the shortcoming sentence
-            parts = re.split(r"(?:Key requirements|Requirements|1\))", ans, flags=re.IGNORECASE)
-            shortcomings_text = parts[0].strip().rstrip(".")
-            if not shortcomings_text.endswith("."):
-                shortcomings_text += "."
+    # Non-functional requirements
+    final_nfrs = []
+    for idx, nfr in enumerate(extracted.get("non_functional_requirements", []), start=1):
+        nid = f"NFR-{idx:02d}"
+        final_nfrs.append({
+            "id": nid,
+            "nfr": nfr.get("category", ""),
+            "target": nfr.get("target", ""),
+            "source": f"[{nfr.get('source_qid', first_qid)}]"
+        })
 
-        # Identify Features turn
-        if any(w in ans_lower for w in ["key requirements", "must have", "should have", "requirements", "fr-", "[fr-"]):
-            features_qid = qid
+    # Goals and Non-goals
+    discovered_goals = []
+    for idx, g in enumerate(extracted.get("goals", []), start=1):
+        discovered_goals.append({
+            "id": f"G-{idx:02d}",
+            "goal": g.get("goal", ""),
+            "source": g.get("source_qid", first_qid)
+        })
 
-        # Identify Timeline & Budget turn
-        if any(w in ans_lower for w in ["timeline", "deadline", "budget", "cost", "weeks", "$"]):
-            timeline_qid = qid
+    discovered_non_goals = []
+    for idx, ng in enumerate(extracted.get("non_goals", []), start=1):
+        discovered_non_goals.append({
+            "id": f"NG-{idx:02d}",
+            "non_goal": ng.get("non_goal", ""),
+            "why": ng.get("why", ""),
+            "source": ng.get("source_qid", first_qid)
+        })
 
-        # Identify Success Metric turn
-        if any(w in ans_lower for w in ["metric", "success", "% of", "generating daily"]):
-            metrics_qid = qid
+    # Metrics
+    discovered_metrics = []
+    for idx, m in enumerate(extracted.get("success_metrics", []), start=1):
+        discovered_metrics.append({
+            "id": f"M-{idx:02d}",
+            "metric": m.get("metric", ""),
+            "target": m.get("target", ""),
+            "measurement": m.get("how_measured", ""),
+            "source": m.get("source_qid", first_qid)
+        })
 
-    # Fallback problem texts if not separated in QA
-    if not today_text:
-        today_text = f"Users currently rely on manual workflows and fragmented paper or desktop tools to execute their daily tasks. [{today_qid}]"
-    if not problem_text:
-        problem_text = qa_map.get(problem_qid, {}).get("answer", description)
-    if not shortcomings_text:
-        shortcomings_text = f"Existing alternatives require external cloud connectivity with monthly subscription costs, failing in offline environments and lacking local data control. [{shortcomings_qid}]"
+    # Assumptions
+    assumptions = []
+    for idx, asm in enumerate(extracted.get("assumptions", []), start=1):
+        assumptions.append({
+            "id": f"ASM-{idx:02d}",
+            "text": asm.get("text", ""),
+            "status": asm.get("status", "awaiting client at Gate 1")
+        })
 
-    # 1. Parse Personas (P-##) with distinct, non-identical roles, goals, and pain points
-    personas: List[Dict[str, Any]] = []
-    persona_match = re.search(r"#+\s*2\.\s*Personas(.*?)(?=#+\s*\d|\Z)", requirements_text, re.DOTALL | re.IGNORECASE)
-    if persona_match:
-        p_lines = persona_match.group(1).strip().split("\n")
-        p_counter = 1
-        for line in p_lines:
-            line_str = line.strip().lstrip("-* ").strip()
-            if not line_str or line_str.startswith("#"):
-                continue
-            m = re.match(r"(P-\d+)?\s*:?\s*(.*)", line_str)
-            pid = m.group(1) if m and m.group(1) else f"P-{p_counter:02d}"
-            raw_name = m.group(2).strip() if m else line_str
-            clean_name = re.sub(r"\[.*?\]", "", raw_name).strip().strip(":")
-            if clean_name and "no additional" not in clean_name.lower():
-                role_title = clean_name.split(",")[0].split(" with ")[0].split(" who ")[0].strip()
-                personas.append({
-                    "id": pid,
-                    "persona": role_title,
-                    "context": f"Field and project operations in {app_name}",
-                    "goal": "",
-                    "pain_point": "",
-                    "source": problem_qid
-                })
-                p_counter += 1
-
-    if not personas:
-        users_list = [u.strip() for u in re.split(r",|and", target_users) if u.strip()]
-        if not users_list:
-            users_list = ["Lead Professional", "Field Specialist"]
-        for idx, u in enumerate(users_list[:2]):
-            personas.append({
-                "id": f"P-{idx+1:02d}",
-                "persona": u,
-                "context": f"Field and project operations in {app_name}",
-                "goal": "",
-                "pain_point": "",
-                "source": problem_qid
-            })
-
-    # Assign distinct, domain-grounded goals and pain points to each persona (no cross-project contamination)
-    for idx, p in enumerate(personas):
-        role_raw = p["persona"]
-        role_lower = role_raw.lower()
-        pid = p.get("id", f"P-{idx+1:02d}")
-
-        if idx == 0:
-            p["goal"] = f"Execute core {role_lower} operational tasks accurately and maintain compliant activity logs within {app_name}."
-            p["pain_point"] = f"Manual paperwork, tracking delays, and transcription errors in daily {role_lower} duties."
-            p["does"] = f"Perform primary operational workflows and record transactions in {app_name}"
-            p["can"] = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-            p["cannot"] = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-        elif idx == 1:
-            p["goal"] = f"Supervise {role_lower} activities, verify record integrity, and prevent compliance violations."
-            p["pain_point"] = f"Lack of real-time visibility into status updates and tedious manual verification of records."
-            p["does"] = f"Monitor operational status, review logs, and certify sign-offs in {app_name}"
-            p["can"] = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-            p["cannot"] = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-        else:
-            p["goal"] = f"Perform independent compliance audits and verify traceability of all records in {app_name}."
-            p["pain_point"] = f"Scattered audit logs and time-consuming manual report compilation during audits."
-            p["does"] = f"Audit historical transaction records, verify chain-of-custody, and export reports in {app_name}"
-            p["can"] = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-            p["cannot"] = "Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1"
-
-    # 2. Parse Functional Requirements, NFRs, and Non-Goals
-    raw_fr_candidates: List[Dict[str, Any]] = []
-    parsed_nfrs: List[Dict[str, Any]] = []
-    discovered_non_goals: List[Dict[str, Any]] = []
-
-    fr_match = re.search(r"#+\s*4\.\s*Functional Requirements(.*?)(?=#+\s*\d|\Z)", requirements_text, re.DOTALL | re.IGNORECASE)
-    if fr_match:
-        fr_lines = fr_match.group(1).strip().split("\n")
-        fr_counter = 1
-        for line in fr_lines:
-            line_str = line.strip().lstrip("-* ").strip()
-            if not line_str or line_str.startswith("#"):
-                continue
-            fr_id_match = re.match(r"(FR-\d+)\s*:?\s*(.*)", line_str, re.IGNORECASE)
-            if fr_id_match:
-                fr_id = fr_id_match.group(1).upper()
-                rest = fr_id_match.group(2).strip()
-            else:
-                fr_id = f"FR-{fr_counter:02d}"
-                rest = line_str
-
-            priority = "Must"
-            if re.search(r"Must\s*Have", rest, re.IGNORECASE):
-                priority = "Must"
-            elif re.search(r"Should\s*Have", rest, re.IGNORECASE):
-                priority = "Should"
-            elif re.search(r"Could\s*Have", rest, re.IGNORECASE):
-                priority = "Could"
-            elif re.search(r"Won't\s*Have|Wont\s*Have", rest, re.IGNORECASE):
-                priority = "Won't"
-
-            src_m = re.findall(r"Q-\d+", rest)
-            source_q = src_m[0] if src_m else features_qid
-
-            clean_text = re.sub(r"\(.*?\)", "", rest)
-            clean_text = re.sub(r"\[.*?\]", "", clean_text).strip().rstrip(":- ")
-
-            if clean_text:
-                if is_deferred_text(clean_text) or priority == "Won't":
-                    discovered_non_goals.append({
-                        "id": f"NG-{len(discovered_non_goals)+1:02d}",
-                        "non_goal": clean_text.replace("Real-time contractor cloud portal sync is strictly deferred to v2", "Real-time contractor cloud portal sync").replace("Cloud team sync is strictly deferred to v2", "Cloud team synchronization"),
-                        "why": "Strictly deferred to v2 per client privacy and v1 timeline constraints",
-                        "source": source_q
-                    })
-                elif is_nfr_text(clean_text):
-                    parsed_nfrs.append({
-                        "id": f"NFR-{len(parsed_nfrs)+1:02d}",
-                        "text": clean_text,
-                        "source": source_q
-                    })
-                else:
-                    raw_fr_candidates.append({
-                        "id": fr_id,
-                        "feature": clean_text,
-                        "priority": priority,
-                        "source": source_q,
-                        "raw": rest
-                    })
-                    fr_counter += 1
-
-    # Filter raw FR candidates strictly
-    functional_reqs: List[Dict[str, Any]] = []
-    for fr in raw_fr_candidates:
-        if not is_nfr_text(fr["feature"]) and not is_deferred_text(fr["feature"]):
-            clean_fr_id = f"FR-{len(functional_reqs)+1:02d}"
-            functional_reqs.append({
-                "id": clean_fr_id,
-                "feature": fr["feature"],
-                "priority": fr["priority"],
-                "source": fr["source"],
-                "raw": fr["raw"]
-            })
-
-    if not functional_reqs:
-        # Check qa_log for explicit [FR-##] citations
-        fr_candidates_qa = []
-        for qdata in qa_map.values():
-            ans = qdata["answer"]
-            fr_matches = re.findall(r"([^,.;\n]+?)\s*\[(FR-\d+)\]", ans)
-            for feat_text, fr_tag in fr_matches:
-                clean_f = feat_text.strip().lstrip("and ").strip()
-                if clean_f and not is_nfr_text(clean_f):
-                    fr_candidates_qa.append({
-                        "id": fr_tag.upper(),
-                        "feature": clean_f[0].upper() + clean_f[1:],
-                        "priority": "Must",
-                        "source": qdata["id"],
-                        "raw": f"{clean_f} [{fr_tag}]"
-                    })
-        if fr_candidates_qa:
-            functional_reqs = fr_candidates_qa
-        else:
-            functional_reqs = [
-                {
-                    "id": "FR-01",
-                    "feature": f"Core operational workflow management and activity logging for {app_name}",
-                    "priority": "Must",
-                    "source": features_qid,
-                    "raw": f"Core operational workflow management for {app_name}"
-                },
-                {
-                    "id": "FR-02",
-                    "feature": f"Structured local compliance report compilation and data export in {app_name}",
-                    "priority": "Must",
-                    "source": features_qid,
-                    "raw": f"Compliance report compilation and data export in {app_name}"
-                }
-            ]
-
-    # Non-goals
-    if not discovered_non_goals:
-        discovered_non_goals = [
-            {
-                "id": "NG-01",
-                "non_goal": "Real-time multi-tenant cloud synchronization and remote web portal",
-                "why": "Strictly deferred to v2 per client local-first deployment and v1 timeline constraints",
-                "source": features_qid
-            },
-            {
-                "id": "NG-02",
-                "non_goal": "Automated third-party SaaS integrations and external webhooks",
-                "why": "Out of scope for v1 MVP; v1 focuses strictly on core local workflows and local compliance exports",
-                "source": features_qid
-            }
-        ]
-
-    # Clean NFR table rows: extract from requirements_text and qa_log directly
-    # Check qa_log for explicit NFR mentions
-    qa_nfr_text_map: Dict[str, Tuple[str, str]] = {}
-    for qdata in qa_map.values():
-        ans = qdata["answer"]
-        nfr_matches = re.findall(r"([^.;\n]+?)\s*\[(NFR-\d+)\]", ans, re.IGNORECASE)
-        for n_text, n_id in nfr_matches:
-            qa_nfr_text_map[n_id.upper()] = (n_text.strip().lstrip("For "), qdata["id"])
-
-    # Extract target values from parsed NFRs or QA log
-    nfr1_target = qa_nfr_text_map.get("NFR-01", (None, None))[0]
-    nfr2_target = qa_nfr_text_map.get("NFR-02", (None, None))[0]
-    nfr3_target = qa_nfr_text_map.get("NFR-03", (None, None))[0]
-    nfr4_target = qa_nfr_text_map.get("NFR-04", (None, None))[0]
-    nfr5_target = qa_nfr_text_map.get("NFR-05", (None, None))[0]
-
-    final_nfrs: List[Dict[str, Any]] = [
-        {
-            "id": "NFR-01",
-            "nfr": "Search & Operation Latency",
-            "target": nfr1_target if nfr1_target else "Response time under 1.0 s for all primary search and filter queries [ASM-01: target pending client confirmation]",
-            "source": "[NFR-01]"
-        },
-        {
-            "id": "NFR-02",
-            "nfr": "Data Storage & Privacy",
-            "target": nfr2_target if nfr2_target else "100% local device storage with zero unauthorized external cloud uploads",
-            "source": "[NFR-02]"
-        },
-        {
-            "id": "NFR-03",
-            "nfr": "Local Capacity",
-            "target": nfr3_target if nfr3_target else "Support expected operational records stored locally without performance degradation [ASM-02: volume pending client confirmation]",
-            "source": "[NFR-03]"
-        },
-        {
-            "id": "NFR-04",
-            "nfr": "Platform Compatibility",
-            "target": nfr4_target if nfr4_target else "Desktop application with full offline execution in disconnected local environments",
-            "source": "[NFR-04]"
-        },
-        {
-            "id": "NFR-05",
-            "nfr": "Accessibility & Usability",
-            "target": nfr5_target if nfr5_target else "WCAG 2.2 AA compliance for desktop interface with keyboard navigation",
-            "source": "[NFR-05]"
-        }
-    ]
-
-    # 3. Parse Assumptions (ASM-) with strict sentence validation
-    assumptions: List[Dict[str, Any]] = []
-    asm_match = re.search(r"#+\s*11\.\s*Assumptions(.*?)(?=#+\s*\d|\Z)", requirements_text, re.DOTALL | re.IGNORECASE)
-    if asm_match:
-        asm_lines = asm_match.group(1).strip().split("\n")
-        seen_texts = set()
-        for line in asm_lines:
-            line_str = line.strip().lstrip("-* ").strip()
-            if not line_str or line_str.startswith("#"):
-                continue
-            aid_m = re.match(r"(?:ASM-\d+\s*:?\s*)?(.*)", line_str, re.IGNORECASE)
-            raw_text = aid_m.group(1).strip() if aid_m else line_str
-            clean_asm = re.sub(r"\[.*?\]", "", raw_text).strip()
-            is_valid, _ = validate_asm_oq_text(clean_asm)
-            if is_valid and clean_asm.lower() not in seen_texts and "pm recommendation" not in clean_asm.lower():
-                seen_texts.add(clean_asm.lower())
-                assumptions.append({
-                    "id": f"ASM-{len(assumptions)+1:02d}",
-                    "text": clean_asm,
-                    "status": "awaiting client at Gate 1"
-                })
-
-    if not assumptions:
-        assumptions = [
-            {
-                "id": "ASM-01",
-                "text": "End users operate on local workstations with direct filesystem permissions to read and write application data.",
-                "status": "awaiting client at Gate 1"
-            },
-            {
-                "id": "ASM-02",
-                "text": "Daily operational transaction volume scales within the limits supported by embedded local relational storage.",
-                "status": "awaiting client at Gate 1"
-            }
-        ]
-
-    # 4. Open Questions (OQ-) for unclarified permissions, numbers, or formats
-    persona1_name = personas[0]["persona"] if personas else "Primary Operator"
-    persona2_name = personas[1]["persona"] if len(personas) > 1 else "Supervisor"
-    open_questions: List[Dict[str, Any]] = [
-        {
-            "id": "OQ-01",
-            "text": f"Confirm whether tracking daily workflow completion rate in {app_name} is desired as an ongoing operational metric.",
+    # Open Questions
+    open_questions = []
+    for idx, oq in enumerate(extracted.get("open_questions", []), start=1):
+        open_questions.append({
+            "id": f"OQ-{idx:02d}",
+            "text": oq.get("text", ""),
+            "to": oq.get("to", "client"),
             "status": "sent via BA"
-        },
-        {
-            "id": "OQ-02",
-            "text": f"Confirm formal sign-off authority and capability boundaries between {persona1_name} and {persona2_name}.",
-            "status": "sent via BA"
-        },
-        {
-            "id": "OQ-03",
-            "text": f"Confirm preferred default report export format for regulatory compliance audits in {app_name}.",
-            "status": "sent via BA"
-        }
-    ]
-
-    # 5. Extract Client-Given Success Metric
-    client_metric = ""
-    for qdata in qa_map.values():
-        ans = qdata["answer"]
-        sm_match = re.search(r"success\s*metric\s*(?:is|:)?\s*([^.\n]+(?:\.[^.\n]+)*)", ans, re.IGNORECASE)
-        if sm_match:
-            candidate = sm_match.group(1).strip()
-            candidate = re.split(r"(?:please\s+|let's\s+)", candidate, flags=re.IGNORECASE)[0].strip().rstrip(".")
-            if len(candidate) > 5:
-                client_metric = candidate
-                break
-        elif "generating daily" in ans.lower() or "90%" in ans or "% of" in ans:
-            sub_m = re.search(r"(\d+%.*?(?:week|day|month|visit|session))", ans, re.IGNORECASE)
-            if sub_m:
-                client_metric = sub_m.group(1).strip()
-                break
-
-    if not client_metric:
-        client_metric = f"90% of daily transactions logged and verified within {app_name} on the same business day"
-
-    success_metrics = [
-        {
-            "id": "M-01",
-            "metric": f"{app_name} Daily Operational Completion Rate",
-            "target": client_metric,
-            "measurement": "Local application export audit logs (verified_records_same_day / total_records_created)",
-            "source": metrics_qid
-        }
-    ]
+        })
 
     return {
         "app_name": app_name,
         "description": description,
-        "target_users": target_users,
-        "timeline": timeline,
-        "budget": budget,
-        "qa_map": qa_map,
+        "category": category,
+        "platforms": platforms,
         "first_qid": first_qid,
         "today_qid": today_qid,
-        "today_text": today_text,
         "problem_qid": problem_qid,
-        "problem_text": problem_text,
         "shortcomings_qid": shortcomings_qid,
+        "today_text": today_text,
+        "problem_text": problem_text,
         "shortcomings_text": shortcomings_text,
-        "features_qid": features_qid,
-        "timeline_qid": timeline_qid,
-        "metrics_qid": metrics_qid,
         "personas": personas,
-        "functional_reqs": functional_reqs,
+        "discovered_features": discovered_features,
+        "functional_reqs": discovered_features,
         "non_functional_reqs": final_nfrs,
-        "non_goals": discovered_non_goals,
-        "success_metrics": success_metrics,
+        "discovered_goals": discovered_goals,
+        "discovered_non_goals": discovered_non_goals,
+        "discovered_metrics": discovered_metrics,
         "assumptions": assumptions,
         "open_questions": open_questions,
+        "qa_map": qa_map,
+        "extracted_raw": extracted
     }
 
 
 def parse_prd_data(prd_text: str) -> Dict[str, Any]:
     """
-    Parses a handbook-compliant docs/prd.md document into structured dictionary representation
-    for downstream use by Solution Architect and LLM Judge.
+    Parses an existing docs/prd.md document into structured sections.
+    Used by downstream Architect and Designer validators.
     """
-    app_name_match = re.search(r"#\s*Product Requirement Document\s*(?:\(PRD\))?:\s*(.+)", prd_text)
-    app_name = app_name_match.group(1).strip() if app_name_match else "Untitled Project"
+    app_name = "Untitled Project"
+    app_name_m = re.search(r"#\s*Product Requirement Document\s*(?:\(PRD\))?:\s*([^\n]+)", prd_text, re.IGNORECASE)
+    if app_name_m:
+        app_name = app_name_m.group(1).strip()
 
-    # Section 1: Overview
-    desc_match = re.search(r"\|\s*One-line description\s*\|\s*([^|]+)\s*\|", prd_text)
-    description = desc_match.group(1).strip() if desc_match else ""
+    description = ""
+    category = ""
+    platforms = ""
+    desc_m = re.search(r"\|\s*One-line description\s*\|\s*([^|]+)\s*\|", prd_text, re.IGNORECASE)
+    if desc_m:
+        description = desc_m.group(1).strip()
+    cat_m = re.search(r"\|\s*Category\s*\|\s*([^|]+)\s*\|", prd_text, re.IGNORECASE)
+    if cat_m:
+        category = cat_m.group(1).strip()
+    plat_m = re.search(r"\|\s*Platforms\s*\|\s*([^|]+)\s*\|", prd_text, re.IGNORECASE)
+    if plat_m:
+        platforms = plat_m.group(1).strip()
 
-    cat_match = re.search(r"\|\s*Category\s*\|\s*([^|]+)\s*\|", prd_text)
-    category = cat_match.group(1).strip() if cat_match else ""
-
-    plat_match = re.search(r"\|\s*Platforms\s*\|\s*([^|]+)\s*\|", prd_text)
-    platforms = plat_match.group(1).strip() if plat_match else "macOS Desktop"
-
-    # Section 3: Personas
+    # Personas
     personas = []
     p_rows = re.findall(r"\|\s*(P-\d+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*\[([^\]]+)\]\s*\|", prd_text)
-    for p_id, p_role, p_ctx, p_goal, p_pain, p_src in p_rows:
+    for p_id, p_name, p_ctx, p_goal, p_pain, p_src in p_rows:
         personas.append({
             "id": p_id.strip(),
-            "role": p_role.strip(),
+            "persona": p_name.strip(),
             "context": p_ctx.strip(),
             "goal": p_goal.strip(),
             "pain_point": p_pain.strip(),
             "source": f"[{p_src.strip()}]"
         })
 
-    # Section 4: Goals & Non-goals & Metrics
+    # Goals, Non-goals, Metrics
     goals = []
     for g_id, g_text, g_src in re.findall(r"\|\s*(G-\d+)\s*\|\s*([^|]+)\s*\|\s*\[([^\]]+)\]\s*\|", prd_text):
         goals.append({"id": g_id.strip(), "goal": g_text.strip(), "source": f"[{g_src.strip()}]"})
@@ -545,40 +757,38 @@ def parse_prd_data(prd_text: str) -> Dict[str, Any]:
     for m_id, m_name, m_tgt, m_meas, m_src in re.findall(r"\|\s*(M-\d+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*\[([^\]]+)\]\s*\|", prd_text):
         metrics.append({"id": m_id.strip(), "metric": m_name.strip(), "target": m_tgt.strip(), "measurement": m_meas.strip(), "source": f"[{m_src.strip()}]"})
 
-    # Section 5: Features
+    # Features
     features = []
-    # Find feature summary rows
-    f_rows = re.findall(r"\|\s*(F-\d+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*\[([^\]]+)\]\s*\|", prd_text)
-    summary_map = {row[0].strip(): row for row in f_rows}
-
-    # Extract detailed feature sections
-    f_blocks = re.split(r"(?=###\s*F-\d+:)", prd_text)
+    f_blocks = re.split(r"(?=###\s*Feature\s+F-\d+:|###\s*F-\d+:)", prd_text)
     for block in f_blocks:
-        if not block.startswith("### F-"):
-            continue
-        hdr_match = re.match(r"###\s*(F-\d+):\s*(.+)", block)
+        hdr_match = re.search(r"###\s*(?:Feature\s+)?(F-\d+):\s*(.+)", block)
         if not hdr_match:
             continue
         fid = hdr_match.group(1).strip()
         ftitle = hdr_match.group(2).strip()
 
-        story_m = re.search(r"-\s*\*\*Story\*\*:\s*(.+)", block)
+        story_m = re.search(r"-\s*\*\*Story\*\*:\s*([^\n]+)", block)
+        if not story_m:
+            story_m = re.search(r"Story:\s*([^\n]+)", block)
         story = story_m.group(1).strip() if story_m else ""
 
         prio_m = re.search(r"-\s*\*\*Priority\*\*:\s*([^\n]+)", block)
-        priority = prio_m.group(1).strip() if prio_m else "Must Have (MoSCoW)"
+        if not prio_m:
+            prio_m = re.search(r"Priority:\s*([^\n]+)", block)
+        priority = prio_m.group(1).strip() if prio_m else "Must"
 
         req_m = re.search(r"-\s*\*\*Requirements\*\*:\s*([^\n]+)", block)
+        if not req_m:
+            req_m = re.search(r"Requirements:\s*([^\n]+)", block)
         reqs = req_m.group(1).strip() if req_m else ""
 
         acs = []
         ac_rows = re.findall(r"\|\s*(AC-\d+)\s*\|\s*([^|]+)\s*\|", block)
         for ac_id, ac_text in ac_rows:
-            is_unhappy = "(unhappy path)" in ac_text.lower()
             acs.append({
                 "id": ac_id.strip(),
                 "text": ac_text.strip(),
-                "is_unhappy": is_unhappy
+                "is_unhappy": "(unhappy path)" in ac_text.lower()
             })
 
         features.append({
@@ -590,7 +800,7 @@ def parse_prd_data(prd_text: str) -> Dict[str, Any]:
             "acs": acs
         })
 
-    # Section 6: NFRs
+    # NFRs
     nfrs = []
     nfr_rows = re.findall(r"\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*\[(NFR-\d+)\]\s*\|", prd_text)
     for nfr_name, nfr_target, nfr_src in nfr_rows:
@@ -603,7 +813,7 @@ def parse_prd_data(prd_text: str) -> Dict[str, Any]:
             "source": f"[{nfr_src.strip()}]"
         })
 
-    # Section 7: Risks
+    # Risks
     risks = []
     r_rows = re.findall(r"\|\s*(R-\d+)\s*\|\s*([^|]+)\s*\|\s*([LMH])\s*\|\s*([LMH])\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|", prd_text)
     for r_id, r_name, r_like, r_imp, r_mit, r_owner in r_rows:
@@ -616,7 +826,7 @@ def parse_prd_data(prd_text: str) -> Dict[str, Any]:
             "owner": r_owner.strip()
         })
 
-    # Section 8: Assumptions & Open Questions
+    # Assumptions & Open Questions
     assumptions = []
     for asm_id, asm_text, asm_st in re.findall(r"\|\s*(ASM-\d+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|", prd_text):
         assumptions.append({"id": asm_id.strip(), "text": asm_text.strip(), "status": asm_st.strip()})
@@ -640,4 +850,3 @@ def parse_prd_data(prd_text: str) -> Dict[str, Any]:
         "assumptions": assumptions,
         "open_questions": open_questions
     }
-

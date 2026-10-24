@@ -1,0 +1,1292 @@
+[
+  {
+    "file": "engine/pm.py",
+    "line": 272,
+    "keyword": "barcode",
+    "snippet": "elif any(w in fname_lower for w in [\"check-in\", \"check in\", \"intake\", \"accession\", \"scan\", \"barcode\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 272,
+    "keyword": "accession",
+    "snippet": "elif any(w in fname_lower for w in [\"check-in\", \"check in\", \"intake\", \"accession\", \"scan\", \"barcode\""
+  },
+  {
+    "file": "engine/pm.py",
+    "line": 278,
+    "keyword": "deficiency",
+    "snippet": "elif any(w in fname_lower for w in [\"checklist\", \"inspect\", \"hazard\", \"deficiency\", \"punch\"]):"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 298,
+    "keyword": "specimen",
+    "snippet": "if \"specimen\" in t_lower or \"accession\" in t_lower or \"barcode\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 298,
+    "keyword": "barcode",
+    "snippet": "if \"specimen\" in t_lower or \"accession\" in t_lower or \"barcode\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 298,
+    "keyword": "accession",
+    "snippet": "if \"specimen\" in t_lower or \"accession\" in t_lower or \"barcode\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 299,
+    "keyword": "specimen",
+    "snippet": "return \"specimens\""
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 300,
+    "keyword": "temperature",
+    "snippet": "if \"temperature\" in t_lower or \"excursion\" in t_lower or \"cold\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 301,
+    "keyword": "temperature",
+    "snippet": "return \"temperature-logs\""
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 306,
+    "keyword": "inspection",
+    "snippet": "if \"inspection\" in t_lower or \"checklist\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 307,
+    "keyword": "inspection",
+    "snippet": "return \"inspections\""
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 308,
+    "keyword": "punchlist",
+    "snippet": "if \"punch-list\" in t_lower or \"punchlist\" in t_lower:"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 358,
+    "keyword": "specimen",
+    "snippet": "{\"id\": \"F-001\", \"title\": \"Specimen check-in with 2D barcode generation\", \"priority\": \"Must Have\"},"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 358,
+    "keyword": "barcode",
+    "snippet": "{\"id\": \"F-001\", \"title\": \"Specimen check-in with 2D barcode generation\", \"priority\": \"Must Have\"},"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 359,
+    "keyword": "temperature",
+    "snippet": "{\"id\": \"F-002\", \"title\": \"Cold-storage temperature excursion logging\", \"priority\": \"Must Have\"}"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 591,
+    "keyword": "specimen",
+    "snippet": "m = re.search(r\"(\\d[\\d,]*)\\s*(?:records|items|specimens|logs)\", nfr.get(\"target\", \"\"))"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 651,
+    "keyword": "specimen",
+    "snippet": "For BioVault Lab: Real clinical entities (users, storage_units, specimens, barcodes,"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 651,
+    "keyword": "barcode",
+    "snippet": "For BioVault Lab: Real clinical entities (users, storage_units, specimens, barcodes,"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 651,
+    "keyword": "biovault",
+    "snippet": "For BioVault Lab: Real clinical entities (users, storage_units, specimens, barcodes,"
+  },
+  {
+    "file": "engine/architect.py",
+    "line": 652,
+    "keyword": "temperature",
+    "snippet": "temperature_readings, temperature_excursions, custody_transfers, audit_exports),"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 376,
+    "keyword": "accession",
+    "snippet": "4. SCREEN NAMES: Must be SHORT, natural human screen names UNDER 6 WORDS (e.g. 'Work Order Dispatch'"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 666,
+    "keyword": "deficiency",
+    "snippet": "- Grounded in PRD domain: strictly avoids ungrounded elements (PDF Summary, Assigned Contractor, ISO"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 715,
+    "keyword": "deficiency",
+    "snippet": "3. STRICT GROUNDING: Cite ONLY fields and controls that exist in the PRD. NEVER invent 'PDF Summary'"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 767,
+    "keyword": "deficiency",
+    "snippet": "for bad_elem in [\"pdf summary\", \"assigned contractor\", \"iso-standard deficiency codes\", \"bounding bo"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 861,
+    "keyword": "biovault",
+    "snippet": "- Proves BioVault and AeroFleet differ in more than primary hue."
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 861,
+    "keyword": "aerofleet",
+    "snippet": "- Proves BioVault and AeroFleet differ in more than primary hue."
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 1361,
+    "keyword": "deficiency",
+    "snippet": "for bad_elem in [\"pdf summary\", \"assigned contractor\", \"iso-standard deficiency codes\", \"bounding bo"
+  },
+  {
+    "file": "engine/designer.py",
+    "line": 1809,
+    "keyword": "deficiency",
+    "snippet": "for bad_elem in [\"pdf summary\", \"assigned contractor\", \"iso-standard deficiency codes\", \"bounding bo"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 80,
+    "keyword": "temperature",
+    "snippet": "# Role configurations (provider, model, temperature, max_tokens)"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 85,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.6,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 91,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.3,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 97,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.2,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 103,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.2,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 109,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.1,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 115,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.2,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 121,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.2,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 127,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.4,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 339,
+    "keyword": "temperature",
+    "snippet": "temperature: Optional[float] = None,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 347,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": 0.3,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 354,
+    "keyword": "temperature",
+    "snippet": "if temperature is not None:"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 355,
+    "keyword": "temperature",
+    "snippet": "self.role_configs[role_key][\"temperature\"] = temperature"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 384,
+    "keyword": "temperature",
+    "snippet": "temperature: Optional[float] = None,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 406,
+    "keyword": "temperature",
+    "snippet": "temp = temperature if temperature is not None else config.get(\"temperature\", 0.3)"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 423,
+    "keyword": "temperature",
+    "snippet": "temperature=temp,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 460,
+    "keyword": "temperature",
+    "snippet": "temperature=temp"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 483,
+    "keyword": "temperature",
+    "snippet": "temperature: float,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 489,
+    "keyword": "inspection",
+    "snippet": "exponential backoff, and retry-after inspection."
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 505,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": temperature,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 620,
+    "keyword": "temperature",
+    "snippet": "temperature: float"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 630,
+    "keyword": "temperature",
+    "snippet": "\"temperature\": temperature"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 718,
+    "keyword": "temperature",
+    "snippet": "temperature: Optional[float] = None,"
+  },
+  {
+    "file": "engine/llm_client.py",
+    "line": 730,
+    "keyword": "temperature",
+    "snippet": "temperature=temperature,"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1281,
+    "keyword": "specimen",
+    "snippet": "'specification', 'derived', 'derivation', 'contextual', 'justification', 'specimen', 'specimens',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1282,
+    "keyword": "barcode",
+    "snippet": "'barcode', 'barcodes', 'labeling', 'excursion', 'excursions', 'custody', 'custodian', 'handoff',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1283,
+    "keyword": "inspection",
+    "snippet": "'audit', 'audits', 'regulatory', 'inspection', 'inspections', 'hazard', 'hazards', 'finding',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1284,
+    "keyword": "deficiency",
+    "snippet": "'findings', 'contractor', 'contractors', 'safety', 'jobsite', 'deficiency', 'deficiencies',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1287,
+    "keyword": "freezer",
+    "snippet": "'freezer', 'cabinet', 'refrigerator', 'fridge', 'sensor', 'device', 'hardware', 'terminal',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1297,
+    "keyword": "specimen",
+    "snippet": "'range', 'filesystem', 'retaining', 'loss', 'intake', 'specimens', 'accessioning',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1297,
+    "keyword": "accession",
+    "snippet": "'range', 'filesystem', 'retaining', 'loss', 'intake', 'specimens', 'accessioning',"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1307,
+    "keyword": "biovault",
+    "snippet": "if \"biovault\" in app_lower or \"clinical\" in app_lower or \"bio\" in app_lower:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1309,
+    "keyword": "aerofleet",
+    "snippet": "elif \"aerofleet\" in app_lower or \"aviation\" in app_lower or \"hangar\" in app_lower:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1310,
+    "keyword": "specimen",
+    "snippet": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"clinical "
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1310,
+    "keyword": "freezer",
+    "snippet": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"clinical "
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1310,
+    "keyword": "accession",
+    "snippet": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"clinical "
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1311,
+    "keyword": "siteaudit",
+    "snippet": "elif \"siteaudit\" in app_lower or \"construction\" in app_lower or \"safety\" in app_lower:"
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1312,
+    "keyword": "specimen",
+    "snippet": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"airframe\""
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1312,
+    "keyword": "freezer",
+    "snippet": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"airframe\""
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1312,
+    "keyword": "accession",
+    "snippet": "foreign_terms = [\"specimen\", \"biospecimen\", \"cryo\", \"freezer\", \"accessioning\", \"patient\", \"airframe\""
+  },
+  {
+    "file": "engine/judge.py",
+    "line": 1545,
+    "keyword": "deficiency",
+    "snippet": "(\"ISO-standard deficiency codes\", \"ISO-standard deficiency codes\"),"
+  },
+  {
+    "file": "engine/main.py",
+    "line": 291,
+    "keyword": "temperature",
+    "snippet": "temperature: Optional[float] = None"
+  },
+  {
+    "file": "engine/main.py",
+    "line": 456,
+    "keyword": "temperature",
+    "snippet": "temperature=req.temperature,"
+  },
+  {
+    "file": "skills/specialists/file-storage/instructions.md",
+    "line": 5,
+    "keyword": "inspection",
+    "snippet": "## 1. Upload Validation and Magic-Byte Inspection"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 4,
+    "keyword": "biovault",
+    "snippet": "1. FAILS the current broken BioVault architecture.md and schema.md (detecting cross-project contamin"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 5,
+    "keyword": "siteaudit",
+    "snippet": "2. FAILS the current SiteAudit PRD (detecting ungrounded 500 ms and 500 photo notes)"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 18,
+    "keyword": "biovault",
+    "snippet": "def test_judge_on_current_biovault():"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 20,
+    "keyword": "biovault",
+    "snippet": "print(\"TEST 1: Upgraded Judge on Current BioVault architecture.md and schema.md\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 52,
+    "keyword": "biovault",
+    "snippet": "print(\"\\nDetected Defects in BioVault Architecture / Schema:\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 57,
+    "keyword": "biovault",
+    "snippet": "assert verdict.get(\"pass\") is False, \"Judge MUST FAIL current defective BioVault architecture and sc"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 58,
+    "keyword": "biovault",
+    "snippet": "assert len(verdict.get(\"unsupported_claims\", [])) > 0, \"Judge MUST detect defects in current BioVaul"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 59,
+    "keyword": "biovault",
+    "snippet": "print(\"\\n>>> PROOF 1 PASSED: Upgraded Judge correctly FAILED current BioVault architecture & schema!"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 62,
+    "keyword": "siteaudit",
+    "snippet": "def test_judge_on_siteaudit_prd():"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 64,
+    "keyword": "siteaudit",
+    "snippet": "print(\"TEST 2: Upgraded Judge on Current SiteAudit PRD\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 90,
+    "keyword": "siteaudit",
+    "snippet": "print(\"\\nDetected Defects in SiteAudit PRD:\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 95,
+    "keyword": "siteaudit",
+    "snippet": "assert verdict.get(\"pass\") is False, \"Judge MUST FAIL current SiteAudit PRD with ungrounded metrics!"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 97,
+    "keyword": "siteaudit",
+    "snippet": "print(\"\\n>>> PROOF 2 PASSED: Upgraded Judge correctly FAILED current SiteAudit PRD!\")"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 101,
+    "keyword": "biovault",
+    "snippet": "test_judge_on_current_biovault()"
+  },
+  {
+    "file": "scripts/test_judge_proofs.py",
+    "line": 102,
+    "keyword": "siteaudit",
+    "snippet": "test_judge_on_siteaudit_prd()"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 53,
+    "keyword": "inspection",
+    "snippet": "\"answer\": \"A local inspection tool for site engineers.\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 64,
+    "keyword": "deficiency",
+    "snippet": "{\"id\": \"FR-01\", \"feature\": \"Deficiency Tagging\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 65,
+    "keyword": "punchlist",
+    "snippet": "{\"id\": \"FR-02\", \"feature\": \"Punchlist Export\", \"priority\": \"Must\"}"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 72,
+    "keyword": "deficiency",
+    "snippet": "- F-001: Deficiency Tagging"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_architecture.py",
+    "line": 73,
+    "keyword": "punchlist",
+    "snippet": "- F-002: Punchlist Export"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 16,
+    "keyword": "biovault",
+    "snippet": "broken_app_flow_text = \"\"\"# Application Flow & Screen Architecture: BioVault Lab"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 22,
+    "keyword": "temperature",
+    "snippet": "| S-02 | Cold-Storage Monitor | `/monitoring` | Monitor real-time cold chain temperatures | None | ["
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 27,
+    "keyword": "barcode",
+    "snippet": "| J-01 | Sample Intake & Barcode Scanning | [P-01] | [F-001], [F-002] | S-01 -> S-02 | Scan failure "
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 28,
+    "keyword": "temperature",
+    "snippet": "| J-02 | Cold Chain Temperature Logging | [P-01] | [F-003] | S-02 | Out-of-spec alert [AC-002] |"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 39,
+    "keyword": "barcode",
+    "snippet": "| Empty | No samples scanned today | Empty box illustration + 'Scan Sample' CTA button | Clicking CT"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 40,
+    "keyword": "temperature",
+    "snippet": "| Populated | 1+ samples loaded | Table showing Barcode, Temperature, Status, Timestamp | Selecting "
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 40,
+    "keyword": "barcode",
+    "snippet": "| Populated | 1+ samples loaded | Table showing Barcode, Temperature, Status, Timestamp | Selecting "
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 47,
+    "keyword": "temperature",
+    "snippet": "| Populated | Sensor active | Temperature gauge displaying reading in Celsius | Real-time updates |"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 58,
+    "keyword": "biovault",
+    "snippet": "broken_design_brief_text = \"\"\"# Visual Design Brief & Design System Specification: BioVault Lab"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 83,
+    "keyword": "biovault",
+    "snippet": "\"app_name\": \"BioVault Lab\","
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 99,
+    "keyword": "barcode",
+    "snippet": "{\"id\": \"FR-01\", \"feature\": \"Barcode Scanning\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 100,
+    "keyword": "specimen",
+    "snippet": "{\"id\": \"FR-02\", \"feature\": \"Specimen Cataloging\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 101,
+    "keyword": "temperature",
+    "snippet": "{\"id\": \"FR-03\", \"feature\": \"Cold-Chain Temperature Logging\", \"priority\": \"Must\"},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 106,
+    "keyword": "biovault",
+    "snippet": "mock_prd_text = \"\"\"# Product Requirement Document: BioVault Lab"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 113,
+    "keyword": "barcode",
+    "snippet": "- [F-001] Barcode Scanning"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 114,
+    "keyword": "specimen",
+    "snippet": "- [F-002] Specimen Cataloging"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 115,
+    "keyword": "temperature",
+    "snippet": "- [F-003] Cold-Chain Temperature Logging"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 175,
+    "keyword": "aerofleet",
+    "snippet": "# Deliberate defects in old AeroFleet output:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 186,
+    "keyword": "aerofleet",
+    "snippet": "old_aerofleet_af_text = \"\"\"# Application Flow & Screen Architecture: AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 263,
+    "keyword": "aerofleet",
+    "snippet": "old_aerofleet_db_text = \"\"\"# Visual Design Brief & Design System Specification: AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 278,
+    "keyword": "aerofleet",
+    "snippet": "aerofleet_dir = os.path.join(os.path.dirname(__file__), \"..\", \"data\", \"projects\", \"a1f0e4b8-8c3d-495"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 279,
+    "keyword": "aerofleet",
+    "snippet": "aerofleet_prd_path = os.path.join(aerofleet_dir, \"docs\", \"prd.md\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 280,
+    "keyword": "aerofleet",
+    "snippet": "aerofleet_arch_path = os.path.join(aerofleet_dir, \"docs\", \"architecture.md\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 281,
+    "keyword": "aerofleet",
+    "snippet": "aerofleet_qa_path = os.path.join(aerofleet_dir, \"qa_log.json\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 283,
+    "keyword": "aerofleet",
+    "snippet": "with open(aerofleet_prd_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 285,
+    "keyword": "aerofleet",
+    "snippet": "with open(aerofleet_arch_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 287,
+    "keyword": "aerofleet",
+    "snippet": "with open(aerofleet_qa_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 292,
+    "keyword": "aerofleet",
+    "snippet": "app_flow_text=old_aerofleet_af_text,"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 293,
+    "keyword": "aerofleet",
+    "snippet": "design_brief_text=old_aerofleet_db_text,"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 295,
+    "keyword": "aerofleet",
+    "snippet": "parsed_ba={\"app_name\": \"AeroFleet Hangar\", \"qa_log\": qa_old_log},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 305,
+    "keyword": "aerofleet",
+    "snippet": "print(\"\\n--- Detected Fatal Flaws in Old AeroFleet Deliverable ---\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 310,
+    "keyword": "aerofleet",
+    "snippet": "# Assertions verifying Judge correctly caught the old AeroFleet flaws:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 311,
+    "keyword": "aerofleet",
+    "snippet": "assert verdict_case2.get(\"pass\") is False, \"Judge MUST FAIL old AeroFleet deliverable!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 328,
+    "keyword": "aerofleet",
+    "snippet": "print(\"\\n>>> PROOF COMPLETE (CASE 2): Judge successfully and deterministically REJECTED the old Aero"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 332,
+    "keyword": "siteaudit",
+    "snippet": "# CASE 3: CURRENT / OLD SITEAUDIT PRO APP-FLOW & DESIGN BRIEF AUDIT (Round 4 Item 7)"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 333,
+    "keyword": "siteaudit",
+    "snippet": "# Fatal defects in previous SiteAudit output:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 336,
+    "keyword": "deficiency",
+    "snippet": "# 3. Ungrounded UI elements: 'PDF Summary', 'Assigned Contractor', 'ISO-standard deficiency codes', "
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 340,
+    "keyword": "siteaudit",
+    "snippet": "print(\"=== CASE 3: RUNNING JUDGE ON OLD SITEAUDIT DELIVERABLE (DEFECT DETECTION) ===\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 343,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_dir = os.path.join(os.path.dirname(__file__), \"..\", \"data\", \"projects\", \"5514241c-ef82-409"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 344,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_af_path = os.path.join(siteaudit_dir, \"docs\", \"app-flow.md\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 345,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_db_path = os.path.join(siteaudit_dir, \"docs\", \"design-brief.md\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 346,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_prd_path = os.path.join(siteaudit_dir, \"docs\", \"prd.md\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 347,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_arch_path = os.path.join(siteaudit_dir, \"docs\", \"architecture.md\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 348,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_qa_path = os.path.join(siteaudit_dir, \"qa_log.json\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 350,
+    "keyword": "siteaudit",
+    "snippet": "with open(siteaudit_af_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 351,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_af_text = f.read()"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 352,
+    "keyword": "siteaudit",
+    "snippet": "with open(siteaudit_db_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 353,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_db_text = f.read()"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 354,
+    "keyword": "siteaudit",
+    "snippet": "with open(siteaudit_prd_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 355,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_prd_text = f.read()"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 356,
+    "keyword": "siteaudit",
+    "snippet": "with open(siteaudit_arch_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 357,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_arch_text = f.read()"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 358,
+    "keyword": "siteaudit",
+    "snippet": "with open(siteaudit_qa_path, \"r\", encoding=\"utf-8\") as f:"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 359,
+    "keyword": "siteaudit",
+    "snippet": "siteaudit_qa_log = json.load(f)"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 362,
+    "keyword": "siteaudit",
+    "snippet": "app_flow_text=siteaudit_af_text,"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 363,
+    "keyword": "siteaudit",
+    "snippet": "design_brief_text=siteaudit_db_text,"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 364,
+    "keyword": "siteaudit",
+    "snippet": "prd_text=siteaudit_prd_text,"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 365,
+    "keyword": "siteaudit",
+    "snippet": "parsed_ba={\"app_name\": \"SiteAudit Pro\", \"qa_log\": siteaudit_qa_log},"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 367,
+    "keyword": "siteaudit",
+    "snippet": "architecture_text=siteaudit_arch_text"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 375,
+    "keyword": "siteaudit",
+    "snippet": "print(\"\\n--- Detected Fatal Flaws in Old SiteAudit Deliverable ---\")"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 380,
+    "keyword": "siteaudit",
+    "snippet": "# Mandatory assertion per Round 4 Item 7: Judge MUST FAIL the current SiteAudit deliverable!"
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 381,
+    "keyword": "siteaudit",
+    "snippet": "assert verdict_case3.get(\"pass\") is False, \"Judge MUST FAIL the current/old SiteAudit app-flow.md!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 387,
+    "keyword": "siteaudit",
+    "snippet": "assert has_contrast_surface, \"Judge must catch contrast failure on dark surface in SiteAudit!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 391,
+    "keyword": "siteaudit",
+    "snippet": "assert has_template_residue, \"Judge must catch template filler residue in SiteAudit J-2!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 395,
+    "keyword": "siteaudit",
+    "snippet": "assert has_ungrounded_elements, \"Judge must catch ungrounded UI elements in SiteAudit!\""
+  },
+  {
+    "file": "scripts/test_judge_on_broken_design.py",
+    "line": 397,
+    "keyword": "siteaudit",
+    "snippet": "print(\"\\n>>> PROOF COMPLETE (CASE 3): Judge successfully and deterministically REJECTED the old Site"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 5,
+    "keyword": "specimen",
+    "snippet": "1. BioVault Lab (Clinical Specimen Tracking) - 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 5,
+    "keyword": "biovault",
+    "snippet": "1. BioVault Lab (Clinical Specimen Tracking) - 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 6,
+    "keyword": "aerofleet",
+    "snippet": "2. AeroFleet Hangar (Aviation Airframe Maintenance) - a1f0e4b8-8c3d-4952-b68a-92e105db084c"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 7,
+    "keyword": "inspection",
+    "snippet": "3. SiteAudit Pro (Construction Job-Site Safety Inspection, built from scratch) - 5514241c-ef82-4092-"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 7,
+    "keyword": "siteaudit",
+    "snippet": "3. SiteAudit Pro (Construction Job-Site Safety Inspection, built from scratch) - 5514241c-ef82-4092-"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 45,
+    "keyword": "biovault",
+    "snippet": "(\"BioVault Lab\", \"67abb028-5907-4a5b-8b24-3d069a0ca047\"),"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 46,
+    "keyword": "aerofleet",
+    "snippet": "(\"AeroFleet Hangar\", \"a1f0e4b8-8c3d-4952-b68a-92e105db084c\"),"
+  },
+  {
+    "file": "scripts/run_designer_round4.py",
+    "line": 47,
+    "keyword": "siteaudit",
+    "snippet": "(\"SiteAudit Pro\", \"5514241c-ef82-4092-b91f-a9cf94290f58\")"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 3,
+    "keyword": "specimen",
+    "snippet": "1. BioVault Lab (Clinical Specimen Tracking) - session 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 3,
+    "keyword": "biovault",
+    "snippet": "1. BioVault Lab (Clinical Specimen Tracking) - session 67abb028-5907-4a5b-8b24-3d069a0ca047"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 4,
+    "keyword": "aerofleet",
+    "snippet": "2. AeroFleet Hangar (Aviation Airframe Maintenance) - session a1f0e4b8-8c3d-4952-b68a-92e105db084c"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 5,
+    "keyword": "inspection",
+    "snippet": "3. SiteAudit Pro (Construction Job-Site Safety Inspection) - session 5514241c-ef82-4092-b91f-a9cf942"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 5,
+    "keyword": "siteaudit",
+    "snippet": "3. SiteAudit Pro (Construction Job-Site Safety Inspection) - session 5514241c-ef82-4092-b91f-a9cf942"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 40,
+    "keyword": "biovault",
+    "snippet": "(\"BioVault Lab\", \"67abb028-5907-4a5b-8b24-3d069a0ca047\"),"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 41,
+    "keyword": "aerofleet",
+    "snippet": "(\"AeroFleet Hangar\", \"a1f0e4b8-8c3d-4952-b68a-92e105db084c\"),"
+  },
+  {
+    "file": "scripts/run_designer_round3.py",
+    "line": 42,
+    "keyword": "siteaudit",
+    "snippet": "(\"SiteAudit Pro\", \"5514241c-ef82-4092-b91f-a9cf94290f58\")"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 20,
+    "keyword": "aerofleet",
+    "snippet": "\"project_name\": \"AeroFleet Hangar\","
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 34,
+    "keyword": "aerofleet",
+    "snippet": "\"question\": \"What is the core problem and purpose of AeroFleet Hangar?\","
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 35,
+    "keyword": "inspection",
+    "snippet": "\"answer\": \"Aviation maintenance technicians and Part 145 inspectors need a high-reliability, local-f"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 60,
+    "keyword": "aerofleet",
+    "snippet": "# Product Requirements Document (PRD): AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 63,
+    "keyword": "aerofleet",
+    "snippet": "AeroFleet Hangar is an offline-first, high-precision aviation fleet airworthiness management worksta"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 80,
+    "keyword": "inspection",
+    "snippet": "| `[AC-002]` | Validation prevents work order sign-off if any required safety inspection step remain"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 134,
+    "keyword": "aerofleet",
+    "snippet": "# Technical Architecture Document: AeroFleet Hangar"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 137,
+    "keyword": "aerofleet",
+    "snippet": "AeroFleet Hangar is an offline-first desktop application engineered for Part 145 aircraft repair fac"
+  },
+  {
+    "file": "scripts/setup_and_run_aerofleet.py",
+    "line": 162,
+    "keyword": "aerofleet",
+    "snippet": "\"client_notes\": \"AeroFleet Hangar PRD and architecture approved for Stage 3 UI/UX design specificati"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 8,
+    "keyword": "specimen",
+    "snippet": "Tested on a NEW project idea: BioVault Lab (Clinical Specimen & Cold-Chain Custody Tracker)."
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 8,
+    "keyword": "biovault",
+    "snippet": "Tested on a NEW project idea: BioVault Lab (Clinical Specimen & Cold-Chain Custody Tracker)."
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 23,
+    "keyword": "biovault",
+    "snippet": "log(\"Starting E2E pipeline test for new project 'BioVault Lab'...\")"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 30,
+    "keyword": "biovault",
+    "snippet": "log(\"Step 1: Initiating BA intake for BioVault Lab...\")"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 32,
+    "keyword": "biovault",
+    "snippet": "\"project_name\": \"BioVault Lab\","
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 33,
+    "keyword": "specimen",
+    "snippet": "\"description\": \"A standalone desktop and local-network laboratory specimen inventory and chain-of-cu"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 33,
+    "keyword": "freezer",
+    "snippet": "\"description\": \"A standalone desktop and local-network laboratory specimen inventory and chain-of-cu"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 33,
+    "keyword": "temperature",
+    "snippet": "\"description\": \"A standalone desktop and local-network laboratory specimen inventory and chain-of-cu"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 33,
+    "keyword": "accession",
+    "snippet": "\"description\": \"A standalone desktop and local-network laboratory specimen inventory and chain-of-cu"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 47,
+    "keyword": "biovault",
+    "snippet": "\"Yes, let's begin. We are building BioVault Lab to eliminate sample misplacement and compliance pena"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "keyword": "specimen",
+    "snippet": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, an"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "keyword": "temperature",
+    "snippet": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, an"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "keyword": "barcode",
+    "snippet": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, an"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 48,
+    "keyword": "inspection",
+    "snippet": "\"The primary users are Lab Technicians who scan specimen vials, Lab Managers who monitor storage, an"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 49,
+    "keyword": "specimen",
+    "snippet": "\"For performance and privacy: barcode scanning and specimen search must respond in under 1.5 seconds"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 49,
+    "keyword": "barcode",
+    "snippet": "\"For performance and privacy: barcode scanning and specimen search must respond in under 1.5 seconds"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 89,
+    "keyword": "biovault",
+    "snippet": "\"client_notes\": \"BioVault Lab PRD, scope, non-goals, and assumptions are approved for technical desi"
+  },
+  {
+    "file": "scripts/e2e_biovault_test.py",
+    "line": 116,
+    "keyword": "biovault",
+    "snippet": "log(\"\\n>>> ALL STAGES COMPLETED SUCCESSFULLY FOR BIOVAULT LAB!\")"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 10,
+    "keyword": "siteaudit",
+    "snippet": "print(\"=== 1. Starting Fresh BA Session (SiteAudit Pro) ===\")"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 12,
+    "keyword": "siteaudit",
+    "snippet": "\"project_name\": \"SiteAudit Pro\","
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 13,
+    "keyword": "inspection",
+    "snippet": "\"description\": \"A local offline construction site inspection and hazard log tool for civil engineers"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 13,
+    "keyword": "deficiency",
+    "snippet": "\"description\": \"A local offline construction site inspection and hazard log tool for civil engineers"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 38,
+    "keyword": "inspection",
+    "snippet": "\"Existing commercial construction platforms require persistent cloud connectivity which fails in und"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 38,
+    "keyword": "deficiency",
+    "snippet": "\"Existing commercial construction platforms require persistent cloud connectivity which fails in und"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 41,
+    "keyword": "inspection",
+    "snippet": "\"Target timeline is strictly 7 weeks for v1 MVP. Build budget is $7,500 with zero monthly subscripti"
+  },
+  {
+    "file": "scripts/test_siteaudit_pro_e2e.py",
+    "line": 130,
+    "keyword": "siteaudit",
+    "snippet": "print(\"ALL SITEAUDIT PRO E2E CHECKS PASSED!\")"
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "keyword": "specimen",
+    "snippet": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "keyword": "freezer",
+    "snippet": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "keyword": "barcode",
+    "snippet": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 112,
+    "keyword": "biovault",
+    "snippet": "\"biovault\", \"freezer\", \"specimen\", \"barcode\", \"clia\","
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 113,
+    "keyword": "punchlist",
+    "snippet": "\"siteaudit\", \"photo notes\", \"field operators\", \"punchlist\""
+  },
+  {
+    "file": "scripts/e2e_full_pipeline_test.py",
+    "line": 113,
+    "keyword": "siteaudit",
+    "snippet": "\"siteaudit\", \"photo notes\", \"field operators\", \"punchlist\""
+  }
+]
