@@ -1,8 +1,0 @@
-{
-  "project_name": "BioVault Lab Specimen Tracker",
-  "description": "Desktop tracking system for cryogenic bio-specimens, accessioning, 2D barcodes, and freezer chain of custody.",
-  "target_users": "Lab technicians, Principal Investigators, and Compliance Officers",
-  "timeline": "6 weeks for v1 MVP",
-  "budget": "$15,000 budget with $0/month ongoing cloud infrastructure cost",
-  "created_at": "2026-10-18T10:13:33.886068+00:00"
-}

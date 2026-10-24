@@ -16,3 +16,10 @@ venv
 .DS_Store
 .vscode
 .idea
+
+# Data and SQLite databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+scratch/

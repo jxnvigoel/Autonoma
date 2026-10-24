@@ -1,8 +1,0 @@
-{
-  "project_name": "BioVault Local Archive",
-  "description": "Local offline specimen archive tracker running strictly on Ollama.",
-  "target_users": "Lab Technicians",
-  "timeline": "4 weeks",
-  "budget": "$5,000",
-  "created_at": "2026-10-18T10:23:53.815664+00:00"
-}

@@ -1,8 +1,0 @@
-{
-  "project_name": "TaskSync Studio",
-  "description": "A focused desktop task manager with local sqlite storage, automated daily standup markdown export, and distraction blocking timer for remote developers.",
-  "target_users": "Solo remote software engineers and tech leads",
-  "timeline": "6 weeks for v1 MVP",
-  "budget": "$5,000 build budget, under $30/month local operating cost",
-  "created_at": "2026-10-16T13:06:39.760706+00:00"
-}
