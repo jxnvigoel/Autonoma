@@ -17,6 +17,7 @@ import {
   Lock,
   Cpu,
   Palette,
+  Users,
 } from "lucide-react";
 import { AgentRoleKey, AgentPixelAvatar } from "./AgentAvatars";
 import { AgentStatusBadge } from "./AgentStatusBadge";
@@ -25,6 +26,9 @@ import { PRDViewer } from "./PRDViewer";
 import { BAOutputViewer } from "./BAOutputViewer";
 import { ArchitectOutputViewer } from "./ArchitectOutputViewer";
 import { DesignerOutputViewer } from "./DesignerOutputViewer";
+import { TeamPlanViewer } from "./TeamPlanViewer";
+import { StaffingReportViewer } from "./StaffingReportViewer";
+
 import { useConversation } from "../../context/ConversationContext";
 import { AgentLiveStatus } from "../../lib/engine";
 
@@ -70,6 +74,18 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     approveGate1,
     requestGate1Changes,
     generateArchitectArtifacts,
+    teamPlanData,
+    staffingReportContent,
+    hiredAgents,
+    gate2State,
+    budgetGuard,
+    isHrGenerating,
+    isRecruiterGenerating,
+    isGate2Approving,
+    generateHrPlan,
+    executeRecruiterHiring,
+    approveGate2,
+    requestGate2Changes,
     officeStatus,
   } = useConversation();
 
@@ -82,6 +98,8 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   const isPM = activeAgent === "pm";
   const isArchitect = activeAgent === "architect";
   const isDesigner = activeAgent === "designer";
+  const isHR = activeAgent === "hr";
+  const isRecruiter = activeAgent === "recruiter";
   const gate1Approved = Boolean(officeStatus?.gate1?.approved || gate1State?.approved);
 
   const currentMessages = isBA ? baMessages : pmMessages;
@@ -121,6 +139,22 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
       description: "App flow diagrams, screen states, user journeys, and WCAG 2.2 AA visual tokens",
       outputTitle: "App Flow & Design Brief",
     },
+    hr: {
+      role: "Staffing Planner",
+      abbr: "HR",
+      status: (officeStatus?.agents?.hr?.status ||
+        (teamPlanData ? "done" : architectureContent ? "waiting-on-you" : "idle")) as AgentLiveStatus,
+      description: "Computes team sizing arithmetic, role merging, and schedules per Handbook Chapter 6.1",
+      outputTitle: "Staffing Plan & Requisitions",
+    },
+    recruiter: {
+      role: "Technical Recruiter",
+      abbr: "REC",
+      status: (officeStatus?.agents?.recruiter?.status ||
+        (staffingReportContent ? "done" : teamPlanData ? "waiting-on-you" : "idle")) as AgentLiveStatus,
+      description: "Routes model risk tiers, validates least privilege, and registers Gate 2",
+      outputTitle: "Staffing Report & Model Tiers",
+    },
     engineer: {
       role: "Software Engineer",
       abbr: "ENG",
@@ -136,6 +170,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
       outputTitle: "Test Plan & Results",
     },
   }[activeAgent];
+
 
   // Auto scroll messages to bottom on new turn
   useEffect(() => {
@@ -265,7 +300,34 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
             <Palette className="w-3.5 h-3.5 text-cyan-500" />
             <span>Designer</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => onSwitchAgent("hr")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              isHR
+                ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
+                : "text-brand-body hover:text-brand-headline"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-indigo-500" />
+            <span>HR</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSwitchAgent("recruiter")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              isRecruiter
+                ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
+                : "text-brand-body hover:text-brand-headline"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-teal-500" />
+            <span>Recruiter</span>
+          </button>
         </div>
+
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -522,6 +584,108 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
             </div>
           )}
 
+          {/* HR Workstation Banner */}
+          {isHR && !architectureContent && (
+            <div className="m-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-300">
+                <Lock className="w-4 h-4" />
+                <span>Stage 4 Locked: Architecture Blueprint Required</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                The HR Staffing Planner requires docs/architecture.md (§10/12 Team plan) and PRD features to calculate capacity and seat requisitions.
+              </p>
+              <button
+                type="button"
+                onClick={() => onSwitchAgent("architect")}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Open Architect View</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {isHR && architectureContent && !teamPlanData && (
+            <div className="m-4 p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-indigo-700 dark:text-indigo-300">
+                <Sparkles className="w-4 h-4" />
+                <span>Ready for Staffing & Sizing Analysis</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                Architecture and PRD features detected. HR will compute seat capacity, apply role-merging [ASM-03], stagger schedules, and verify 100% must-have coverage.
+              </p>
+              <button
+                type="button"
+                onClick={() => generateHrPlan()}
+                disabled={isHrGenerating}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isHrGenerating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Computing Sizing Arithmetic & Justifications...</span>
+                  </>
+                ) : (
+                  <>
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Generate Team Plan (docs/team-plan.json)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Recruiter Workstation Banner */}
+          {isRecruiter && !teamPlanData && (
+            <div className="m-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-300">
+                <Lock className="w-4 h-4" />
+                <span>Stage 4 Locked: Team Plan Requisitions Required</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                The Technical Recruiter reads open requisitions from docs/team-plan.json to route models, attach skill packs, and hire agents.
+              </p>
+              <button
+                type="button"
+                onClick={() => onSwitchAgent("hr")}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Open HR View to Generate Team Plan</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {isRecruiter && teamPlanData && hiredAgents.length === 0 && (
+            <div className="m-4 p-4 rounded-xl border border-teal-500/30 bg-teal-500/10 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-teal-700 dark:text-teal-300">
+                <Sparkles className="w-4 h-4" />
+                <span>Requisitions Ready: Execute Hiring Loop</span>
+              </div>
+              <p className="text-[11px] text-brand-body leading-relaxed">
+                Recruiter will query live GET /models for tier assignment, enforce least-privilege tools, derive token caps with 20% rework buffer, and persist agents in SQLite office.db.
+              </p>
+              <button
+                type="button"
+                onClick={() => executeRecruiterHiring()}
+                disabled={isRecruiterGenerating}
+                className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isRecruiterGenerating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Resolving Model Tiers & Hiring Agents...</span>
+                  </>
+                ) : (
+                  <>
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Execute Recruiter Hiring Loop</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Error Banner */}
           {pmError && isPM && (
             <div className="m-4 p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">
@@ -540,6 +704,10 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     ? "Solution Architecture Command Center"
                     : isDesigner
                     ? "UI/UX Design Studio Command Center"
+                    : isHR
+                    ? "HR Staffing Planner Command Center"
+                    : isRecruiter
+                    ? "Technical Recruiter Command Center"
                     : `No messages yet with ${agentMeta.role}`}
                 </p>
                 <p className="text-[11px] mt-1 max-w-xs">
@@ -551,6 +719,14 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     ? appFlowContent
                       ? "App flows and design brief generated. Review documents and WCAG contrast audit in the right pane."
                       : "Gate 1 approved. Click 'Generate UI/UX Blueprints' above to produce user journeys and design brief."
+                    : isHR
+                    ? teamPlanData
+                      ? "Team plan generated with sizing arithmetic. Review requisitions and coverage in the right pane."
+                      : "Click 'Generate Team Plan' above to compute seat sizing from PRD and Architecture."
+                    : isRecruiter
+                    ? staffingReportContent
+                      ? "Engineering team staffed and Gate 2 sign-off registered. Review org chart and budget in the right pane."
+                      : "Click 'Execute Recruiter Hiring Loop' above to staff agents and open Gate 2."
                     : isPM
                     ? "Click 'Initialize PM & Draft PRD' or ask a question to begin."
                     : "Type a response below to talk with your Business Analyst."}
@@ -595,10 +771,20 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     handleSendMessage();
                   }
                 }}
-                disabled={isAgentThinking || (isPM && !pmStarted) || ((isArchitect || isDesigner) && !gate1Approved)}
+                disabled={
+                  isAgentThinking ||
+                  (isPM && !pmStarted) ||
+                  ((isArchitect || isDesigner) && !gate1Approved) ||
+                  (isHR && !architectureContent) ||
+                  (isRecruiter && !teamPlanData)
+                }
                 placeholder={
                   (isArchitect || isDesigner) && !gate1Approved
                     ? "Approve Gate 1 before sending messages to Stage 3 agents..."
+                    : isHR && !architectureContent
+                    ? "Complete Architecture before planning staffing..."
+                    : isRecruiter && !teamPlanData
+                    ? "Generate Team Plan before initiating hiring..."
                     : isPM && !pmStarted
                     ? "Initialize PM first to start conversation..."
                     : `Message ${agentMeta.role}... (Enter to send, Shift+Enter for newline)`
@@ -613,7 +799,9 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                   isAgentThinking ||
                   !inputMessage.trim() ||
                   (isPM && !pmStarted) ||
-                  ((isArchitect || isDesigner) && !gate1Approved)
+                  ((isArchitect || isDesigner) && !gate1Approved) ||
+                  (isHR && !architectureContent) ||
+                  (isRecruiter && !teamPlanData)
                 }
                 className="ml-2 p-2 rounded-lg bg-brand-accent hover:bg-brand-accent-hover text-brand-accent-text transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                 title="Send Message"
@@ -669,6 +857,29 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               onGenerate={() => generateDesignerArtifacts()}
               canStart={gate1Approved && !appFlowContent}
             />
+          ) : isHR ? (
+            <TeamPlanViewer
+              teamPlan={teamPlanData}
+              projectName={intakeData?.projectName}
+              isGenerating={isHrGenerating}
+              onGenerate={() => generateHrPlan()}
+              canStart={Boolean(architectureContent)}
+              onProceedToHiring={() => onSwitchAgent("recruiter")}
+            />
+          ) : isRecruiter ? (
+            <StaffingReportViewer
+              reportContent={staffingReportContent}
+              hiredAgents={hiredAgents}
+              gate2State={gate2State}
+              budgetGuard={budgetGuard}
+              projectName={intakeData?.projectName}
+              isHiring={isRecruiterGenerating}
+              onRunHiring={() => executeRecruiterHiring()}
+              canHire={Boolean(teamPlanData)}
+              onApproveGate2={approveGate2}
+              onRequestGate2Changes={requestGate2Changes}
+              isApprovingGate2={isGate2Approving}
+            />
           ) : (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-brand-card rounded-2xl border border-brand-border">
               <Layers className="w-8 h-8 text-brand-body/40 mb-2" />
@@ -685,6 +896,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     </motion.div>
   );
 };
+
 
 export default CommandCenter;
 

@@ -12,6 +12,10 @@ import {
   OfficeStatusResponse,
   PMEstimateData,
   Gate1State,
+  Gate2State,
+  TeamPlanData,
+  AgentProfile,
+  BudgetGuardStatus,
   startBaSession,
   sendBaMessage,
   getBaRequirements,
@@ -28,9 +32,20 @@ import {
   apiGetDesignerSession,
   apiGenerateDesignerArtifacts,
   apiRunFeasibility,
+  apiRunHrPlan,
+  apiGetHrTeamPlan,
+  apiRunRecruiterHire,
+  apiGetRecruiterAgents,
+  apiGetRecruiterReport,
+  apiGetGate2Status,
+  apiApproveGate2,
+  apiRequestGate2Changes,
+  apiGetBudgetStatus,
   clearConversation as apiClearConversation,
   sendChatMessage as apiSendChatMessage,
 } from "../lib/engine";
+
+
 
 export interface QALogEntry {
   id: string;
@@ -78,11 +93,22 @@ interface ConversationContextType {
   designerState: any | null;
   isDesignerGenerating: boolean;
 
+  // Stage 4 HR & Recruiter & Gate 2 State
+  teamPlanData: TeamPlanData | null;
+  staffingReportContent: string | null;
+  hiredAgents: AgentProfile[];
+  gate2State: Gate2State | null;
+  budgetGuard: BudgetGuardStatus | null;
+  isHrGenerating: boolean;
+  isRecruiterGenerating: boolean;
+  isGate2Approving: boolean;
+
   // Virtual Office State
   officeStatus: OfficeStatusResponse | null;
-  activeOfficeAgent: "ba" | "pm" | "architect" | "designer" | "engineer" | "qa" | null;
-  setActiveOfficeAgent: (agent: "ba" | "pm" | "architect" | "designer" | "engineer" | "qa" | null) => void;
+  activeOfficeAgent: "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa" | null;
+  setActiveOfficeAgent: (agent: "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa" | null) => void;
   refreshOfficeStatus: (targetSessionId?: string) => Promise<void>;
+
 
   // Actions
   startSession: (intake: IntakeFormData) => Promise<string>;
@@ -103,7 +129,13 @@ interface ConversationContextType {
   approveGate1: (notes?: string) => Promise<void>;
   requestGate1Changes: (feedback: string) => Promise<void>;
   runFeasibility: () => Promise<void>;
+  fetchStage4Session: (targetSessionId?: string) => Promise<void>;
+  generateHrPlan: (targetSessionId?: string) => Promise<void>;
+  executeRecruiterHiring: (targetSessionId?: string) => Promise<void>;
+  approveGate2: (notes?: string) => Promise<void>;
+  requestGate2Changes: (feedback: string) => Promise<void>;
   newSession: () => void;
+
   clearHistory: () => Promise<void>;
   refreshHistory: () => Promise<void>;
   setError: (err: string | null) => void;
@@ -159,11 +191,22 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [designerState, setDesignerState] = useState<any | null>(null);
   const [isDesignerGenerating, setIsDesignerGenerating] = useState<boolean>(false);
 
+  // Stage 4 HR & Recruiter & Gate 2 State
+  const [teamPlanData, setTeamPlanData] = useState<TeamPlanData | null>(null);
+  const [staffingReportContent, setStaffingReportContent] = useState<string | null>(null);
+  const [hiredAgents, setHiredAgents] = useState<AgentProfile[]>([]);
+  const [gate2State, setGate2State] = useState<Gate2State | null>(null);
+  const [budgetGuard, setBudgetGuard] = useState<BudgetGuardStatus | null>(null);
+  const [isHrGenerating, setIsHrGenerating] = useState<boolean>(false);
+  const [isRecruiterGenerating, setIsRecruiterGenerating] = useState<boolean>(false);
+  const [isGate2Approving, setIsGate2Approving] = useState<boolean>(false);
+
   // Virtual Office State
   const [officeStatus, setOfficeStatus] = useState<OfficeStatusResponse | null>(null);
   const [activeOfficeAgent, setActiveOfficeAgent] = useState<
-    "ba" | "pm" | "architect" | "designer" | "engineer" | "qa" | null
+    "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa" | null
   >(null);
+
 
   const refreshSessions = useCallback(async () => {
     setIsLoadingSessions(true);
@@ -211,7 +254,79 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId]
   );
 
+  const fetchArchitectSession = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      try {
+        const data = await apiGetArchitectSession(target);
+        setArchitectureContent(data.architecture_content || null);
+        setSchemaContent(data.schema_content || null);
+        setOpenapiContent(data.openapi_content || null);
+        setArchitectState(data.state || null);
+      } catch {
+        setArchitectureContent(null);
+        setSchemaContent(null);
+        setOpenapiContent(null);
+        setArchitectState(null);
+      }
+    },
+    [sessionId]
+  );
+
+  const fetchDesignerSession = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      try {
+        const data = await apiGetDesignerSession(target);
+        setAppFlowContent(data.app_flow_content || null);
+        setDesignBriefContent(data.design_brief_content || null);
+        setDesignerState(data.state || null);
+      } catch {
+        setAppFlowContent(null);
+        setDesignBriefContent(null);
+        setDesignerState(null);
+      }
+    },
+    [sessionId]
+  );
+
+  const fetchStage4Session = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      try {
+        const [planRes, reportRes, agentsRes, gate2Res, budgetRes] = await Promise.allSettled([
+          apiGetHrTeamPlan(target),
+          apiGetRecruiterReport(target),
+          apiGetRecruiterAgents(target),
+          apiGetGate2Status(target),
+          apiGetBudgetStatus(target),
+        ]);
+        if (planRes.status === "fulfilled") setTeamPlanData(planRes.value);
+        else setTeamPlanData(null);
+
+        if (reportRes.status === "fulfilled") setStaffingReportContent(reportRes.value.content);
+        else setStaffingReportContent(null);
+
+        if (agentsRes.status === "fulfilled") setHiredAgents(agentsRes.value.agents || []);
+        else setHiredAgents([]);
+
+        if (gate2Res.status === "fulfilled") setGate2State(gate2Res.value);
+        else setGate2State(null);
+
+        if (budgetRes.status === "fulfilled") setBudgetGuard(budgetRes.value.guard);
+        else setBudgetGuard(null);
+      } catch {
+        // Silently catch
+      }
+    },
+    [sessionId]
+  );
+
   const selectSession = useCallback(
+
     async (targetSessionId: string) => {
       if (!targetSessionId) return;
       setIsLoadingSession(true);
@@ -227,6 +342,11 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       setPrdContent(null);
       setEstimateData(null);
       setPmStarted(false);
+      setTeamPlanData(null);
+      setStaffingReportContent(null);
+      setHiredAgents([]);
+      setGate2State(null);
+      setBudgetGuard(null);
 
       try {
         const data = await getBaSession(targetSessionId);
@@ -263,6 +383,10 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         } catch {
           // Ignore
         }
+
+        await fetchArchitectSession(targetSessionId);
+        await fetchDesignerSession(targetSessionId);
+        await fetchStage4Session(targetSessionId);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
@@ -270,8 +394,9 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsLoadingSession(false);
       }
     },
-    []
+    [fetchArchitectSession, fetchDesignerSession, fetchStage4Session]
   );
+
 
   // Initial load of sessions list on startup
   useEffect(() => {
@@ -508,26 +633,6 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId, isPmSending, refreshOfficeStatus]
   );
 
-  const fetchArchitectSession = useCallback(
-    async (targetSessionId?: string) => {
-      const target = targetSessionId || sessionId;
-      if (!target) return;
-      try {
-        const data = await apiGetArchitectSession(target);
-        setArchitectureContent(data.architecture_content || null);
-        setSchemaContent(data.schema_content || null);
-        setOpenapiContent(data.openapi_content || null);
-        setArchitectState(data.state || null);
-      } catch {
-        setArchitectureContent(null);
-        setSchemaContent(null);
-        setOpenapiContent(null);
-        setArchitectState(null);
-      }
-    },
-    [sessionId]
-  );
-
   const generateArchitectArtifacts = useCallback(
     async (targetSessionId?: string) => {
       const target = targetSessionId || sessionId;
@@ -546,24 +651,6 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     },
     [sessionId, fetchArchitectSession, refreshOfficeStatus]
-  );
-
-  const fetchDesignerSession = useCallback(
-    async (targetSessionId?: string) => {
-      const target = targetSessionId || sessionId;
-      if (!target) return;
-      try {
-        const data = await apiGetDesignerSession(target);
-        setAppFlowContent(data.app_flow_content || null);
-        setDesignBriefContent(data.design_brief_content || null);
-        setDesignerState(data.state || null);
-      } catch {
-        setAppFlowContent(null);
-        setDesignBriefContent(null);
-        setDesignerState(null);
-      }
-    },
-    [sessionId]
   );
 
   const generateDesignerArtifacts = useCallback(
@@ -632,6 +719,85 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId, refreshOfficeStatus]
   );
 
+  const generateHrPlan = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsHrGenerating(true);
+      setError(null);
+      try {
+        const plan = await apiRunHrPlan(target);
+        setTeamPlanData(plan);
+        await refreshOfficeStatus(target);
+        await fetchStage4Session(target);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        throw err;
+      } finally {
+        setIsHrGenerating(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus, fetchStage4Session]
+  );
+
+  const executeRecruiterHiring = useCallback(
+    async (targetSessionId?: string) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsRecruiterGenerating(true);
+      setError(null);
+      try {
+        await apiRunRecruiterHire(target);
+        await refreshOfficeStatus(target);
+        await fetchStage4Session(target);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        throw err;
+      } finally {
+        setIsRecruiterGenerating(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus, fetchStage4Session]
+  );
+
+  const approveGate2 = useCallback(
+    async (notes?: string) => {
+      if (!sessionId) return;
+      setIsGate2Approving(true);
+      try {
+        await apiApproveGate2(sessionId, notes);
+        await refreshOfficeStatus(sessionId);
+        await fetchStage4Session(sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      } finally {
+        setIsGate2Approving(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus, fetchStage4Session]
+  );
+
+  const requestGate2Changes = useCallback(
+    async (feedback: string) => {
+      if (!sessionId) return;
+      setIsGate2Approving(true);
+      try {
+        await apiRequestGate2Changes(sessionId, feedback);
+        await refreshOfficeStatus(sessionId);
+        await fetchStage4Session(sessionId);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+      } finally {
+        setIsGate2Approving(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus, fetchStage4Session]
+  );
+
   const newSession = useCallback(() => {
     setSessionId(null);
     setIntakeData(null);
@@ -651,6 +817,11 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     setDesignBriefContent(null);
     setDesignerState(null);
     setGate1State(null);
+    setTeamPlanData(null);
+    setStaffingReportContent(null);
+    setHiredAgents([]);
+    setGate2State(null);
+    setBudgetGuard(null);
     setOfficeStatus(null);
     setActiveOfficeAgent(null);
     setError(null);
@@ -708,6 +879,14 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         designBriefContent,
         designerState,
         isDesignerGenerating,
+        teamPlanData,
+        staffingReportContent,
+        hiredAgents,
+        gate2State,
+        budgetGuard,
+        isHrGenerating,
+        isRecruiterGenerating,
+        isGate2Approving,
         officeStatus,
         activeOfficeAgent,
         setActiveOfficeAgent,
@@ -727,6 +906,11 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         approveGate1,
         requestGate1Changes,
         runFeasibility,
+        fetchStage4Session,
+        generateHrPlan,
+        executeRecruiterHiring,
+        approveGate2,
+        requestGate2Changes,
         newSession,
         clearHistory,
         refreshHistory,
@@ -737,6 +921,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       {children}
     </ConversationContext.Provider>
   );
+
 };
 
 export const useConversation = (): ConversationContextType => {

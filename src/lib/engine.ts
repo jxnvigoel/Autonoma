@@ -167,7 +167,7 @@ export interface PMSessionDetail {
 }
 
 export interface OfficeAgentInfo {
-  id: "ba" | "pm" | "architect" | "designer" | "engineer" | "qa";
+  id: "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa";
   role: string;
   abbr: string;
   status: AgentLiveStatus;
@@ -178,6 +178,7 @@ export interface OfficeAgentInfo {
   qa_count?: number;
   ready_for_handoff?: boolean;
   can_start?: boolean;
+  is_unlocked?: boolean;
   attached_skills?: string[];
 }
 
@@ -190,6 +191,77 @@ export interface Gate1State {
   feedback?: string;
 }
 
+export interface Gate2State {
+  session_id: string;
+  gate: number;
+  status: "open" | "approved" | "changes_requested" | "pending" | "waiting_for_team_plan" | "invalidated";
+  approved: boolean;
+  approved_at?: string | null;
+  feedback?: string;
+  routed_qid?: string;
+  has_team_plan?: boolean;
+  has_staffing_report?: boolean;
+  client_notes?: string;
+  invalidated_reason?: string;
+}
+
+export interface TeamPlanRequisition {
+  role: string;
+  seat_id: string;
+  count: number;
+  start_week: number;
+  end_week: number;
+  why: string;
+  refs: string[];
+  replaces_roles?: string[];
+}
+
+export interface TeamPlanData {
+  project_id: string;
+  generated_at: string;
+  total_weeks: number;
+  total_headcount_weeks: number;
+  headcount_budget_cap: number;
+  headcount_over_budget: boolean;
+  points_per_agent_per_week: number;
+  features_covered: string[];
+  requisitions: TeamPlanRequisition[];
+  unstaffed_must_haves: string[];
+}
+
+export interface AgentProfile {
+  id: string;
+  project_id: string;
+  name: string;
+  role: string;
+  seat_id: string;
+  reports_to: string;
+  tier: string;
+  provider: string;
+  model: string;
+  tools: string[];
+  skill_packs: string[];
+  fs_scope: string;
+  token_cap: number;
+  status: string;
+  hired_at?: string;
+}
+
+export interface BudgetGuardStatus {
+  session_id: string;
+  spent_tokens: number;
+  budget_limit_tokens: number;
+  token_percent: number;
+  spent_cost_usd: number;
+  budget_limit_usd?: number | null;
+  usd_percent: number;
+  warn_80: boolean;
+  pause_100: boolean;
+  status: "ok" | "warning" | "paused";
+  message: string;
+  notes?: string;
+}
+
 export interface OfficeStatusResponse {
   session_id: string;
   project_name: string;
@@ -198,13 +270,18 @@ export interface OfficeStatusResponse {
   timeline: string;
   budget: string;
   gate1?: Gate1State;
+  gate2?: Gate2State;
+  has_team_plan?: boolean;
+  has_staffing_report?: boolean;
   agents: {
     ba: OfficeAgentInfo;
     pm: OfficeAgentInfo;
     architect: OfficeAgentInfo & { is_unlocked?: boolean };
     designer?: OfficeAgentInfo & { is_unlocked?: boolean };
-    engineer: OfficeAgentInfo;
-    qa: OfficeAgentInfo;
+    hr?: OfficeAgentInfo & { is_unlocked?: boolean };
+    recruiter?: OfficeAgentInfo & { is_unlocked?: boolean };
+    engineer: OfficeAgentInfo & { is_unlocked?: boolean };
+    qa: OfficeAgentInfo & { is_unlocked?: boolean };
   };
 }
 
@@ -878,3 +955,106 @@ export async function detachSkillPack(
   }
   return res.json();
 }
+
+/**
+ * Stage 4 Staffing (HR & Recruiter), Gate 2, & Budget API Functions
+ */
+export async function apiRunHrPlan(sessionId: string): Promise<TeamPlanData> {
+  const res = await fetch(`${ENGINE_BASE_URL}/hr/plan/${sessionId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to generate HR staffing plan");
+  }
+  return res.json();
+}
+
+export async function apiGetHrTeamPlan(sessionId: string): Promise<TeamPlanData> {
+  const res = await fetch(`${ENGINE_BASE_URL}/hr/team-plan/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to retrieve HR team plan: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiRunRecruiterHire(sessionId: string): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/recruiter/hire/${sessionId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to execute Recruiter hiring");
+  }
+  return res.json();
+}
+
+export async function apiGetRecruiterAgents(
+  sessionId: string
+): Promise<{ session_id: string; agents: AgentProfile[]; count: number }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/recruiter/agents/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to retrieve hired agents: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiGetRecruiterReport(
+  sessionId: string
+): Promise<{ session_id: string; content: string }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/recruiter/report/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to retrieve staffing report: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiGetGate2Status(sessionId: string): Promise<Gate2State> {
+  const res = await fetch(`${ENGINE_BASE_URL}/gate2/status/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Gate 2 status: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiApproveGate2(sessionId: string, clientNotes?: string): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/gate2/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, client_notes: clientNotes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to approve Gate 2");
+  }
+  return res.json();
+}
+
+export async function apiRequestGate2Changes(sessionId: string, feedback: string): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/gate2/request-changes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, feedback }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to request changes at Gate 2");
+  }
+  return res.json();
+}
+
+export async function apiGetBudgetStatus(
+  sessionId: string
+): Promise<{ session_id: string; guard: BudgetGuardStatus; recomputation: any }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/budget/status/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to retrieve budget status: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiStartScrumStage(sessionId: string): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/scrum/start/${sessionId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to start Scrum stage");
+  }
+  return res.json();
+}
+

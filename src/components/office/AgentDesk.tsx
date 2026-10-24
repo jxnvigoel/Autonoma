@@ -14,7 +14,9 @@ import {
   ShieldCheck,
   Palette,
   Lock,
+  Users,
 } from "lucide-react";
+
 
 interface AgentDeskProps {
   roleKey: AgentRoleKey;
@@ -28,6 +30,7 @@ interface AgentDeskProps {
   isUnlocked?: boolean;
   provider?: string;
   model?: string;
+  attachedSkills?: string[];
   onClick: () => void;
 }
 
@@ -42,6 +45,7 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
   isUnlocked = true,
   provider,
   model,
+  attachedSkills,
   onClick,
 }) => {
   const isWorking = status === "working";
@@ -80,12 +84,25 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
       icon: <Palette className="w-3.5 h-3.5 text-cyan-500" />,
       deskAccent: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
     },
+    hr: {
+      glow: "hover:border-indigo-500/80 group-hover:shadow-[0_0_20px_rgba(99,102,241,0.3)]",
+      monitorColor: "#6366F1",
+      icon: <Users className="w-3.5 h-3.5 text-indigo-500" />,
+      deskAccent: "bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
+    },
+    recruiter: {
+      glow: "hover:border-teal-500/80 group-hover:shadow-[0_0_20px_rgba(20,184,166,0.3)]",
+      monitorColor: "#14B8A6",
+      icon: <Users className="w-3.5 h-3.5 text-teal-500" />,
+      deskAccent: "bg-teal-500/20 text-teal-600 dark:text-teal-400 border-teal-500/30",
+    },
     engineer: {
       glow: "hover:border-rose-500/80 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.3)]",
       monitorColor: "#EF4444",
       icon: <Code2 className="w-3.5 h-3.5 text-rose-500" />,
       deskAccent: "bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30",
     },
+
     qa: {
       glow: "hover:border-amber-500/80 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.3)]",
       monitorColor: "#F59E0B",
@@ -147,6 +164,21 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
           <span className="truncate max-w-[125px] bg-brand-subtle px-1.5 py-0.5 rounded border border-brand-border/60">
             {model.includes("/") ? model.split("/")[1] : model}
           </span>
+        </div>
+      )}
+
+      {/* Specialist Skill Pack Badges on Desk */}
+      {attachedSkills && attachedSkills.length > 0 && (
+        <div className="w-full flex flex-wrap gap-1 px-1 mb-1 items-center justify-start">
+          {attachedSkills.map((skill) => (
+            <span
+              key={skill}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-purple-500/15 text-purple-400 border border-purple-500/30 shadow-xs"
+              title={`Specialist Skill: ${skill}`}
+            >
+              {skill === "payments" ? "💳" : skill === "auth" ? "🛡️" : skill === "notifications" ? "🔔" : skill === "file-storage" ? "📁" : "⚡"} {skill}
+            </span>
+          ))}
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import React from "react";
 
-export type AgentRoleKey = "ba" | "pm" | "architect" | "designer" | "engineer" | "qa";
+export type AgentRoleKey = "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa";
 
 interface AgentAvatarProps {
   role: AgentRoleKey;
@@ -55,6 +55,22 @@ export const AgentPixelAvatar: React.FC<AgentAvatarProps> = ({
       accessory: "#38BDF8",
       accent: "#06B6D4",
       deskAccent: "bg-cyan-500",
+    },
+    hr: {
+      hair: "#312E81",
+      face: "#FDE68A",
+      clothes: "#4F46E5",
+      accessory: "#818CF8",
+      accent: "#6366F1",
+      deskAccent: "bg-indigo-500",
+    },
+    recruiter: {
+      hair: "#1E1B4B",
+      face: "#FCD34D",
+      clothes: "#0D9488",
+      accessory: "#2DD4BF",
+      accent: "#14B8A6",
+      deskAccent: "bg-teal-500",
     },
     engineer: {
       hair: "#B45309",
@@ -129,6 +145,25 @@ export const AgentPixelAvatar: React.FC<AgentAvatarProps> = ({
             <rect x="11" y="12" width="2" height="2" fill="#065F46" />
           </>
         )}
+
+        {role === "hr" && (
+          <>
+            {/* Glasses & Clipboard pin */}
+            <rect x="8" y="9" width="3" height="2" stroke="#312E81" strokeWidth="1" fill="none" />
+            <rect x="13" y="9" width="3" height="2" stroke="#312E81" strokeWidth="1" fill="none" />
+            <rect x="11" y="14" width="2" height="3" fill="#818CF8" />
+          </>
+        )}
+
+        {role === "recruiter" && (
+          <>
+            {/* Headset & Talent badge */}
+            <rect x="5" y="7" width="2" height="3" fill="#0D9488" />
+            <rect x="17" y="7" width="2" height="3" fill="#0D9488" />
+            <rect x="11" y="14" width="2" height="2" fill="#2DD4BF" />
+          </>
+        )}
+
 
         {role === "engineer" && (
           <>

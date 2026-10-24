@@ -2,7 +2,7 @@ import React from "react";
 import { AgentDesk } from "./AgentDesk";
 import { AgentRoleKey } from "./AgentAvatars";
 import { AgentLiveStatus } from "../../lib/engine";
-import { Sparkles, Coffee, Cpu, ShieldCheck, Cloud, HardDrive, AlertTriangle, Sliders } from "lucide-react";
+import { Sparkles, Coffee, Cpu, ShieldCheck, Cloud, HardDrive, AlertTriangle, Sliders, Users } from "lucide-react";
 
 export interface OfficeDeskData {
   roleKey: AgentRoleKey;
@@ -15,6 +15,7 @@ export interface OfficeDeskData {
   isUnlocked: boolean;
   provider?: string;
   model?: string;
+  attachedSkills?: string[];
 }
 
 interface PixelOfficeFloorProps {
@@ -142,6 +143,7 @@ export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
                   isUnlocked={desk.isUnlocked}
                   provider={desk.provider}
                   model={desk.model}
+                  attachedSkills={desk.attachedSkills}
                   onClick={() => onSelectAgent(desk.roleKey)}
                 />
               ))}
@@ -177,21 +179,58 @@ export const PixelOfficeFloor: React.FC<PixelOfficeFloorProps> = ({
                   isUnlocked={desk.isUnlocked}
                   provider={desk.provider}
                   model={desk.model}
+                  attachedSkills={desk.attachedSkills}
                   onClick={() => onSelectAgent(desk.roleKey)}
                 />
               ))}
           </div>
         </div>
 
-        {/* Stage 4 & 5 Pod: Implementation & Quality Assurance (Engineer & QA) */}
+        {/* Stage 4 Pod: Staffing & Talent Acquisition (HR & Recruiter per Handbook Ch 6) */}
+        <div className="w-full space-y-3 pt-4">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 font-mono">
+              <Users className="w-3.5 h-3.5" />
+              <span>Stage 4: Staffing & Talent Acquisition Pod (HR & Recruiter)</span>
+            </span>
+            <span className="text-[10px] text-brand-body font-mono">
+              Generates docs/team-plan.json & hires team for Gate 2
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full">
+            {desks
+              .filter((d) => d.roleKey === "hr" || d.roleKey === "recruiter")
+              .map((desk) => (
+                <AgentDesk
+                  key={desk.roleKey}
+                  roleKey={desk.roleKey}
+                  roleName={desk.roleName}
+                  roleAbbr={desk.roleAbbr}
+                  status={desk.status}
+                  hasOutput={desk.hasOutput}
+                  outputName={desk.outputName}
+                  messageCount={desk.messageCount}
+                  isSelected={selectedAgentId === desk.roleKey}
+                  isUnlocked={desk.isUnlocked}
+                  provider={desk.provider}
+                  model={desk.model}
+                  attachedSkills={desk.attachedSkills}
+                  onClick={() => onSelectAgent(desk.roleKey)}
+                />
+              ))}
+          </div>
+        </div>
+
+        {/* Stage 5 Pod: Implementation & Quality Assurance (Engineer & QA) */}
         <div className="w-full space-y-3 pt-4">
           <div className="flex items-center justify-between px-1">
             <span className="text-xs font-bold uppercase tracking-wider text-brand-body/80 flex items-center gap-1.5 font-mono">
               <ShieldCheck className="w-3.5 h-3.5 text-brand-body" />
-              <span>Stage 4 & 5: Implementation & QA Pod (Pipeline)</span>
+              <span>Stage 5: Implementation & QA Pod (Pipeline)</span>
             </span>
             <span className="text-[10px] text-brand-body/60 font-mono">
-              Unlocks after Architecture & Design verification
+              Unlocks after Gate 2 Staffing & Budget sign-off
             </span>
           </div>
 
