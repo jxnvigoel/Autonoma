@@ -26,6 +26,7 @@ import {
   getPmSession,
   getOfficeStatus,
   apiApproveGate1,
+  GateRefusedError,
   apiRequestGate1Changes,
   apiGetArchitectSession,
   apiGenerateArchitectArtifacts,
@@ -44,6 +45,7 @@ import {
   clearConversation as apiClearConversation,
   sendChatMessage as apiSendChatMessage,
 } from "../lib/engine";
+import { AgentRoleKey } from "../components/office/AgentAvatars";
 
 
 
@@ -105,8 +107,8 @@ interface ConversationContextType {
 
   // Virtual Office State
   officeStatus: OfficeStatusResponse | null;
-  activeOfficeAgent: "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa" | null;
-  setActiveOfficeAgent: (agent: "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa" | null) => void;
+  activeOfficeAgent: AgentRoleKey | null;
+  setActiveOfficeAgent: (agent: AgentRoleKey | null) => void;
   refreshOfficeStatus: (targetSessionId?: string) => Promise<void>;
 
 
@@ -126,7 +128,8 @@ interface ConversationContextType {
   generateArchitectArtifacts: (targetSessionId?: string) => Promise<void>;
   fetchDesignerSession: (targetSessionId?: string) => Promise<void>;
   generateDesignerArtifacts: (targetSessionId?: string) => Promise<void>;
-  approveGate1: (notes?: string) => Promise<void>;
+  approveGate1: (notes?: string, acceptKnownIssues?: boolean) => Promise<void>;
+  gate1Refusal: { summary: string; unsupportedClaims: { section?: string; text?: string; reason?: string }[] } | null;
   requestGate1Changes: (feedback: string) => Promise<void>;
   runFeasibility: () => Promise<void>;
   fetchStage4Session: (targetSessionId?: string) => Promise<void>;
@@ -203,9 +206,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Virtual Office State
   const [officeStatus, setOfficeStatus] = useState<OfficeStatusResponse | null>(null);
-  const [activeOfficeAgent, setActiveOfficeAgent] = useState<
-    "ba" | "pm" | "architect" | "designer" | "hr" | "recruiter" | "engineer" | "qa" | null
-  >(null);
+  const [activeOfficeAgent, setActiveOfficeAgent] = useState<AgentRoleKey | null>(null);
 
 
   const refreshSessions = useCallback(async () => {
@@ -673,16 +674,26 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId, fetchDesignerSession, refreshOfficeStatus]
   );
 
+  const [gate1Refusal, setGate1Refusal] = useState<{
+    summary: string;
+    unsupportedClaims: { section?: string; text?: string; reason?: string }[];
+  } | null>(null);
+
   const approveGate1 = useCallback(
-    async (notes?: string) => {
+    async (notes?: string, acceptKnownIssues = false) => {
       if (!sessionId) return;
       setIsGate1Approving(true);
+      setGate1Refusal(null);
       try {
-        await apiApproveGate1(sessionId, notes);
+        await apiApproveGate1(sessionId, notes, acceptKnownIssues);
         await refreshOfficeStatus(sessionId);
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg);
+        if (err instanceof GateRefusedError) {
+          setGate1Refusal({ summary: err.summary, unsupportedClaims: err.unsupportedClaims });
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          setError(msg);
+        }
       } finally {
         setIsGate1Approving(false);
       }
@@ -904,6 +915,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         fetchDesignerSession,
         generateDesignerArtifacts,
         approveGate1,
+        gate1Refusal,
         requestGate1Changes,
         runFeasibility,
         fetchStage4Session,

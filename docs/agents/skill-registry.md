@@ -11,8 +11,8 @@ The **Specialist Skill Pack Registry** is Autonoma's pluggable layer for attachi
 General-purpose role agents (Backend Engineer, UI/UX Designer, Architect, QA) possess universal best practices for their craft. However, specialized capabilities (e.g. PCI-compliant payment gateways, session/OAuth security, asynchronous multi-channel notifications, signed S3 file storage) require strict engineering discipline, zero-tolerance checklists, and customized evaluation rubrics.
 
 ### Core Handbook Rules
-1. **Zero Invented Packs (Handbook 6.1.2)**: If an incoming project requirement demands a specialist skill that does not exist in the registry, the Recruiter **MUST return `"blocked"`** naming the missing pack. Agents and Recruiters must **never** invent or hallucinate a non-existent skill pack.
-2. **Strict Tool Boundaries (Handbook 6.1.3)**: Attaching a skill pack must **never** grant an agent tools beyond their core role allowance (Table 6.1.3). For example, attaching a performance-oriented pack to a backend role cannot grant `k6_run` (which is reserved exclusively for QA/Performance roles).
+1. **Zero Invented Packs (Handbook 6.3.4 Step 1)**: If an incoming project requirement demands a specialist skill that does not exist in the registry, the Recruiter **MUST return blocked** naming the missing pack. Agents and Recruiters must **never** invent or hallucinate a non-existent skill pack.
+2. **Strict Tool Boundaries (Handbook 6.1.3 Least privilege)**: Attaching a skill pack must **never** grant an agent tools beyond their core role allowance per Handbook 6.1.3 and 6.3.6. For example, attaching a performance-oriented pack to a backend role cannot grant `k6_run` (which is reserved exclusively for QA/Performance roles).
 3. **Deterministic 0-Token Signal Detection (Handbook 23.2)**: Skill pack detection is performed deterministically against the project's PRD, discovery Q&A, and architecture documents with zero LLM token spend. Requirements identifiers (`F-###`, `FR-###`, `API-###`) provide verifiable evidence citations.
 4. **Stable Cacheable Prompt Order (Handbook 23.4)**: Prompt assembly maintains a deterministic, cache-optimized prefix structure:
    `[Shared Operating Rules]` $\rightarrow$ `[Role Role.md]` $\rightarrow$ `[Attached Specialist Instructions (alphabetical)]` $\rightarrow$ `[Output Template / User Task]`.
@@ -126,14 +126,11 @@ Low      BA relay turns, HR, Recruiter, Scrum summaries         short, templated
 ```
 
 Per **Handbook Chapter 12 (Backend and Full-stack Engineers)** verbatim:
-> "Build services that are correct, secure and fast, exactly to the API contract and data model, at the scale tier the Architect chose."
+> Build services that are correct, secure and fast, exactly to the API contract and data model.
 >
-> **12.2 Full-stack Engineer**: "Full-stack engineers apply both the Frontend and the Backend expertise above to a vertical slice: migration → endpoint and tests → UI and tests → one end-to-end test. The contract still applies even when one agent owns both sides."
->
-> **12.4 Job description: Full-stack Engineer**: "Mission: Deliver a complete user-facing slice (screen, API and data) for small teams and MVPs."
+> Full-stack engineers apply both the Frontend and the Backend expertise above to a vertical slice: migration → endpoint and tests → UI and tests → one end-to-end test. The contract still applies even when one agent owns both sides.
 
-> [!NOTE]
-> **Runtime Implementation Note**: As of the current virtual office phase, **no Backend agent runtime exists yet**. Backend, Frontend, Fullstack, DevOps, QA, and Performance roles are currently **specification-only** (per Handbook 6.3.4 Step 1) and evaluated via deterministic and composite Judge test suites.
+**Runtime Implementation Note**: As of the current virtual office phase, Backend, Frontend, Fullstack, DevOps, QA, and Performance roles are specification-only (per Handbook 6.3.4 Step 1) and evaluated via deterministic and composite Judge test suites.
 
 If a skill pack's manifest specifies a `required_tool` not present in the role's allowance, `attach_skill_pack()` **rejects the attachment with a permission violation error**.
 

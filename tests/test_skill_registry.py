@@ -137,7 +137,7 @@ class TestSpecialistSkillRegistry(unittest.TestCase):
                     "description": "Tests privilege boundary enforcement",
                     "compatible_roles": ["backend"],
                     "triggers": {"keywords": ["test"], "signals": ["test"]},
-                    "required_tools": ["k6_run"],  # k6_run is forbidden to backend per Table 6.1.3
+                    "required_tools": ["k6_run"],  # k6_run is forbidden to backend per Section 6.1.3 Least privilege
                     "forbidden_tools": [],
                     "rubric_path": "rubric.json"
                 }, f)

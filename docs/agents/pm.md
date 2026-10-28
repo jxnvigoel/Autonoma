@@ -31,7 +31,7 @@ The PRD must have EXACTLY the following 9 sections (no unauthorized Section 10):
    - `R-##`: Risk, Likelihood (L/M/H), Impact (L/M/H), Mitigation (outcome-oriented, not technology-specific), Owner.
 8. **Assumptions and open questions**:
    - Assumptions (`ASM-##`): Single complete, specific sentences derived from client statements. No placeholders (`x`, `y`), no fragments (`Reason: ...`, `Risk: ...`).
-   - Open questions (`OQ-##`): Any PM recommendation, unconfirmed metric, or unclarified permission boundary. No "Source: PM recommendation" in ASM.
+   - Open questions (`OQ-##`): Any PM recommendation, unconfirmed metric, or unclarified permission boundary. No PM suggestions in ASM (Handbook 5.2.6: suggest as OQ-s instead).
 9. **Scope changes from the client’s request**:
    - Table of kept vs moved features with reason and sources.
    - `Timeline and Budget Feasibility Reasoning`: Narrative explaining how scope fits the client's timeline and budget constraints.
@@ -44,6 +44,6 @@ For local Ollama models (`llama3.2:3b`), price is $\$0.00/\text{token}$.
 
 ## 4. Must-Not Rules (Section 5.2.6)
 1. Must NOT make features out of NFRs (e.g. latency, local database storage).
-2. Must NOT invent roles (e.g. "Workspace Administrator") or unstated metrics.
+2. Must NOT invent personas, roles, or unstated metrics.
 3. Must NOT specify libraries, frameworks, or database internals (e.g. Electron, FTS5) unless explicitly named by the client in a cited Q-. Mitigations describe outcomes.
 4. Must NOT generate identical goals/pain points for different personas.

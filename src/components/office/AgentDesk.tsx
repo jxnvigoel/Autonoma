@@ -15,6 +15,7 @@ import {
   Palette,
   Lock,
   Users,
+  ListChecks,
 } from "lucide-react";
 
 
@@ -95,6 +96,18 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
       monitorColor: "#14B8A6",
       icon: <Users className="w-3.5 h-3.5 text-teal-500" />,
       deskAccent: "bg-teal-500/20 text-teal-600 dark:text-teal-400 border-teal-500/30",
+    },
+    scrum: {
+      glow: "hover:border-orange-500/80 group-hover:shadow-[0_0_20px_rgba(249,115,22,0.3)]",
+      monitorColor: "#EA580C",
+      icon: <ListChecks className="w-3.5 h-3.5 text-orange-500" />,
+      deskAccent: "bg-orange-500/20 text-orange-600 dark:text-orange-400 border-orange-500/30",
+    },
+    "tech-lead": {
+      glow: "hover:border-purple-600/80 group-hover:shadow-[0_0_20px_rgba(147,51,234,0.3)]",
+      monitorColor: "#9333EA",
+      icon: <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />,
+      deskAccent: "bg-purple-600/20 text-purple-600 dark:text-purple-400 border-purple-600/30",
     },
     engineer: {
       glow: "hover:border-rose-500/80 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.3)]",

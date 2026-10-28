@@ -67,7 +67,7 @@ ROLE_TOOL_ALLOWANCES: Dict[str, Set[str]] = {
     }
 }
 
-# Role filesystem sandboxes per Handbook Table 6.1.3 and Chapter 23.5
+# Role filesystem sandboxes per Handbook Section 6.1.3 (Least privilege) and Chapter 23.5
 ROLE_FS_SCOPES: Dict[str, str] = {
     "ba": "docs/",
     "pm": "docs/",

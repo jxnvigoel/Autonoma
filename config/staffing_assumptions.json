@@ -1,15 +1,15 @@
 {
-  "assumptions": {
-    "ASM-01": {
-      "id": "ASM-01",
+  "configurations": {
+    "CFG-01": {
+      "id": "CFG-01",
       "name": "points_per_agent_per_week",
       "value": 5,
       "unit": "story_points_per_agent_per_week",
       "rationale": "Standard baseline agent delivery velocity assuming 1 story point per agent-day with 5 active work days per week.",
       "risk_if_wrong": "Under-estimating velocity causes over-staffing; over-estimating velocity causes schedule slippage."
     },
-    "ASM-02": {
-      "id": "ASM-02",
+    "CFG-02": {
+      "id": "CFG-02",
       "name": "story_points_per_feature_ac",
       "rules": {
         "small_1_2_ac": 2,
@@ -19,29 +19,36 @@
       "rationale": "Mapping acceptance criteria density to Fibonacci story points per Handbook Chapter 5 and 6.",
       "risk_if_wrong": "Inaccurate seat count computation if acceptance criteria complexity departs from point scale."
     },
-    "ASM-03": {
-      "id": "ASM-03",
+    "CFG-03": {
+      "id": "CFG-03",
       "name": "role_merge_threshold_stories",
       "value": 2,
       "unit": "stories",
       "rationale": "Roles with under 2 stories are merged into neighbouring or fullstack role per Handbook 6.1.1 to avoid idle seats.",
       "risk_if_wrong": "Specialized tasks might require broader skillset in merged engineer."
     },
-    "ASM-04": {
-      "id": "ASM-04",
+    "CFG-04": {
+      "id": "CFG-04",
       "name": "idle_seat_threshold_weeks",
       "value": 1,
       "unit": "weeks",
       "rationale": "No seat may sit idle for more than 1 week of its span per Handbook 6.2.5 Quality Bar.",
       "risk_if_wrong": "Unproductive seats inflating token and budget expenditure."
     },
-    "ASM-05": {
-      "id": "ASM-05",
+    "CFG-05": {
+      "id": "CFG-05",
       "name": "rework_buffer_multiplier",
       "value": 1.20,
       "percentage": 20,
       "rationale": "20% rework buffer applied to stage token estimates per Handbook 5.1.6.",
       "risk_if_wrong": "Token overruns if rework exceeds 20% buffer."
+    },
+    "CFG-06": {
+      "id": "CFG-06",
+      "name": "agent_names_config_pool",
+      "file": "config/agent_names.json",
+      "rationale": "Predefined config pool for deterministic agent names per Recruiter specification.",
+      "risk_if_wrong": "Non-deterministic or domain-specific names assigned."
     }
   }
 }

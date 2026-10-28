@@ -7,6 +7,9 @@ import { CodeEditor } from "./pages/CodeEditor";
 import { Splash } from "./pages/Splash";
 import { Landing } from "./pages/Landing";
 import { ProjectSelector } from "./pages/ProjectSelector";
+import { AuthPage } from "./pages/Auth";
+import { ProfileModal } from "./components/ProfileModal";
+import { AccountUser, apiLogout, apiMe } from "./lib/auth";
 import { IntakeForm } from "./components/chat/IntakeForm";
 import { checkEngineStatus, EngineStatus } from "./lib/engine";
 import { useConversation } from "./context/ConversationContext";
@@ -14,6 +17,7 @@ import { useConversation } from "./context/ConversationContext";
 export type AppScreen =
   | "splash"
   | "landing"
+  | "auth"
   | "projects"
   | "intake"
   | "office"
@@ -33,10 +37,33 @@ export const App: React.FC = () => {
     error: contextError,
   } = useConversation();
 
-  // "Get Started" from landing page ALWAYS lands on ProjectSelector
-  const handleStartFromLanding = useCallback(() => {
-    setCurrentScreen("projects");
+  // Signed-in account (local). Once any account exists, projects are per user.
+  const [user, setUser] = useState<AccountUser | null>(null);
+  const [accountsExist, setAccountsExist] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+
+  useEffect(() => {
+    apiMe()
+      .then((me) => {
+        setUser(me.user);
+        setAccountsExist(me.accounts_exist);
+      })
+      .catch(() => undefined);
   }, []);
+
+  // "Get Started": signed in -> your projects; otherwise log in / sign up first.
+  const handleStartFromLanding = useCallback(() => {
+    setCurrentScreen(user ? "projects" : "auth");
+  }, [user]);
+
+  const handleLogout = useCallback(async () => {
+    await apiLogout().catch(() => undefined);
+    setUser(null);
+    setAccountsExist(true);
+    setShowProfile(false);
+    newSession();
+    setCurrentScreen("auth");
+  }, [newSession]);
 
   const refreshStatus = useCallback(async () => {
     setIsChecking(true);
@@ -92,6 +119,31 @@ export const App: React.FC = () => {
         </motion.div>
       )}
 
+      {currentScreen === "auth" && (
+        <motion.div
+          key="auth-screen"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="w-full h-full"
+        >
+          <AuthPage
+            onSignedIn={(signedIn) => {
+              setUser(signedIn);
+              setAccountsExist(true);
+              newSession();
+              setCurrentScreen("projects");
+            }}
+            onBackToLanding={() => setCurrentScreen("landing")}
+          />
+        </motion.div>
+      )}
+
+      {showProfile && user && (
+        <ProfileModal onClose={() => setShowProfile(false)} onLogout={handleLogout} onUpdated={setUser} />
+      )}
+
       {currentScreen === "projects" && (
         <motion.div
           key="projects-screen"
@@ -114,6 +166,9 @@ export const App: React.FC = () => {
             status={status}
             isCheckingStatus={isChecking}
             onRefreshStatus={refreshStatus}
+            user={user}
+            onOpenProfile={() => setShowProfile(true)}
+            onSignIn={accountsExist || !user ? () => setCurrentScreen("auth") : undefined}
           />
         </motion.div>
       )}

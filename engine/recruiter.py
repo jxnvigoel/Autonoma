@@ -11,24 +11,48 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, Set
 from datetime import datetime, timezone
 
-from skill_registry import (
-    get_skill_registry,
-    get_role_pack,
-    detect_specialist_needs,
-    validate_agent_permissions,
-    init_agents_db,
-    save_agent_profile_to_db,
-    ROLE_TOOL_ALLOWANCES,
-    ROLE_FS_SCOPES,
-    SPEC_ONLY_ROLES,
-    DOCUMENT_ONLY_ROLES
-)
-from validators import (
-    validate_agent_profile_permissions,
-    validate_downgrades_recorded,
-    validate_skill_pack_exists_or_blocked
-)
-from budget import recompute_budget_step16, save_gate2_approval_record
+try:
+    from skill_registry import (
+        get_skill_registry,
+        get_role_pack,
+        detect_specialist_needs,
+        validate_agent_permissions,
+        init_agents_db,
+        save_agent_profile_to_db,
+        ROLE_TOOL_ALLOWANCES,
+        ROLE_FS_SCOPES,
+        SPEC_ONLY_ROLES,
+        DOCUMENT_ONLY_ROLES
+    )
+    from validators import (
+        validate_agent_profile_permissions,
+        validate_downgrades_recorded,
+        validate_skill_pack_exists_or_blocked,
+        validate_token_caps_above_floor,
+        validate_agent_reports_to_fk
+    )
+    from budget import recompute_budget_step16, save_gate2_approval_record
+except ImportError:
+    from engine.skill_registry import (
+        get_skill_registry,
+        get_role_pack,
+        detect_specialist_needs,
+        validate_agent_permissions,
+        init_agents_db,
+        save_agent_profile_to_db,
+        ROLE_TOOL_ALLOWANCES,
+        ROLE_FS_SCOPES,
+        SPEC_ONLY_ROLES,
+        DOCUMENT_ONLY_ROLES
+    )
+    from engine.validators import (
+        validate_agent_profile_permissions,
+        validate_downgrades_recorded,
+        validate_skill_pack_exists_or_blocked,
+        validate_token_caps_above_floor,
+        validate_agent_reports_to_fk
+    )
+    from engine.budget import recompute_budget_step16, save_gate2_approval_record
 
 logger = logging.getLogger("autonoma-engine.recruiter")
 
@@ -80,117 +104,60 @@ def resolve_model_tier(
     router_config: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Resolves model tier per Handbook 6.1.2 & 22.4:
-    - High: Architect, developers, Tech Lead, LLM Judge.
-    - Medium: PM, Designer, QA, Performance QA, DevOps.
-    - Low: BA relay turns, HR, Recruiter, Scrum summaries.
-    Dynamic resolution using live GET /models results, never hardcoded model names.
-    If tier is unavailable or project is local-only, downgrades and records notes.
+    Resolves the model for a seat per Handbook 6.1.2 & 22.4 using the same router the
+    LLM client uses for real calls, so the staffing report shows what will actually run.
+    Downgrades carry their expected quality effect for Gate 2.
     """
-    from llm_client import default_llm_client
+    try:
+        from llm_client import default_llm_client
+    except ImportError:
+        from engine.llm_client import default_llm_client
 
-    role_norm = role.strip().lower()
-    target_tier = router_config.get("roles", {}).get(role_norm, "medium")
-
-    is_local_only = False
-    if default_llm_client:
-        is_local_only = default_llm_client.is_project_local_only(session_id)
-
-    # If project is local-only, force local Ollama model
-    if is_local_only:
-        downgraded = (target_tier in ["high", "medium"])
-        quality_effects = router_config.get("downgrade_quality_effects", {})
-        quality_note = quality_effects.get("cloud_to_local", "Running on local hardware ($0 cost); slower inference latency; reduced capacity on complex reasoning.")
-        return {
-            "target_tier": target_tier,
-            "actual_tier": "local",
-            "provider": "ollama",
-            "model": "llama3.2:3b",
-            "downgraded": downgraded,
-            "downgrade_note": f"Local-only project setting: {role_norm} running on local Ollama (llama3.2:3b). Expected quality effect: {quality_note}" if downgraded else ""
-        }
-
-    # Query live models from Groq
-    live_models = []
-    if default_llm_client:
-        live_models = default_llm_client.fetch_groq_models()
-
-    live_model_ids = {m["id"].lower(): m["id"] for m in live_models}
-    tier_candidates = router_config.get("tiers", {}).get(target_tier, [])
-
-    # Check candidates of target tier
-    for cand in tier_candidates:
-        prov = cand.get("provider", "groq")
-        m_name = cand.get("model", "")
-        if prov == "groq" and m_name.lower() in live_model_ids:
-            return {
-                "target_tier": target_tier,
-                "actual_tier": target_tier,
-                "provider": "groq",
-                "model": live_model_ids[m_name.lower()],
-                "downgraded": False,
-                "downgrade_note": ""
-            }
-
-    # If first healthy candidate in target tier is Ollama
-    for cand in tier_candidates:
-        if cand.get("provider") == "ollama":
-            downgraded = (target_tier != "low")
-            note = f"Target tier '{target_tier}' cloud model unavailable; using local Ollama ({cand.get('model')}). Expected quality effect: Slower inference, reduced complex reasoning capacity."
-            return {
-                "target_tier": target_tier,
-                "actual_tier": "local",
-                "provider": "ollama",
-                "model": cand.get("model", "llama3.2:3b"),
-                "downgraded": downgraded,
-                "downgrade_note": note if downgraded else ""
-            }
-
-    # Fallback to next lower tier if target tier unavailable (Rule 2)
-    tier_order = ["high", "medium", "low"]
-    current_idx = tier_order.index(target_tier) if target_tier in tier_order else 1
-    fallback_tier = tier_order[min(current_idx + 1, len(tier_order) - 1)]
-
-    downgrade_key = f"{target_tier}_to_{fallback_tier}"
-    quality_note = router_config.get("downgrade_quality_effects", {}).get(
-        downgrade_key,
-        f"Tier '{target_tier}' model unavailable; downgraded to '{fallback_tier}'. Expected quality effect: reduced synthesis and reasoning capability."
-    )
-
-    # First healthy model of fallback tier
-    fb_candidates = router_config.get("tiers", {}).get(fallback_tier, [])
-    for cand in fb_candidates:
-        prov = cand.get("provider", "groq")
-        m_name = cand.get("model", "")
-        if prov == "groq" and m_name.lower() in live_model_ids:
-            return {
-                "target_tier": target_tier,
-                "actual_tier": fallback_tier,
-                "provider": "groq",
-                "model": live_model_ids[m_name.lower()],
-                "downgraded": True,
-                "downgrade_note": f"Downgrade: {role_norm} tier '{target_tier}' fell to '{fallback_tier}' ({live_model_ids[m_name.lower()]}). Expected effect: {quality_note}"
-            }
-
-    # Ultimate fallback to Ollama
+    route = default_llm_client.resolve_route(role, session_id=session_id)
     return {
-        "target_tier": target_tier,
-        "actual_tier": "low",
-        "provider": "ollama",
-        "model": "llama3.2:3b",
-        "downgraded": True,
-        "downgrade_note": f"Downgrade: {role_norm} tier '{target_tier}' fell to local Ollama (llama3.2:3b). Expected effect: {quality_note}"
+        "target_tier": route["target_tier"],
+        "actual_tier": route["actual_tier"],
+        "provider": route["provider"],
+        "model": route["model"],
+        "downgraded": route["downgraded"],
+        "downgrade_note": route["downgrade_note"],
     }
+
+
+def get_measured_story_token_floor(db_path: str = DEFAULT_DB_PATH) -> int:
+    """
+    Handbook 26.4 & Gate 2 blocker fix A3:
+    Measures per-story token minimum from the ledger (llm_calls table).
+    Floors at baseline 2,500 tokens per story/agent.
+    """
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT MIN(input_tokens + output_tokens)
+                FROM llm_calls
+                WHERE task_id LIKE 'ST-%' OR task_id LIKE '%story%'
+            """)
+            row = cur.fetchone()
+            conn.close()
+            if row and row[0] and row[0] > 0:
+                return max(2500, int(row[0]))
+        except Exception:
+            pass
+    return 2500
 
 
 def calculate_token_cap_for_role(
     role: str,
     estimate_data: Dict[str, Any],
-    seat_count: int = 1
+    seat_count: int = 1,
+    db_path: str = DEFAULT_DB_PATH
 ) -> Tuple[int, Optional[str]]:
     """
     Derives token_cap per agent from estimate.json for that role (+ 20% rework buffer from Handbook 5.1.6).
-    Missing role in estimate -> flag, don't guess.
+    Floors cap at measured per-story minimum from ledger.
+    Missing role in estimate -> return (0, "NO ESTIMATE").
     """
     role_norm = role.strip().lower()
     stages = estimate_data.get("stages", [])
@@ -228,35 +195,39 @@ def calculate_token_cap_for_role(
             break
 
     if not stage_match:
-        return 0, f"Role '{role_norm}' is missing from docs/estimate.json; token cap unallocated."
+        return 0, f"Role '{role}' missing from docs/estimate.json"
 
     subtotal = stage_match.get("subtotal_tokens", 0)
+    if subtotal <= 0:
+        return 0, f"Role '{role}' has zero subtotal tokens in docs/estimate.json"
+
     # Handbook 5.1.6: 20% rework buffer
     total_with_buffer = int(round(subtotal * 1.20))
-    # Divide evenly per seat if multiple agents in this role
-    per_agent_cap = max(1000, total_with_buffer // max(1, seat_count))
+    raw_cap = total_with_buffer // max(1, seat_count)
+
+    # Floor at measured per-story minimum from the ledger
+    floor = get_measured_story_token_floor(db_path)
+    per_agent_cap = max(floor, raw_cap)
 
     return per_agent_cap, None
 
 
-def determine_reports_to(role: str) -> str:
+def determine_reports_to(role: str, session_id: str = "") -> Optional[str]:
     """
-    Handbook 2.1 Org Chart:
-    - developers, QA, DevOps, Perf -> tech-lead-1
-    - tech-lead -> architect-1
-    - designer, scrum, hr, recruiter -> pm-1
-    - architect, pm, ba -> client
+    Handbook 2.1 Org Chart & 6.3.4:
+    - developers, QA, DevOps, Perf -> {session_id}_tech-lead-1
+    - tech-lead -> None (or {session_id}_architect-1)
+    - designer, scrum, hr, recruiter -> None (or {session_id}_pm-1)
     """
+    prefix = f"{session_id}_" if session_id else ""
     role_norm = role.strip().lower()
     if role_norm in ["backend", "frontend", "fullstack", "engineer", "qa", "perf", "devops"]:
-        return "tech-lead-1"
+        return f"{prefix}tech-lead-1"
     elif role_norm in ["tech-lead", "tech_lead"]:
-        return "architect-1"
+        return None
     elif role_norm in ["designer", "scrum", "hr", "recruiter"]:
-        return "pm-1"
-    elif role_norm in ["architect", "pm", "ba"]:
-        return "client"
-    return "tech-lead-1"
+        return None
+    return None
 
 
 def execute_recruiter_hiring(
@@ -328,9 +299,59 @@ def execute_recruiter_hiring(
     name_idx = 0
     role_counters: Dict[str, int] = {}
 
+    # Mandatory Tech Lead agent hire per project (Handbook Chapter 10 & A4)
+    tl_id = f"{session_id}_tech-lead-1"
+    tl_model_res = resolve_model_tier("tech-lead", session_id, router_config)
+    if tl_model_res["downgraded"]:
+        downgrade_records.append({
+            "agent_id": tl_id,
+            "name": agent_names_pool[name_idx % len(agent_names_pool)],
+            "role": "tech-lead",
+            "target_tier": tl_model_res["target_tier"],
+            "actual_tier": tl_model_res["actual_tier"],
+            "provider": tl_model_res["provider"],
+            "model": tl_model_res["model"],
+            "note": tl_model_res["downgrade_note"]
+        })
+    tl_tools = sorted(list(ROLE_TOOL_ALLOWANCES.get("tech_lead", {"read_file", "list_files", "search", "get_artifact", "ask_client"})))
+    tl_cap, _ = calculate_token_cap_for_role("tech-lead", estimate_data, seat_count=1, db_path=db_path)
+    if tl_cap < 2500:
+        tl_cap = 2500
+
+    tl_profile = {
+        "agent_id": tl_id,
+        "project_id": session_id,
+        "name": agent_names_pool[name_idx % len(agent_names_pool)],
+        "seat_id": "ROLE-TL",
+        "role": "tech-lead",
+        "skill_pack": "skills/tech-lead",
+        "spec_only": True,
+        "model_tier": tl_model_res["target_tier"],
+        "tier": tl_model_res["actual_tier"],
+        "provider": tl_model_res["provider"],
+        "model": tl_model_res["model"],
+        "downgraded": tl_model_res["downgraded"],
+        "downgrade_note": tl_model_res["downgrade_note"],
+        "tools": tl_tools,
+        "skill_packs": [],
+        "fs_scope": "read-only",
+        "token_cap": tl_cap,
+        "token_cap_warning": None,
+        "reports_to": None,
+        "status": "idle",
+        "weeks": f"Week 1–{team_plan.get('timeline_weeks', 6)}",
+        "why": "Readiness review and pull request code review across all engineering disciplines per Handbook Chapter 10.",
+        "refs": []
+    }
+    name_idx += 1
+    agent_profiles.append(tl_profile)
+    save_agent_profile_to_db(tl_profile, db_path=db_path)
+
     for seat in seats:
         seat_id = seat.get("id", "ROLE")
         role = seat.get("role", "").strip().lower()
+        if role in ["tech-lead", "tech_lead"]:
+            continue
         count = seat.get("count", 1)
         why = seat.get("why", "")
         refs = seat.get("refs", [])
@@ -355,7 +376,14 @@ def execute_recruiter_hiring(
             })
 
         # Calculate token cap per agent
-        token_cap, cap_warning = calculate_token_cap_for_role(role, estimate_data, seat_count=count)
+        token_cap, cap_warning = calculate_token_cap_for_role(role, estimate_data, seat_count=count, db_path=db_path)
+        if cap_warning == "NO ESTIMATE" or token_cap <= 0:
+            blocked_seats.append({
+                "seat_id": seat_id,
+                "role": role,
+                "reason": f"NO ESTIMATE: Role '{role}' missing from docs/estimate.json; cannot hire without token estimate (Handbook 6.3.4 Step 4)."
+            })
+            continue
 
         # Build each agent in seat
         for _ in range(count):
@@ -366,7 +394,7 @@ def execute_recruiter_hiring(
                 "backend": "be", "frontend": "fe", "fullstack": "fs", "engineer": "eng",
                 "qa": "qa", "perf": "perf", "devops": "devops", "tech-lead": "tech-lead", "scrum": "scrum"
             }
-            agent_id = f"{role_prefix_map.get(role, role)}-{agent_num}"
+            agent_id = f"{session_id}_{role_prefix_map.get(role, role)}-{agent_num}"
             agent_name = agent_names_pool[name_idx % len(agent_names_pool)]
             name_idx += 1
 
@@ -402,7 +430,7 @@ def execute_recruiter_hiring(
                 if pack_obj and role in pack_obj.compatible_roles:
                     attached_specialists.append(pid)
 
-            reports_to_id = determine_reports_to(role)
+            reports_to_id = determine_reports_to(role, session_id)
 
             profile = {
                 "agent_id": agent_id,
@@ -440,11 +468,24 @@ def execute_recruiter_hiring(
             # Persist to SQLite agents table
             save_agent_profile_to_db(profile, db_path=db_path)
 
+    # Validate all token caps are floored and reports_to foreign keys are valid
+    floor_val = get_measured_story_token_floor(db_path)
+    cap_ok, cap_errs = validate_token_caps_above_floor(agent_profiles, floor=floor_val)
+    if not cap_ok:
+        raise RuntimeError(f"Recruiter token cap validation failed: {cap_errs}")
+
+    fk_ok, fk_errs = validate_agent_reports_to_fk(agent_profiles, db_path=db_path)
+    if not fk_ok:
+        raise RuntimeError(f"Recruiter foreign key validation failed: {fk_errs}")
+
     # 4. Recompute Step 16 Budget
     budget_recomp = recompute_budget_step16(session_id, db_path=db_path)
 
     # 5. Determine WHICH providers see project data (Privacy Requirement)
-    from llm_client import default_llm_client
+    try:
+        from llm_client import default_llm_client
+    except ImportError:
+        from engine.llm_client import default_llm_client
     is_local_only = default_llm_client.is_project_local_only(session_id) if default_llm_client else False
 
     providers_with_access = set()
@@ -485,21 +526,7 @@ def execute_recruiter_hiring(
         db_path=db_path
     )
 
-    # 8. Record Recruiter action to token ledger
-    from token_ledger import record_llm_call
-    record_llm_call(
-        project_id=session_id,
-        agent_id="recruiter",
-        task_id="recruiter_hiring",
-        provider="ollama" if is_local_only else "groq",
-        model="llama-3.1-8b-instant" if not is_local_only else "llama3.2:3b",
-        input_tokens=len(staffing_report_md.split()) * 2,
-        cached_tokens=0,
-        output_tokens=len(staffing_report_md.split()),
-        cost_usd=0.0,
-        latency_ms=120,
-        db_path=db_path
-    )
+    # Recruiter staffing is deterministic code (no model call), so it writes no ledger row.
 
     logger.info(f"Recruiter successfully staffed {len(agent_profiles)} agents. Gate 2 approval '{approval_id}' opened.")
     return {
@@ -576,7 +603,7 @@ def _render_staffing_report_markdown(
             )
         downgrades_section = "\n".join(downgrade_rows)
     else:
-        downgrades_section = "_Zero model tier downgrades. 100% of agents running on target model tiers without quality reduction. Verified against config/model_router.json._"
+        downgrades_section = "_Zero model tier downgrades: every seat resolved to a model of its target tier by the live router._"
 
     # Blocked / Spec-Only Packs
     spec_only_rows = []
@@ -620,7 +647,7 @@ def _render_staffing_report_markdown(
 
 ### Roster Architecture & Provenance Notes:
 - **Agent Name Sourcing**: All candidate names (`{names_provenance}`) are sourced deterministically from verified config pool at `config/agent_names.json` (Handbook Rule: never LLM invented).
-- **Dynamic Model Resolution**: Model selection resolved dynamically via live model router (`config/model_router.json`) mapped against Handbook 22.4 risk tiers: High risk (code/architecture synthesis) $\\rightarrow$ `high` tier (`openai/gpt-oss-120b`), medium risk (QA/test execution/DevOps) $\\rightarrow$ `medium` tier (`qwen/qwen3.8-27b`).
+- **Dynamic Model Resolution**: Each seat's model comes from the same router the LLM client uses for real calls (`config/model_router.json`, Handbook 22.4 role $\\rightarrow$ tier $\\rightarrow$ first healthy provider). The Model column above shows exactly what will run.
 - **Org Chart Hierarchy**: 100% of engineering and QA agents report to `tech-lead-1` per Handbook Section 2.1 org chart.
 
 ---

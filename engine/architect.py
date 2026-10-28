@@ -54,6 +54,7 @@ architect_router = APIRouter(tags=["architect"])
 class Gate1ApprovalRequest(BaseModel):
     session_id: str
     client_notes: Optional[str] = "Approved PRD, scope, non-goals, and assumptions at Gate 1."
+    accept_known_issues: bool = False  # explicit client decision to approve a PRD the Judge failed
 
 
 class Gate1ChangeRequest(BaseModel):
@@ -344,7 +345,9 @@ Return ONLY markdown."""
             prompt=current_prompt,
             role="architect",
             session_id=session_id,
-            task_id="architect_schema"
+            task_id="architect_schema",
+            max_tokens=4000,  # one DDL document with foreign keys; 1,500 was cut off mid-table
+            reasoning_effort="low"
         )
 
         is_valid, errors, tables = validate_schema_ddl(raw_text)
@@ -383,81 +386,124 @@ def generate_openapi_spec(
     session_id: Optional[str] = None
 ) -> str:
     """
-    Generates docs/openapi.yaml via LLM.
-    Code validates YAML syntax, OpenAPI 3.0.3 schema, and F- feature coverage.
-    Retries up to 3 times feeding back validation errors.
+    Generates docs/openapi.yaml one feature at a time (Handbook 7.1.6, 7.2.4 step 6).
+    Each LLM call writes only the `paths` for one F- feature, so replies stay small enough for
+    provider output caps; code assembles the document (info, Problem Details, security) and the
+    full validator checks syntax, responses and that every Must-have F- maps to an endpoint.
     """
     app_name = prd_data.get("app_name", "App")
     features = prd_data.get("features", [])
-    features_summary = "\n".join([f"- **{f['id']}**: {f.get('title') or f.get('name', '')} ({f.get('priority', 'Must')})" for f in features])
+    paths: Dict[str, Dict[str, Any]] = {}
+    api_counter = 1
+    standard_methods = {"get", "post", "put", "delete", "patch"}
+    last_meta: Dict[str, Any] = {}
 
-    base_prompt = f"""You are the Lead Solution Architect. Generate docs/openapi.yaml for '{app_name}' adhering to OpenAPI 3.0.3 standards.
-APPLICATION: {app_name}
-FEATURES REQUIRING API ENDPOINTS:
-{features_summary}
+    def _clean(raw: str) -> str:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+            text = re.sub(r"\n```$", "", text).strip()
+        return text
 
-CRITICAL RULES:
-1. Valid OpenAPI 3.0.3 specification in pure YAML.
-2. EVERY feature (F-001, F-002...) MUST map to at least one REST endpoint citing its [F-###] in summary or description.
-3. Every endpoint must define: summary, operationId, responses (200/201, 400, 401, 403, 409, 500 RFC 9457 Problem Details).
-4. Return ONLY valid YAML content with NO markdown code fences or conversational text.
+    for f in features:
+        fid = f.get("id", "")
+        title = f.get("title") or f.get("name", "")
+        prio = f.get("priority", "Must")
+        existing = "\n".join(f"- {m.upper()} {pth}" for pth, ops in paths.items() for m in ops) or "- none yet"
+        base_prompt = f"""You are the Lead Solution Architect for '{app_name}'. Write ONLY the OpenAPI 3.0.3 path entries for feature {fid}: {title} ({prio}).
 
-Required root YAML structure:
-openapi: 3.0.3
-info:
-  title: {app_name} Local REST API
-  version: 1.0.0
-  description: Internal API contract for {app_name} workflows.
-servers:
-  - url: http://127.0.0.1:8765
-paths:
-  # Endpoints covering every F- feature
-components:
-  schemas:
-    ProblemDetails:
-      type: object
-      properties:
-        type: {{ type: string }}
-        title: {{ type: string }}
-        status: {{ type: integer }}
-        detail: {{ type: string }}"""
+Endpoints already defined (you may add a NEW method to an existing path; never redefine an existing method):
+{existing}
 
-    current_prompt = base_prompt
-    max_attempts = 3
-    last_errors = []
+RULES:
+1. Return a YAML mapping whose keys are URL paths (for example /api/v1/todos). No 'paths:' wrapper, no other keys, no code fences, no prose.
+2. Every operation has: summary citing [{fid}] and an endpoint id, numbering from [API-{api_counter:03d}]; operationId; security: [{{bearerAuth: []}}] unless it is sign-up or sign-in (then security: []); requestBody when it takes input; responses with a 2xx and each relevant error (400, 401, 403, 404, 409, 500) as $ref: '#/components/responses/Problem'.
+3. List endpoints use cursor pagination parameters 'after' and 'limit'.
+4. Only the endpoints this feature needs. Use REST resources with plural nouns.
+5. Be compact: small inline schemas (type and required properties only), no examples, one-line descriptions."""
+        prompt = base_prompt
+        errs: List[str] = []
+        budget = 1500
+        for attempt in range(1, 4):
+            raw_text, meta = query_llm_with_meta(prompt=prompt, role="architect", session_id=session_id,
+                                                 task_id=f"architect_openapi_{fid}", max_tokens=budget,
+                                                 reasoning_effort="low")  # mechanical YAML, not a design decision
+            last_meta = meta
+            errs = []
+            try:
+                frag = yaml.safe_load(_clean(raw_text))
+            except Exception as e:
+                frag = None
+                errs.append(f"YAML syntax error: {e}")
+            if isinstance(frag, dict) and isinstance(frag.get("paths"), dict):
+                frag = frag["paths"]
+            if not errs and (not isinstance(frag, dict) or not frag):
+                errs.append("reply must be a non-empty YAML mapping of URL paths to operations")
+            ops_added = 0
+            if not errs:
+                for pth, item in frag.items():
+                    if not str(pth).startswith("/") or not isinstance(item, dict):
+                        errs.append(f"'{pth}' is not a URL path with operations")
+                        continue
+                    for method, op in item.items():
+                        if method.lower() not in standard_methods:
+                            continue
+                        if not isinstance(op, dict) or fid not in json.dumps(op):
+                            errs.append(f"{method.upper()} {pth} must be an operation object citing [{fid}]")
+                        else:
+                            ops_added += 1  # a repeat of an existing endpoint is merged below, not rejected
+                if not errs and ops_added == 0:
+                    errs.append(f"no operation for {fid}")
+            if (meta or {}).get("stop") == "max_tokens":
+                errs.append("reply was cut off at the output limit; return fewer, more compact operations")
+                budget = min(budget * 2, 6000)  # give the next attempt room instead of retrying the same size
+            if not errs:
+                new_ops = 0
+                for pth, item in frag.items():
+                    for method, op in item.items():
+                        if method.lower() not in standard_methods:
+                            continue
+                        existing = paths.get(pth, {}).get(method.lower())
+                        if existing is not None:
+                            # One endpoint may serve several features: cite this one on it instead of a duplicate.
+                            if fid not in json.dumps(existing):
+                                existing["summary"] = f"{existing.get('summary', '')} [{fid}]".strip()
+                        else:
+                            paths.setdefault(pth, {})[method.lower()] = op
+                            new_ops += 1
+                api_counter += new_ops
+                break
+            logger.warning(f"OpenAPI fragment for {fid} failed on attempt {attempt}: {errs}")
+            prompt = f"{base_prompt}\n\nERRORS ON PREVIOUS ATTEMPT:\n" + "\n".join(f"- {e}" for e in errs)
+        else:
+            raise ValueError(f"OpenAPI generation for {fid} failed after 3 attempts: {errs}")
 
-    for attempt in range(1, max_attempts + 1):
-        logger.info(f"Generating openapi.yaml via LLM (attempt {attempt}/{max_attempts})...")
-        raw_text, meta = query_llm_with_meta(
-            prompt=current_prompt,
-            role="architect",
-            session_id=session_id,
-            task_id="architect_openapi"
-        )
-
-        clean_yaml = raw_text.strip()
-        if clean_yaml.startswith("```"):
-            clean_yaml = re.sub(r"^```[a-zA-Z]*\n", "", clean_yaml)
-            clean_yaml = re.sub(r"\n```$", "", clean_yaml).strip()
-
-        is_valid, errors, endpoints = validate_openapi_spec(clean_yaml, prd_features=features)
-        if is_valid:
-            logger.info(f"OpenAPI spec passed validation on attempt {attempt} (endpoints: {len(endpoints)}).")
-            openapi_path = os.path.join(docs_dir, "openapi.yaml")
-            with open(openapi_path, "w", encoding="utf-8") as f:
-                f.write(clean_yaml)
-            return openapi_path
-
-        logger.warning(f"OpenAPI validation failed on attempt {attempt}: {errors}")
-        last_errors = errors
-        current_prompt = (
-            f"{base_prompt}\n\n"
-            f"ERRORS ON PREVIOUS ATTEMPT {attempt}:\n"
-            + "\n".join(f"- {e}" for e in errors)
-            + "\n\nPlease correct these issues and return the complete, valid OpenAPI 3.0.3 YAML."
-        )
-
-    raise ValueError(f"OpenAPI generation failed validation after {max_attempts} attempts: {last_errors}")
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": f"{app_name} REST API", "version": "1.0.0",
+                 "description": f"API contract for {app_name}. Paths written per feature by the Architect agent; "
+                                f"document assembled by code."},
+        "servers": [{"url": "http://127.0.0.1:8000"}],
+        "paths": paths,
+        "components": {
+            "schemas": {"ProblemDetails": {"type": "object", "properties": {
+                "type": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "integer"},
+                "detail": {"type": "string"}}}},
+            "responses": {"Problem": {"description": "Error (RFC 9457 Problem Details)", "content": {
+                "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}}}},
+            "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
+        },
+    }
+    text = yaml.safe_dump(spec, sort_keys=False, allow_unicode=True)
+    is_valid, errors, endpoints = validate_openapi_spec(text, prd_features=features)
+    if not is_valid:
+        raise ValueError(f"Assembled OpenAPI failed validation: {errors}")
+    logger.info(f"OpenAPI assembled from {len(features)} feature fragments ({sum(len(v) for v in paths.values())} operations).")
+    openapi_path = os.path.join(docs_dir, "openapi.yaml")
+    with open(openapi_path, "w", encoding="utf-8") as fh:
+        fh.write(f"# Generated by {last_meta.get('provider', '?')}:{last_meta.get('model', '?')} per feature; "
+                 f"assembled and validated by code.\n" + text)
+    return openapi_path
 
 
 # ==============================================================================
@@ -539,12 +585,40 @@ def generate_team_plan(
 # STAGE 3 STEP 11: ARCHITECTURE.MD TRD GENERATOR (APPENDIX A.3 VIA LLM)
 # ==============================================================================
 
+def route_findings_to_parts(arch_text: str, verdict: Dict[str, Any]) -> Dict[int, List[str]]:
+    """
+    Sends each Judge / code-audit finding to the document part (1: sections 1-4, 2: 5-8, 3: 9-12)
+    whose text contains it; a finding that cannot be located goes to every part.
+    """
+    bounds = [(int(m.group(1)), m.start()) for m in re.finditer(r"^##\s*(\d{1,2})\.", arch_text, re.MULTILINE)]
+    def part_for(pos: int) -> Optional[int]:
+        sec = None
+        for n, start in bounds:
+            if start <= pos:
+                sec = n
+        return None if sec is None else min(3, (sec - 1) // 4 + 1)
+    out: Dict[int, List[str]] = {}
+    findings = [(str(u.get("text", "")), f"{u.get('text', '')}: {u.get('reason', '')}")
+                for u in (verdict.get("unsupported_claims") or []) if isinstance(u, dict)]
+    findings += [("", f"{sc.get('criterion')}: {sc.get('fix')}") for sc in (verdict.get("scores") or [])
+                 if isinstance(sc, dict) and sc.get("score", 0) < sc.get("max", 0) and sc.get("fix")]
+    for needle, note in findings[:60]:
+        pos = arch_text.lower().find(needle.lower()) if needle.strip() else -1
+        parts = [part_for(pos)] if pos >= 0 and part_for(pos) else [1, 2, 3]
+        for p in parts:
+            if len(out.setdefault(p, [])) < 20:
+                out[p].append(note[:300])
+    return out
+
+
 def generate_architecture_trd(
     parsed_ba: Dict[str, Any],
     prd_data: Dict[str, Any],
     docs_dir: str,
     adr_list: Optional[List[Dict[str, Any]]] = None,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    state: Optional[Dict[str, Any]] = None,
+    part_feedback: Optional[Dict[int, List[str]]] = None
 ) -> str:
     """
     Generates docs/architecture.md via LLM adhering to all 12 points of Appendix A.3.
@@ -608,26 +682,79 @@ MANDATORY APPENDIX A.3 SECTIONS:
 
 Return ONLY the markdown document."""
 
-    current_prompt = base_prompt
+    # Facts produced earlier in this stage, so sections 3, 6, 7 and 12 describe what actually exists.
+    facts: List[str] = []
+    for adr in adr_list or []:
+        facts.append(f"- {adr.get('id', 'ADR')}: {adr.get('title', '')} -> {adr.get('decision', adr.get('choice', ''))}"[:220])
+    try:
+        spec = yaml.safe_load(open(os.path.join(docs_dir, "openapi.yaml"), encoding="utf-8").read())
+        for pth, ops in (spec.get("paths") or {}).items():
+            for method, op in ops.items():
+                if isinstance(op, dict):
+                    facts.append(f"- endpoint {method.upper()} {pth}: {str(op.get('summary', ''))[:120]}")
+    except Exception:
+        pass
+    try:
+        schema_text = open(os.path.join(docs_dir, "schema.md"), encoding="utf-8").read()
+        tables = re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)", schema_text, re.IGNORECASE)
+        facts.append(f"- tables (docs/schema.md): {', '.join(tables)}")
+    except OSError:
+        pass
+    try:
+        plan = json.load(open(os.path.join(docs_dir, "team-plan.json"), encoding="utf-8"))
+        for seat in plan.get("seats", []):
+            facts.append(f"- seat {seat.get('id')}: {seat.get('role')} x{seat.get('count')} ({seat.get('why', '')[:100]})")
+    except (OSError, ValueError):
+        pass
+    facts_block = "\n".join(facts) or "- (none)"
+
+    # The client's own words are the source of truth for hard constraints (hosting, installs, users).
+    intake = parsed_ba.get("intake") or {}
+    answers = " ".join(f"[{k}] {v.get('answer', '')}" for k, v in (parsed_ba.get("qa_map") or {}).items())
+    client_block = ("; ".join(f"{k}: {v}" for k, v in intake.items() if v) + "\n" + answers)[:3000]
+
+    sections_spec = [line for line in base_prompt.split("MANDATORY APPENDIX A.3 SECTIONS:")[1].split("Return ONLY")[0].strip().split("\n\n")]
+    parts = [(1, sections_spec[0:4]), (2, sections_spec[4:8]), (3, sections_spec[8:12])]
+    part_of_section = {n: part for part, secs in parts for n in range(1 + 4 * (part - 1), 5 + 4 * (part - 1))}
+    state = state if state is not None else {}
+    texts: Dict[int, str] = state.setdefault("parts", {})
+    feedback: Dict[int, List[str]] = dict(part_feedback or {})
+    last_meta: Dict[str, Any] = {}
     max_attempts = 3
-    last_errors = []
+    last_errors: List[str] = []
 
     for attempt in range(1, max_attempts + 1):
-        logger.info(f"Generating architecture.md via LLM (attempt {attempt}/{max_attempts})...")
-        raw_text, meta = query_llm_with_meta(
-            prompt=current_prompt,
-            role="architect",
-            session_id=session_id,
-            task_id="architect_trd"
-        )
+        logger.info(f"Generating architecture.md via LLM in {len(parts)} parts (attempt {attempt}/{max_attempts})...")
+        for part, secs in parts:
+            if part in texts and part not in feedback:
+                continue
+            prompt = (f"You are the Lead Solution Architect for '{app_name}'. Write ONLY these sections of "
+                      f"docs/architecture.md (Handbook Appendix A.3), with exactly these headings, nothing else:\n\n"
+                      + "\n\n".join(secs) +
+                      f"\n\nFEATURES:\n{features_summary}\nCONSTRAINTS (cite these IDs):\n{nfrs_summary}\n"
+                      f"DECIDED EARLIER IN THIS STAGE (stay consistent with it; cite the IDs):\n{facts_block}\n"
+                      f"CLIENT INTAKE AND ANSWERS (source of truth for hosting, installs, users, integrations; cite "
+                      f"them exactly as [Q-001]-style IDs that appear here):\n{client_block}\n\n"
+                      f"Choose the simplest design that meets these constraints (Handbook 7.2.6): no extra servers, "
+                      f"queues, caches, proxies, monitoring SaaS or external services unless an NFR above needs them, "
+                      f"and nothing that contradicts the client's hosting or installation limits. Every number in the "
+                      f"capacity estimate must come from the client's answers or be marked as an ASM- assumption.\n\n"
+                      f"Cite source IDs ([NFR-..], [Q-..], [F-..], [ADR-..]) for every number and decision. "
+                      f"Mark any library version you cannot verify as UNVERIFIED:. Be concise; tables over prose. "
+                      f"Return ONLY the markdown for these sections.")
+            if feedback.get(part):
+                prompt += "\n\nYOUR PREVIOUS VERSION FAILED THESE CHECKS; FIX EACH ONE:\n" + "\n".join(f"- {e}" for e in feedback[part])
+            raw_text, meta = query_llm_with_meta(prompt=prompt, role="architect", session_id=session_id,
+                                                 task_id=f"architect_trd_p{part}", max_tokens=3000)
+            last_meta = meta
+            texts[part] = raw_text.strip()
+        doc = "\n\n".join(texts[p] for p, _ in parts)
 
-        is_valid, errors = validate_architecture_pre_judge(raw_text, prd_data, adr_list)
+        is_valid, errors = validate_architecture_pre_judge(doc, prd_data, adr_list)
         if is_valid:
             logger.info(f"Architecture TRD passed pre-Judge validation on attempt {attempt}.")
-            stamp = _generate_stamp(meta, role_name="Solution Architect")
-            clean_text = raw_text.strip()
-            final_arch = f"{stamp}# Technical Architecture Document (TRD): {app_name}\n\n{clean_text}" if not clean_text.startswith("<!-- ARTIFACT METADATA:") else clean_text
-
+            stamp = _generate_stamp(last_meta, role_name="Solution Architect")
+            final_arch = f"{stamp}# Technical Architecture Document (TRD): {app_name}\n\n{doc}"
             arch_path = os.path.join(docs_dir, "architecture.md")
             with open(arch_path, "w", encoding="utf-8") as f:
                 f.write(final_arch)
@@ -635,12 +762,13 @@ Return ONLY the markdown document."""
 
         logger.warning(f"Architecture TRD validation failed on attempt {attempt}: {errors}")
         last_errors = errors
-        current_prompt = (
-            f"{base_prompt}\n\n"
-            f"VALIDATION ERRORS ON ATTEMPT {attempt}:\n"
-            + "\n".join(f"- {e}" for e in errors)
-            + "\n\nPlease fix each section listed above and return the complete architecture document."
-        )
+        # Route each error to the part holding its section; an error naming no section redoes every part.
+        feedback = {}
+        for err in errors:
+            m = re.search(r"[Ss]ection '?(\d{1,2})[.\s]", err)
+            targets = [part_of_section[int(m.group(1))]] if m and int(m.group(1)) in part_of_section else [p for p, _ in parts]
+            for t in targets:
+                feedback.setdefault(t, []).append(err)
 
     raise ValueError(f"Architecture generation failed validation after {max_attempts} attempts: {last_errors}")
 
@@ -688,7 +816,20 @@ def approve_gate1_endpoint(req: Gate1ApprovalRequest):
     state_file = os.path.join(session_dir, "session_state.json")
     state = load_json(state_file, {})
 
+    # Gate 1 shows the client a reviewed PRD (Handbook 2.7.3 steps 9-10).
+    if not os.path.exists(os.path.join(session_dir, "docs", "prd.md")):
+        raise HTTPException(status_code=409, detail="No PRD yet: run the PM before Gate 1.")
+    verdict = (load_json(os.path.join(session_dir, "pm_state.json"), {}) or {}).get("judge_verdict", {}) or {}
+    if not verdict.get("pass") and not req.accept_known_issues:
+        raise HTTPException(status_code=409, detail={
+            "error": "PRD_NOT_PASSED",
+            "summary": verdict.get("verdict_summary", "The Judge has not passed the PRD."),
+            "unsupported_claims": verdict.get("unsupported_claims", []),
+            "rule": "Approve only a PRD the Judge passed, or set accept_known_issues to record the client's decision."})
+
     now_iso = datetime.now(timezone.utc).isoformat()
+    state["gate1_known_issues_accepted"] = bool(req.accept_known_issues and not verdict.get("pass"))
+    state["gate1_judge_verdict"] = {k: verdict.get(k) for k in ("pass", "total", "max", "verdict_summary")}
     state["gate1_approved"] = True
     state["gate1_approval_timestamp"] = now_iso
     state["gate1_client_notes"] = req.client_notes
@@ -769,22 +910,36 @@ def start_architect_endpoint(req: ArchitectSessionRequest):
     schema_path = generate_schema_doc(parsed_ba, prd_data, docs_dir, session_id=session_id)
     openapi_path = generate_openapi_spec(parsed_ba, prd_data, docs_dir, session_id=session_id)
     team_plan_path = generate_team_plan(parsed_ba, prd_data, docs_dir, adrs=adrs)
-    arch_path = generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adrs, session_id=session_id)
-
-    with open(arch_path, "r", encoding="utf-8") as f:
-        arch_text = f.read()
     with open(schema_path, "r", encoding="utf-8") as f:
         schema_text = f.read()
 
-    # Stage 3 Step 13: Judge evaluation
-    judge_verdict = evaluate_architecture_with_judge(
-        arch_text=arch_text,
-        prd_text=prd_text,
-        parsed_ba=parsed_ba,
-        rubric_path="skills/architect/rubric.json",
-        session_id=session_id,
-        schema_text=schema_text
-    )
+    # Produce loop (Handbook 32): validate -> Judge -> findings back to the parts that hold them (max 2 rebuilds).
+    trd_state: Dict[str, Any] = {}
+    part_feedback: Dict[int, List[str]] = {}
+    judge_rounds: List[Dict[str, Any]] = []
+    for judge_round in range(1, 4):
+        arch_path = generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adrs, session_id=session_id,
+                                              state=trd_state, part_feedback=part_feedback)
+        with open(arch_path, "r", encoding="utf-8") as f:
+            arch_text = f.read()
+        # Stage 3 Step 13: Judge evaluation
+        judge_verdict = evaluate_architecture_with_judge(
+            arch_text=arch_text,
+            prd_text=prd_text,
+            parsed_ba=parsed_ba,
+            rubric_path="skills/architect/rubric.json",
+            session_id=session_id,
+            schema_text=schema_text
+        )
+        judge_rounds.append({"round": judge_round, "pass": judge_verdict.get("pass"), "total": judge_verdict.get("total"),
+                             "unsupported": len(judge_verdict.get("unsupported_claims") or [])})
+        if judge_verdict.get("pass") or judge_verdict.get("is_degraded") or judge_round == 3:
+            break
+        part_feedback = route_findings_to_parts(arch_text, judge_verdict)
+        if not part_feedback:
+            break
+        logger.info(f"Architecture Judge round {judge_round} failed; rebuilding parts {sorted(part_feedback)}")
+    judge_verdict["judge_rounds"] = judge_rounds
 
     architect_state = {
         "session_id": session_id,
@@ -807,6 +962,68 @@ def start_architect_endpoint(req: ArchitectSessionRequest):
         "artifacts": architect_state["artifacts"],
         "judge_verdict": judge_verdict
     }
+
+
+@architect_router.post("/architect/rejudge")
+def rejudge_architect_endpoint(req: ArchitectSessionRequest):
+    """
+    Re-runs only the Judge (Stage 3 step 13) on the Architect's existing documents, e.g. after a
+    degraded verdict when the high-tier model's quota was used up. Nothing is regenerated.
+    """
+    session_id = req.session_id
+    from main import get_session_dir, load_json, save_json
+    from judge import evaluate_architecture_with_judge
+
+    session_dir = get_session_dir(session_id)
+    docs_dir = os.path.join(session_dir, "docs")
+    state = load_json(os.path.join(session_dir, "architect_state.json"), {})
+    needed = [os.path.join(docs_dir, n) for n in ("architecture.md", "schema.md", "openapi.yaml", "prd.md")]
+    if not state or not all(os.path.exists(n) for n in needed):
+        raise HTTPException(status_code=409, detail="No complete Architect output to re-judge; run /architect/start.")
+    read = lambda name: open(os.path.join(docs_dir, name), "r", encoding="utf-8").read()
+    prd_text = read("prd.md")
+    parsed_ba = parse_ba_data(load_json(os.path.join(session_dir, "intake.json"), {}),
+                              load_json(os.path.join(session_dir, "qa_log.json"), []), prd_text, session_id=session_id)
+    prd_data = parse_prd_data(prd_text)
+    adr_list = []
+    adr_dir = os.path.join(docs_dir, "adr")
+    for fn in sorted(os.listdir(adr_dir)) if os.path.isdir(adr_dir) else []:
+        m = re.match(r"(ADR-\d+)", fn)
+        if m:
+            first = open(os.path.join(adr_dir, fn), "r", encoding="utf-8").read().splitlines()
+            title = next((l.lstrip("# ").strip() for l in first if l.startswith("#")), m.group(1))
+            adr_list.append({"id": m.group(1), "title": title, "path": f"docs/adr/{fn}"})
+
+    # Existing document split into its three parts, so a real failure rebuilds only the parts with findings.
+    doc = read("architecture.md")
+    trd_state: Dict[str, Any] = {"parts": {}}
+    for part in (1, 2, 3):
+        lo, hi = 1 + 4 * (part - 1), 4 * part
+        m = re.search(rf"(^##\s*{lo}\..*?)(?=^##\s*{hi + 1}\.|\Z)", doc, re.MULTILINE | re.DOTALL)
+        if m:
+            trd_state["parts"][part] = m.group(1).strip()
+    judge_rounds: List[Dict[str, Any]] = []
+    for judge_round in range(1, 4):
+        judge_verdict = evaluate_architecture_with_judge(
+            arch_text=doc, prd_text=prd_text, parsed_ba=parsed_ba,
+            rubric_path="skills/architect/rubric.json", session_id=session_id, schema_text=read("schema.md"))
+        judge_rounds.append({"round": judge_round, "pass": judge_verdict.get("pass"), "total": judge_verdict.get("total"),
+                             "unsupported": len(judge_verdict.get("unsupported_claims") or [])})
+        if judge_verdict.get("pass") or judge_verdict.get("is_degraded") or judge_round == 3:
+            break
+        part_feedback = route_findings_to_parts(doc, judge_verdict)
+        if not part_feedback or len(trd_state["parts"]) < 3:
+            break
+        logger.info(f"Re-judge round {judge_round} failed; rebuilding architecture parts {sorted(part_feedback)}")
+        generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adr_list, session_id=session_id,
+                                  state=trd_state, part_feedback=part_feedback)
+        doc = read("architecture.md")
+    judge_verdict["judge_rounds"] = judge_rounds
+    state.update({"status": "done" if judge_verdict.get("pass", False) else "review_failed",
+                  "judge_verdict": judge_verdict, "rejudged_at": datetime.now(timezone.utc).isoformat()})
+    save_json(os.path.join(session_dir, "architect_state.json"), state)
+    return {"session_id": session_id, "status": state["status"], "artifacts": state.get("artifacts"),
+            "judge_verdict": judge_verdict}
 
 
 def register_architect_router(main_app):

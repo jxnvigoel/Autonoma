@@ -15,6 +15,7 @@ Rule: LLM writes, code validates.
 import os
 import re
 import json
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple, Set
@@ -99,6 +100,22 @@ def validate_extracted_requirements_json(
 
     if not isinstance(data, dict):
         return False, ["Root output must be a JSON object"]
+
+    # Shape check first: a string where an object belongs is an error to feed back, not a crash.
+    for key in ("personas", "functional_requirements", "non_functional_requirements", "entities", "goals",
+                "non_goals", "success_metrics", "assumptions", "open_questions"):
+        items = data.get(key, [])
+        if not isinstance(items, list):
+            errors.append(f"'{key}' must be a list of objects")
+            continue
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"{key}[{i}] must be an object with named fields, got {type(item).__name__}")
+    for key in ("app_overview", "problem"):
+        if key in data and not isinstance(data[key], dict):
+            errors.append(f"'{key}' must be an object")
+    if errors:
+        return False, errors
 
     # 1. Required top-level keys
     req_keys = [
@@ -324,123 +341,85 @@ def extract_requirements_with_llm(
         "6. Return ONLY valid JSON with no markdown wrapping or preamble."
     )
 
-    base_prompt = f"""CLIENT INTAKE:
+    template: Dict[str, Any] = {
+        "app_overview": {"app_name": "Project Name", "description": "One-line description",
+                         "category": "Domain Category", "platforms": "Target Platforms / Offline Desktop",
+                         "source_qid": "Q-001"},
+        "problem": {"today": "What users do today and their workarounds", "today_source_qid": "Q-001",
+                    "core_problem": "The single biggest pain and consequence", "core_problem_source_qid": "Q-002",
+                    "shortcomings": "Why existing tools fall short", "shortcomings_source_qid": "Q-002"},
+        "personas": [{"name": "Persona Role Title", "context": "Context of operations", "goal": "Primary operational goal",
+                      "pain_point": "Biggest pain point", "source_qid": "Q-001"}],
+        "functional_requirements": [{"title": "Clear Feature Title", "description": "Substantive feature description",
+                                     "priority": "Must", "source_qid": "Q-003"}],
+        "non_functional_requirements": [{"category": "Latency / Storage / Platform / Accessibility",
+                                         "target": "Verifiable target metric", "source_qid": "Q-004"}],
+        "entities": [{"name": "Entity Name", "description": "What it represents", "source_qid": "Q-003"}],
+        "goals": [{"goal": "Verifiable MVP Goal", "source_qid": "Q-001"}],
+        "non_goals": [{"non_goal": "Explicitly deferred capability", "why": "Reason why deferred to v2",
+                       "source_qid": "Q-002"}],
+        "success_metrics": [{"metric": "Metric Name", "target": "Measurable threshold",
+                             "how_measured": "Query or audit check", "source_qid": "Q-001"}],
+        "assumptions": [{"text": "Specific assumption sentence pending client confirmation at Gate 1.",
+                         "status": "awaiting client at Gate 1"}],
+        "open_questions": [{"text": "Specific open question sent to client via BA.", "to": "client"}],
+    }
+    # Extracted in parts so each reply stays well under provider output caps (e.g. 1,000 output
+    # tokens per minute on Groq's free tier); the merged document is validated as a whole.
+    chunks = [
+        ["app_overview", "problem", "personas"],
+        ["functional_requirements", "non_functional_requirements", "entities"],
+        ["goals", "non_goals", "success_metrics", "assumptions", "open_questions"],
+    ]
+    context_block = f"""CLIENT INTAKE:
 {json.dumps(intake_data, indent=2)}
 
 DISCOVERY Q&A LOG:
 {json.dumps(qa_log, indent=2)}
+"""
 
-Output a valid JSON object matching this exact structure:
-{{
-  "app_overview": {{
-    "app_name": "Project Name",
-    "description": "One-line description",
-    "category": "Domain Category",
-    "platforms": "Target Platforms / Offline Desktop",
-    "source_qid": "Q-001"
-  }},
-  "problem": {{
-    "today": "What users do today and their workarounds",
-    "today_source_qid": "Q-001",
-    "core_problem": "The single biggest pain and consequence",
-    "core_problem_source_qid": "Q-002",
-    "shortcomings": "Why existing tools fall short",
-    "shortcomings_source_qid": "Q-002"
-  }},
-  "personas": [
-    {{
-      "name": "Persona Role Title",
-      "context": "Context of operations",
-      "goal": "Primary operational goal",
-      "pain_point": "Biggest pain point",
-      "source_qid": "Q-001"
-    }}
-  ],
-  "functional_requirements": [
-    {{
-      "title": "Clear Feature Title",
-      "description": "Substantive feature description",
-      "priority": "Must",
-      "source_qid": "Q-003"
-    }}
-  ],
-  "non_functional_requirements": [
-    {{
-      "category": "Latency / Storage / Platform / Accessibility",
-      "target": "Verifiable target metric",
-      "source_qid": "Q-004"
-    }}
-  ],
-  "entities": [
-    {{
-      "name": "Entity Name",
-      "description": "What it represents",
-      "source_qid": "Q-003"
-    }}
-  ],
-  "goals": [
-    {{
-      "goal": "Verifiable MVP Goal",
-      "source_qid": "Q-001"
-    }}
-  ],
-  "non_goals": [
-    {{
-      "non_goal": "Explicitly deferred capability",
-      "why": "Reason why deferred to v2",
-      "source_qid": "Q-002"
-    }}
-  ],
-  "success_metrics": [
-    {{
-      "metric": "Metric Name",
-      "target": "Measurable threshold",
-      "how_measured": "Query or audit check",
-      "source_qid": "Q-001"
-    }}
-  ],
-  "assumptions": [
-    {{
-      "text": "Specific assumption sentence pending client confirmation at Gate 1.",
-      "status": "awaiting client at Gate 1"
-    }}
-  ],
-  "open_questions": [
-    {{
-      "text": "Specific open question sent to client via BA.",
-      "to": "client"
-    }}
-  ]
-}}"""
+    def _parse(raw: str) -> Dict[str, Any]:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+            text = re.sub(r"\n```$", "", text).strip()
+        return json.loads(text)
 
-    current_prompt = base_prompt
     max_attempts = 3
-    last_errors = []
-
+    last_errors: List[str] = []
+    feedback = ""
     for attempt in range(1, max_attempts + 1):
         logger.info(f"Extracting requirements with LLM (attempt {attempt}/{max_attempts})...")
-        raw_text, meta = query_llm_with_meta(
-            prompt=current_prompt,
-            system=system_prompt,
-            role="ba",
-            session_id=session_id,
-            task_id="extract_requirements_json"
-        )
-
-        clean_text = raw_text.strip()
-        if clean_text.startswith("```"):
-            clean_text = re.sub(r"^```[a-zA-Z]*\n", "", clean_text)
-            clean_text = re.sub(r"\n```$", "", clean_text).strip()
-
-        try:
-            extracted_json = json.loads(clean_text)
-        except Exception as e:
-            last_errors = [f"JSON parse error: {e}"]
-            current_prompt = (
-                f"{base_prompt}\n\n"
-                f"ERROR ON ATTEMPT {attempt}: The output was not valid JSON ({e}). "
-                f"You MUST return ONLY a strictly valid JSON object."
+        extracted_json: Dict[str, Any] = {}
+        parse_errors: List[str] = []
+        for part, keys in enumerate(chunks, 1):
+            subset = {k: template[k] for k in keys}
+            prompt = (f"{context_block}\nOutput a valid JSON object with exactly these keys, matching this structure "
+                      f"(part {part} of {len(chunks)} of the requirements document; keep sentences short):\n"
+                      f"{json.dumps(subset, indent=2)}" + (f"\n\n{feedback}" if feedback else ""))
+            raw_text, meta = query_llm_with_meta(
+                prompt=prompt,
+                system=system_prompt,
+                role="ba",
+                session_id=session_id,
+                task_id=f"extract_requirements_json_p{part}",
+                max_tokens=1000,
             )
+            try:
+                part_json = _parse(raw_text)
+            except Exception as e:
+                cut = " (reply was cut off at the output token limit; be more concise)" if meta.get("stop") == "max_tokens" else ""
+                parse_errors.append(f"part {part} ({', '.join(keys)}): JSON parse error: {e}{cut}")
+                continue
+            for k in keys:
+                if k in part_json:
+                    extracted_json[k] = part_json[k]
+                else:
+                    parse_errors.append(f"part {part}: missing key '{k}'")
+        if parse_errors:
+            last_errors = parse_errors
+            feedback = (f"ERRORS ON ATTEMPT {attempt}:\n" + "\n".join(f"- {e}" for e in parse_errors) +
+                        "\nReturn ONLY a strictly valid JSON object.")
             continue
 
         is_valid, errors = validate_extracted_requirements_json(extracted_json, qa_map)
@@ -450,12 +429,8 @@ Output a valid JSON object matching this exact structure:
 
         logger.warning(f"Requirements extraction failed validation on attempt {attempt}: {errors}")
         last_errors = errors
-        current_prompt = (
-            f"{base_prompt}\n\n"
-            f"ERRORS ON ATTEMPT {attempt}:\n"
-            + "\n".join(f"- {err}" for err in errors)
-            + "\n\nPlease fix every single error listed above and return the corrected complete JSON object."
-        )
+        feedback = (f"ERRORS ON ATTEMPT {attempt} (whole document):\n" + "\n".join(f"- {err}" for err in errors) +
+                    "\nFix every error that concerns the keys of this part and return the corrected JSON object.")
 
     # Fail loudly - NO canned fallback
     raise ValueError(
@@ -556,6 +531,35 @@ def format_requirements_markdown(extracted: Dict[str, Any], qa_map: Dict[str, An
     return md
 
 
+PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "projects")
+
+
+def load_or_extract_requirements(intake_data: Dict[str, Any], qa_log: List[Dict[str, Any]],
+                                 session_id: Optional[str]) -> Dict[str, Any]:
+    """
+    One validated extraction per project, reused by every later stage (PM, feasibility, Architect,
+    Designer) so all of them see the same FR-/NFR- IDs. Re-extracted only when the intake or the
+    Q&A log changes (content hash).
+    """
+    digest = hashlib.sha256(json.dumps({"intake": intake_data, "qa": qa_log}, sort_keys=True,
+                                       default=str).encode()).hexdigest()
+    cache = os.path.join(PROJECTS_DIR, session_id, "requirements_extraction.json") if session_id else None
+    if cache and os.path.exists(cache):
+        try:
+            with open(cache, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            if saved.get("source_sha256") == digest and isinstance(saved.get("extraction"), dict):
+                return saved["extraction"]
+        except (OSError, ValueError):
+            pass
+    extracted = extract_requirements_with_llm(intake_data, qa_log, session_id=session_id)
+    if cache and os.path.isdir(os.path.dirname(cache)):
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump({"source_sha256": digest, "extracted_at": datetime.now(timezone.utc).isoformat(),
+                       "extraction": extracted}, f, indent=2)
+    return extracted
+
+
 def parse_ba_data(
     intake_data: Dict[str, Any],
     qa_log: List[Dict[str, Any]],
@@ -567,7 +571,7 @@ def parse_ba_data(
     Uses LLM extraction validated by code.
     No regex heuristics, zero canned fallbacks.
     """
-    extracted = extract_requirements_with_llm(intake_data, qa_log, session_id=session_id)
+    extracted = load_or_extract_requirements(intake_data, qa_log, session_id)
 
     qa_map: Dict[str, Dict[str, Any]] = {}
     for idx, item in enumerate(qa_log):
@@ -704,8 +708,58 @@ def parse_ba_data(
         "assumptions": assumptions,
         "open_questions": open_questions,
         "qa_map": qa_map,
+        "intake": intake_data,
+        "timeline": intake_data.get("timeline", ""),
+        "budget": intake_data.get("budget", ""),
         "extracted_raw": extracted
     }
+
+
+def render_requirements_markdown(parsed_ba: Dict[str, Any], intake_data: Dict[str, Any]) -> str:
+    """
+    requirements.md rendered by code from the BA's validated extraction (Appendix A.1), so the
+    BA document, the PRD and every later citation share ONE set of IDs (FR-, NFR-, P-, ASM-, OQ-).
+    """
+    def src(q: str) -> str:
+        q = str(q or parsed_ba.get("first_qid", "Q-001")).strip("[]")
+        return f"[{q}]"
+
+    lines = [f"# Requirements: {parsed_ba.get('app_name', intake_data.get('project_name', ''))}", "",
+             "<!-- Rendered by code from the Business Analyst's validated requirements extraction; "
+             "IDs here are the IDs every later document cites. -->", "",
+             "## 1. Problem", "",
+             f"- Today: {parsed_ba.get('today_text', '')} {src(parsed_ba.get('today_qid'))}",
+             f"- Core problem: {parsed_ba.get('problem_text', '')} {src(parsed_ba.get('problem_qid'))}",
+             f"- Why existing tools fall short: {parsed_ba.get('shortcomings_text', '')} {src(parsed_ba.get('shortcomings_qid'))}",
+             "", "## 2. Personas", "", "| ID | Who | Context | Goal | Source |", "|---|---|---|---|---|"]
+    lines += [f"| {p['id']} | {p.get('persona', '')} | {p.get('context', '')} | {p.get('goal', '')} | {src(p.get('source'))} |"
+              for p in parsed_ba.get("personas", [])]
+    lines += ["", "## 3. Functional requirements", "",
+              "Format: - FR-###: <requirement> (<MoSCoW> Have) [Source: Q-###]", ""]
+    for fr in parsed_ba.get("functional_reqs", []):
+        desc = f" — {fr['description']}" if fr.get("description") else ""
+        lines.append(f"- {fr['id']}: {fr.get('feature', '')}{desc} ({fr.get('priority', 'Must')} Have) "
+                     f"[Source: {str(fr.get('source', '')).strip('[]')}]")
+    lines += ["", "## 4. Non-functional requirements", "", "| ID | Category | Requirement | Source |", "|---|---|---|---|"]
+    lines += [f"| {n['id']} | {n.get('nfr', '')} | {n.get('target', '')} | {n.get('source', '')} |"
+              for n in parsed_ba.get("non_functional_reqs", [])]
+    entities = (parsed_ba.get("extracted_raw") or {}).get("entities", [])
+    lines += ["", "## 5. Data", "", "| What | Description | Source |", "|---|---|---|"]
+    lines += [f"| {e.get('name', '')} | {e.get('description', '')} | {src(e.get('source_qid'))} |" for e in entities] or ["| - | - | - |"]
+    lines += ["", "## 6. Constraints", "",
+              f"- Timeline: {intake_data.get('timeline', '')} (intake)",
+              f"- Budget: {intake_data.get('budget', '')} (intake)",
+              "", "## 7. Goals and success", ""]
+    lines += [f"- {g['id']}: {g.get('goal', '')} {src(g.get('source'))}" for g in parsed_ba.get("discovered_goals", [])]
+    lines += [f"- {m['id']}: {m.get('metric', '')} — target {m.get('target', '')}; measured by {m.get('measurement', '')} "
+              f"{src(m.get('source'))}" for m in parsed_ba.get("discovered_metrics", [])]
+    lines += ["", "## 8. Won't (v1)", "", "| ID | Item | Reason | Source |", "|---|---|---|---|"]
+    lines += [f"| {n['id']} | {n.get('non_goal', '')} | {n.get('why', '')} | {src(n.get('source'))} |"
+              for n in parsed_ba.get("discovered_non_goals", [])] or ["| - | - | - | - |"]
+    lines += ["", "## 9. Assumptions and open questions", "", "| ID | Type | Text | Status |", "|---|---|---|---|"]
+    lines += [f"| {a['id']} | assumption | {a.get('text', '')} | {a.get('status', '')} |" for a in parsed_ba.get("assumptions", [])]
+    lines += [f"| {q['id']} | open question | {q.get('text', '')} | {q.get('status', '')} |" for q in parsed_ba.get("open_questions", [])]
+    return "\n".join(lines) + "\n"
 
 
 def parse_prd_data(prd_text: str) -> Dict[str, Any]:

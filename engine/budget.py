@@ -4,6 +4,7 @@ Per Handbook Chapter 2.7.5 (steps 16-17), 5.1.6, 22.4, 24.1, and 26.4.
 """
 
 import os
+import re
 import json
 import sqlite3
 import hashlib
@@ -122,7 +123,10 @@ def recompute_budget_step16(session_id: str, db_path: str = DEFAULT_DB_PATH) -> 
     pricing_rates = load_pricing_rates()
     is_local_only = False
     try:
-        from llm_client import default_llm_client
+        try:
+            from llm_client import default_llm_client
+        except ImportError:
+            from engine.llm_client import default_llm_client
         is_local_only = default_llm_client.is_project_local_only(session_id)
     except Exception:
         pass
@@ -174,7 +178,7 @@ def check_budget_guard(
     session_id: str,
     budget_limit_tokens: Optional[int] = None,
     budget_limit_usd: Optional[float] = None,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Handbook 26.4 Token budget and ledger:
@@ -182,13 +186,26 @@ def check_budget_guard(
     - Hard pause at 100% until the client raises the budget
     - Local models cost $0 but still count tokens (tokens are time on local hardware).
     """
+    db_path = db_path or DEFAULT_DB_PATH
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     intake_file = os.path.join(session_dir, "intake.json")
     estimate_file = os.path.join(session_dir, "docs", "estimate.json")
 
-    # Determine limits from intake or estimate if not provided
+    # Determine limits: explicit args, then a client-raised budget, then intake or estimate
     token_limit = budget_limit_tokens
     usd_limit = budget_limit_usd
+    override = {}
+    override_file = os.path.join(session_dir, "budget_override.json")
+    if os.path.exists(override_file):
+        try:
+            with open(override_file, "r", encoding="utf-8") as f:
+                override = json.load(f)
+        except Exception:
+            override = {}
+    if token_limit is None and override.get("budget_limit_tokens"):
+        token_limit = int(override["budget_limit_tokens"])
+    if usd_limit is None and override.get("budget_limit_usd"):
+        usd_limit = float(override["budget_limit_usd"])
 
     if token_limit is None and os.path.exists(intake_file):
         try:
@@ -235,6 +252,8 @@ def check_budget_guard(
                 spent_tokens = int(row[0])
                 spent_cost_usd = float(row[1] or 0.0)
             conn.close()
+        except sqlite3.OperationalError:
+            pass  # no ledger table yet: nothing has been spent
         except Exception as e:
             logger.warning(f"Error querying budget guard totals: {e}")
 
@@ -278,6 +297,36 @@ def check_budget_guard(
     }
 
 
+def raise_budget(
+    session_id: str,
+    budget_limit_tokens: Optional[int] = None,
+    budget_limit_usd: Optional[float] = None,
+    note: str = ""
+) -> Dict[str, Any]:
+    """Client raises the budget after a hard pause (Handbook 26.4). Recorded with a timestamp."""
+    session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
+    if not os.path.isdir(session_dir):
+        raise HTTPException(status_code=404, detail=f"Project {session_id} not found")
+    override_file = os.path.join(session_dir, "budget_override.json")
+    record: Dict[str, Any] = {}
+    if os.path.exists(override_file):
+        with open(override_file, "r", encoding="utf-8") as f:
+            record = json.load(f)
+    if budget_limit_tokens is not None:
+        record["budget_limit_tokens"] = int(budget_limit_tokens)
+    if budget_limit_usd is not None:
+        record["budget_limit_usd"] = float(budget_limit_usd)
+    record.setdefault("history", []).append({
+        "at": datetime.now(timezone.utc).isoformat(),
+        "budget_limit_tokens": budget_limit_tokens,
+        "budget_limit_usd": budget_limit_usd,
+        "note": note,
+    })
+    with open(override_file, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2)
+    return check_budget_guard(session_id)
+
+
 # ==============================================================================
 # GATE 2 STATE & APPROVAL MANAGEMENT
 # ==============================================================================
@@ -287,6 +336,7 @@ def get_gate2_state(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     gate2_file = os.path.join(session_dir, "gate2_state.json")
     team_plan_file = os.path.join(session_dir, "docs", "team-plan.json")
+    estimate_file = os.path.join(session_dir, "docs", "estimate.json")
     staffing_report_file = os.path.join(session_dir, "docs", "staffing-report.md")
 
     gate2_state = {}
@@ -323,18 +373,35 @@ def get_gate2_state(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str
     # Invalidation check: If team-plan.json or estimate.json changed after approval, invalidate
     current_plan_hash = get_file_sha256(team_plan_file)
     saved_plan_hash = gate2_state.get("approved_plan_sha256", "")
+    current_est_hash = get_file_sha256(estimate_file)
+    saved_est_hash = gate2_state.get("approved_estimate_sha256", "")
+
     if is_approved and saved_plan_hash and current_plan_hash != saved_plan_hash:
         logger.warning(f"Gate 2 approval invalidated for {session_id}: team-plan.json was modified after approval.")
         gate2_state["approved"] = False
         gate2_state["status"] = "invalidated"
         gate2_state["invalidated_reason"] = "Team plan was modified after client approval."
         is_approved = False
-        # Update db
         if os.path.exists(db_path):
             try:
                 conn = sqlite3.connect(db_path)
                 cur = conn.cursor()
                 cur.execute("UPDATE approvals SET status = 'open', note = 'Invalidated by plan modification' WHERE id = ?", (approval_id,))
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+    elif is_approved and saved_est_hash and current_est_hash != saved_est_hash:
+        logger.warning(f"Gate 2 approval invalidated for {session_id}: estimate.json was modified after approval.")
+        gate2_state["approved"] = False
+        gate2_state["status"] = "invalidated"
+        gate2_state["invalidated_reason"] = "Token estimate was modified after client approval."
+        is_approved = False
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                cur = conn.cursor()
+                cur.execute("UPDATE approvals SET status = 'open', note = 'Invalidated by estimate modification' WHERE id = ?", (approval_id,))
                 conn.commit()
                 conn.close()
             except Exception:
@@ -367,7 +434,10 @@ def save_gate2_approval_record(
     """
     Stores Gate 2 approval requisition row in the approvals table (Handbook 24.1).
     """
-    from skill_registry import init_approvals_db
+    try:
+        from skill_registry import init_approvals_db
+    except ImportError:
+        from engine.skill_registry import init_approvals_db
     init_approvals_db(db_path)
 
     approval_id = f"approval_gate2_{session_id}"
@@ -407,13 +477,18 @@ def save_gate2_approval_record(
 def approve_gate2(
     session_id: str,
     client_notes: Optional[str] = None,
+    note: Optional[str] = None,
     db_path: str = DEFAULT_DB_PATH
 ) -> Dict[str, Any]:
     """
     Records Gate 2 client approval in the approvals table and session state.
     Captures snapshot of team-plan.json SHA256 for post-approval invalidation tracking.
     """
-    from skill_registry import init_approvals_db
+    client_notes = note or client_notes
+    try:
+        from skill_registry import init_approvals_db
+    except ImportError:
+        from engine.skill_registry import init_approvals_db
     init_approvals_db(db_path)
 
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
@@ -475,7 +550,10 @@ def request_changes_gate2(
     - Reopens HR / Recruiter
     - Records feedback as new Q- in qa_log.json routed through BA
     """
-    from skill_registry import init_approvals_db
+    try:
+        from skill_registry import init_approvals_db
+    except ImportError:
+        from engine.skill_registry import init_approvals_db
     init_approvals_db(db_path)
 
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
@@ -554,5 +632,5 @@ def enforce_gate2_server_side(session_id: str, db_path: str = DEFAULT_DB_PATH) -
         reason = state.get("invalidated_reason", "Client approval at Gate 2 is required.")
         raise HTTPException(
             status_code=403,
-            detail=f"Gate 2 approval required (Status: '{status}'). Later stages cannot execute until Gate 2 is approved by the client. {reason}"
+            detail=f"GATE2_NOT_APPROVED: Gate 2 approval required (Status: '{status}'). Later stages cannot execute until Gate 2 is approved by the client. {reason}"
         )

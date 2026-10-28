@@ -49,7 +49,7 @@ The UI/UX Designer bridges product specifications (`docs/prd.md`) and technical 
 1. **No Invented Screens or Features**: Do not add screens or capabilities not required by the PRD.
 2. **No Technical Implementation Dictates**: Do not specify frontend framework, libraries, or state management packages. That is the Solution Architect's decision.
 3. **No Unmeasured Contrast**: Never assert that colors pass contrast without calculating or citing the exact mathematical contrast ratio.
-4. **No Placeholders or Generic Filler**: Never use "TBD", "Lorem ipsum", or generic color tokens unrelated to the project domain.
+4. **No Placeholders or Generic Filler**: Never use placeholders such as TBD, generic filler text, or generic color tokens unrelated to the project domain.
 
 ## 7. Exact System Prompt Fed to the Agent
 

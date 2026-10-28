@@ -18,6 +18,7 @@ export interface ReadDirectoryResult {
 export interface ElectronAPI {
   platform: string;
   getEngineUrl: () => Promise<string>;
+  openExternal: (url: string) => Promise<boolean>;
   openFolderDialog: () => Promise<string | null>;
   openFileDialog: () => Promise<string | null>;
   readDirectory: (dirPath: string) => Promise<ReadDirectoryResult>;
@@ -41,6 +42,7 @@ export interface ElectronAPI {
 const electronAPI: ElectronAPI = {
   platform: process.platform,
   getEngineUrl: () => ipcRenderer.invoke("get-engine-url"),
+  openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   openFolderDialog: () => ipcRenderer.invoke("dialog:openFolder"),
   openFileDialog: () => ipcRenderer.invoke("dialog:openFile"),
   readDirectory: (dirPath: string) => ipcRenderer.invoke("fs:readDirectory", dirPath),

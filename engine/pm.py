@@ -17,6 +17,7 @@ Rule: LLM writes, code validates.
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
 import logging
@@ -26,13 +27,13 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 try:
-    from requirements_parser import parse_ba_data
+    from requirements_parser import parse_ba_data, render_requirements_markdown
     from token_ledger import calculate_project_estimate
     from judge import evaluate_prd_with_judge
     from llm_client import default_llm_client, query_llm_with_meta
     from validators import validate_prd_pre_judge
 except ImportError:
-    from engine.requirements_parser import parse_ba_data
+    from engine.requirements_parser import parse_ba_data, render_requirements_markdown
     from engine.token_ledger import calculate_project_estimate
     from engine.judge import evaluate_prd_with_judge
     from engine.llm_client import default_llm_client, query_llm_with_meta
@@ -102,7 +103,7 @@ Output format:
 | App name | {app_name} | [{first_qid}] |
 | One-line description | {description} | [{first_qid}] |
 | Category | {category} | [{first_qid}] |
-| Platforms | {platforms} | [NFR-04] |
+| Platforms | {platforms} | [{first_qid}] |
 
 Return ONLY the markdown heading and table."""
 
@@ -157,23 +158,28 @@ Return ONLY the markdown section."""
 
 def generate_section_3_users_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     personas = parsed_ba.get("personas", [])
-    problem_qid = parsed_ba.get("problem_qid", parsed_ba["first_qid"])
+    first_persona_source = personas[0].get("source") if personas else parsed_ba["first_qid"]
 
     prompt = f"""You are the Product Manager. Generate Section 3 (Users) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
 PERSONAS EXTRACTED FROM DISCOVERY:
 {json.dumps(personas, indent=2)}
+
+RULES:
+1. In the Personas table, the Source column MUST cite the exact discovery source of that persona: [{first_persona_source}].
+2. In the User roles and permissions table, base 'Does', 'Can', and 'Cannot' strictly on the concrete context and goals of each persona from discovery. State specific actions they take (Does), permissions they possess (Can), and operational boundaries/restrictions (Cannot, e.g. cannot delete audit logs or modify locked records). Do NOT use generic placeholder text or invented OQ tags.
+3. Every row in both tables MUST cite [{first_persona_source}] in the Source column using square brackets.
 
 Output format:
 ## 3. Users
 ### Personas
 | ID | Persona | Context | Goal | Pain point | Source |
 |---|---|---|---|---|---|
-(One row per persona citing their discovery source [{problem_qid}])
+(One row per persona citing [{first_persona_source}])
 
 ### User roles and permissions
 | Role | Does | Can | Cannot | Source |
 |---|---|---|---|---|
-(One row per persona. Mark unconfirmed permissions as 'Unspecified in discovery; see [OQ-02] to confirm permission boundaries at Gate 1' citing [{problem_qid}])
+(One row per persona with concrete grounded actions, permissions, and restrictions citing [{first_persona_source}])
 
 Return ONLY the markdown section."""
 
@@ -184,6 +190,7 @@ Return ONLY the markdown section."""
         task_id="prd_sec_3_users"
     )
     clean_text = text.strip()
+    clean_text = re.sub(r"\|\s*(Q-\d+)\s*\|", r"| [\1] |", clean_text)
     if "## 3. Users" not in clean_text:
         clean_text = f"## 3. Users\n{clean_text}"
     return clean_text, meta
@@ -204,22 +211,25 @@ DISCOVERY GOALS: {json.dumps(goals)}
 DISCOVERY NON-GOALS: {json.dumps(non_goals)}
 DISCOVERY METRICS: {json.dumps(metrics)}
 
+RULES:
+1. Every row in the Source column MUST use square bracket notation e.g. [Q-006] (NOT unbracketed Q-006).
+
 Output format:
 ## 4. Goals, non-goals, metrics
 ### Goals
 | ID | Goal | Source |
 |---|---|---|
-(G-01.. rows citing sources)
+(G-01.. rows citing sources in brackets e.g. [Q-006])
 
 ### Non-goals (not in v1)
 | ID | Non-goal (not in v1) | Why | Source |
 |---|---|---|---|
-(NG-01.. rows with reasons why deferred citing sources)
+(NG-01.. rows with reasons why deferred citing sources in brackets e.g. [Q-006])
 
 ### Success metrics
 | ID | Metric | Target | How it is measured | Source |
 |---|---|---|---|---|
-(M-01.. rows with targets and measurement queries citing sources)
+(M-01.. rows with targets and measurement queries citing sources in brackets e.g. [Q-006])
 
 Return ONLY the markdown section."""
 
@@ -230,9 +240,73 @@ Return ONLY the markdown section."""
         task_id="prd_sec_4_goals_metrics"
     )
     clean_text = text.strip()
+    clean_text = re.sub(r"\|\s*(Q-\d+)\s*\|", r"| [\1] |", clean_text)
     if "## 4. Goals, non-goals, metrics" not in clean_text:
         clean_text = f"## 4. Goals, non-goals, metrics\n{clean_text}"
     return clean_text, meta
+
+
+# Reviewer (Judge) findings for specific PRD sections, keyed by the section's task id prefix
+# (prd_sec_3_users, prd_sec_5_F-003, ...). Appended to that section's prompt on regeneration.
+_SECTION_FEEDBACK: Dict[str, List[str]] = {}
+_raw_query_llm_with_meta = query_llm_with_meta
+
+
+def _query_with_section_feedback(prompt: str, **kwargs: Any):
+    task = kwargs.get("task_id") or ""
+    notes = [n for key, items in _SECTION_FEEDBACK.items() if task.startswith(key) for n in items]
+    if notes:
+        prompt += ("\n\nTHE REVIEWER REJECTED YOUR PREVIOUS VERSION OF THIS SECTION. FIX EVERY POINT, and add nothing "
+                   "that is not in the discovery or the verified requirements:\n" + "\n".join(f"- {n}" for n in notes))
+    return _raw_query_llm_with_meta(prompt=prompt, **kwargs)
+
+
+query_llm_with_meta = _query_with_section_feedback
+
+SECTION_KEYWORDS = [
+    ("prd_sec_1_overview", ("overview", "app name", "category", "platform")),
+    ("prd_sec_2_problem", ("problem",)),
+    ("prd_sec_3_users", ("user", "persona", "role", "permission")),
+    ("prd_sec_4_goals_metrics", ("goal", "metric", "success")),
+    ("prd_sec_6_nfr", ("non-functional", "nfr", "performance", "accessibility")),
+    ("prd_sec_7_risks", ("risk",)),
+    ("prd_sec_8_assumptions", ("assumption", "open question")),
+    ("prd_sec_9_scope_changes", ("scope",)),
+]
+
+
+def map_judge_findings_to_sections(verdict: Dict[str, Any]) -> Dict[str, List[str]]:
+    """Routes each unsupported claim and each lost point to the PRD section that must change."""
+    out: Dict[str, List[str]] = {}
+
+    def route(where: str, note: str) -> None:
+        fm = re.search(r"\bF-\d{3}\b", where)
+        if fm:
+            out.setdefault(f"prd_sec_5_{fm.group(0)}", []).append(note)
+            return
+        low = where.lower()
+        for key, words in SECTION_KEYWORDS:
+            if any(w in low for w in words):
+                out.setdefault(key, []).append(note)
+                return
+
+    for u in verdict.get("unsupported_claims", []) or []:
+        if isinstance(u, dict):
+            route(f"{u.get('section', '')} {u.get('text', '')}",
+                  f"Unsupported claim: \"{u.get('text', '')}\" ({u.get('reason', '')})")
+    for sc in verdict.get("scores", []) or []:
+        if isinstance(sc, dict) and sc.get("score", 0) < sc.get("max", 0) and sc.get("fix"):
+            route(f"{sc.get('evidence', '')} {sc.get('fix', '')}", f"{sc.get('criterion')}: {sc.get('fix')}")
+    return out
+
+
+def _render_ac(ac: Dict[str, Any]) -> str:
+    """One Given / When / Then sentence, composed by code from the model's parts."""
+    def part(key: str) -> str:
+        text = str(ac.get(key, "")).strip().rstrip(".,;")
+        return re.sub(rf"^{key}\s+", "", text, flags=re.IGNORECASE)
+    sentence = f"Given {part('given')}, when {part('when')}, then {part('then')}."
+    return f"(unhappy path) {sentence}" if ac.get("kind") == "unhappy" else sentence
 
 
 def generate_single_feature_spec_llm(
@@ -242,78 +316,117 @@ def generate_single_feature_spec_llm(
     personas: List[Dict[str, Any]],
     nfr_latency: str,
     app_name: str,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    feedback: Optional[List[str]] = None
 ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Generates a single feature's detailed specification via LLM.
-    One call per feature to keep prompt/completion tokens small and bounded.
+    Generates one feature's specification (Handbook 5.1.2, Appendix A.2 section 5).
+    The model returns structured JSON (story; criteria tagged happy / unhappy with given / when /
+    then); code checks the structure and renders the markdown block, so labels, numbering and
+    sentence form never depend on the model following a text template.
+    `feedback` carries the validator's errors for this feature from the previous attempt.
     """
     fid = f"F-{f_idx:03d}"
-    fname = feature_dict.get("feature") or feature_dict.get("title", f"Feature {f_idx}")
-    fname = fname.replace("**", "").strip()
+    fname = (feature_dict.get("feature") or feature_dict.get("title", f"Feature {f_idx}")).replace("**", "").strip()
+    fdesc = feature_dict.get("description", "")
     fr_id = feature_dict.get("id", f"FR-{f_idx:03d}")
     priority = feature_dict.get("priority", "Must")
     p1 = personas[0] if personas else {"id": "P-01", "persona": "Primary User"}
+    pid = p1.get("id", "P-01")
 
-    ac1_id = f"AC-{ac_start_idx:03d}"
-    ac2_id = f"AC-{ac_start_idx+1:03d}"
+    base_prompt = f"""You are the Product Manager. Specify feature {fid}: '{fname}' for application '{app_name}'.
+FEATURE: {fname}. {fdesc}
+REQUIREMENT: [{fr_id}] ({priority} Have)
+PRIMARY PERSONA: [{pid}] {p1.get('persona', 'User')}
+PERFORMANCE TARGET: response under {nfr_latency} [NFR-01]
 
-    prompt = f"""You are the Product Manager. Write the detailed specification for feature {fid}: '{fname}' for application '{app_name}'.
-FEATURE TITLE: {fname}
-REQUIREMENTS CITED: [{fr_id}]
-PRIORITY: {priority} Have (MoSCoW)
-PRIMARY PERSONA: [{p1.get('id', 'P-01')}] {p1.get('persona', 'User')}
-PERFORMANCE TARGET: Response under {nfr_latency} [NFR-01]
+Return ONLY a JSON object:
+{{"story": "As a [{pid}], I want <action matching the feature> so that <benefit>.",
+  "acceptance_criteria": [
+    {{"kind": "happy", "given": "<precondition>", "when": "<action>", "then": "<verifiable outcome, e.g. within {nfr_latency} [NFR-01], or a visible message / stored record>"}},
+    {{"kind": "unhappy", "given": "<invalid input, missing permission, expired session, not found, duplicate or limit case>", "when": "<action>", "then": "<what the user sees and what does NOT change>"}}
+  ]}}
 
 RULES:
-1. Story must strictly follow: 'As a [{p1.get('id', 'P-01')}], I want <action matching feature title> so that <domain benefit>.'
-2. Acceptance criteria must be grammatical Given / When / Then sentences.
-3. Every AC must include a measurable bound or condition (e.g. '< {nfr_latency}', 'HTTP 200', 'error notice displayed', 'saved locally').
-4. Include an explicit unhappy path covering invalid input or errors.
-5. Do NOT use broken markdown or duplicate sentences.
+1. 2 to 4 criteria; at least one "happy" and at least one "unhappy".
+2. Every "then" is checkable by a test or a clear human check.
+3. Only behaviour stated in the feature or requirement; do not invent features, numbers or HTTP codes.
+4. Write each part as a plain clause without the words Given/When/Then."""
+    prompt = base_prompt
+    if feedback:
+        prompt += ("\n\nYOUR PREVIOUS VERSION OF THIS FEATURE FAILED THESE CHECKS; FIX EACH ONE:\n"
+                   + "\n".join(f"- {e}" for e in feedback))
 
-Output format:
-### Feature {fid}: {fname}
-- **Story**: As a [{p1.get('id', 'P-01')}], I want ... so that ....
-- **Priority**: {priority} Have (MoSCoW)
-- **Requirements**: [{fr_id}]
-- **Acceptance Criteria**:
-| ID | Acceptance criterion (Given / When / Then) |
-|---|---|
-| {ac1_id} | Given ... when ... then ... |
-| {ac2_id} | (unhappy path) Given invalid ... when ... then ... |
+    meta: Dict[str, Any] = {}
+    problems: List[str] = []
+    spec: Dict[str, Any] = {}
+    for _ in range(3):
+        text, meta = query_llm_with_meta(prompt=prompt, role="pm", session_id=session_id, task_id=f"prd_sec_5_{fid}")
+        problems = []
+        raw = text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-zA-Z]*\n", "", raw)
+            raw = re.sub(r"\n```$", "", raw).strip()
+        try:
+            spec = json.loads(raw)
+        except json.JSONDecodeError as e:
+            problems.append(f"reply is not valid JSON ({e})")
+            spec = {}
+        acs_in = spec.get("acceptance_criteria") if isinstance(spec, dict) else None
+        if not problems:
+            if not re.match(rf"As an?\s+\[{re.escape(pid)}\]", str(spec.get("story", "")), re.IGNORECASE):
+                problems.append(f"story must start with 'As a [{pid}]'")
+            if not isinstance(acs_in, list) or not 2 <= len(acs_in) <= 4:
+                problems.append("give 2 to 4 acceptance criteria")
+            else:
+                kinds = [a.get("kind") for a in acs_in if isinstance(a, dict)]
+                if "happy" not in kinds or "unhappy" not in kinds:
+                    problems.append("include at least one 'happy' and one 'unhappy' criterion")
+                for i, a in enumerate(acs_in):
+                    if not isinstance(a, dict) or not all(str(a.get(k, "")).strip() for k in ("given", "when", "then")):
+                        problems.append(f"criterion {i + 1} needs non-empty given, when and then")
+        if not problems:
+            break
+        prompt = base_prompt + "\n\nYOUR LAST REPLY HAD THESE PROBLEMS; FIX THEM:\n" + "\n".join(f"- {p}" for p in problems)
+    if problems:
+        raise ValueError(f"PM could not produce a valid specification for {fid}: {problems}")
 
-Return ONLY this feature block."""
-
-    text, meta = query_llm_with_meta(
-        prompt=prompt,
-        role="pm",
-        session_id=session_id,
-        task_id=f"prd_sec_5_{fid}"
-    )
-
-    clean_block = text.strip()
-    # Extract ACs
-    ac_rows = re.findall(r"\|\s*(AC-\d+)\s*\|\s*([^|]+)\s*\|", clean_block)
-    acs = []
-    for acid, actxt in ac_rows:
-        acs.append({
-            "id": acid.strip(),
-            "text": actxt.strip(),
-            "is_unhappy": "(unhappy path)" in actxt.lower()
-        })
-
-    return clean_block, acs, meta
+    story = str(spec["story"]).strip()
+    if not story.endswith((".", "!", "?")):
+        story += "."
+    acs: List[Dict[str, Any]] = []
+    rows = []
+    for i, a in enumerate(spec["acceptance_criteria"]):
+        acid = f"AC-{ac_start_idx + i:03d}"
+        sentence = _render_ac(a)
+        acs.append({"id": acid, "text": sentence, "is_unhappy": a.get("kind") == "unhappy"})
+        rows.append(f"| {acid} | {sentence} |")
+    block = "\n".join([
+        f"### Feature {fid}: {fname}",
+        f"- **Story**: {story}",
+        f"- **Priority**: {priority} Have (MoSCoW)",
+        f"- **Requirements**: [{fr_id}]",
+        "- **Acceptance Criteria**:",
+        "| ID | Acceptance criterion (Given / When / Then) |",
+        "|---|---|",
+        *rows,
+    ])
+    return block, acs, meta
 
 
 def generate_section_5_features_llm(
     parsed_ba: Dict[str, Any],
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    feedback_by_feature: Optional[Dict[str, List[str]]] = None,
+    previous_blocks: Optional[Dict[str, Tuple[str, List[Dict[str, Any]], Dict[str, Any]]]] = None
 ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Generates Section 5 by making one bounded LLM call per feature.
-    Assembles summary table and detailed feature blocks.
+    Assembles summary table and detailed feature blocks. On a retry, features that passed are
+    reused from `previous_blocks`; failing ones are regenerated with their validator errors.
     """
+    feedback_by_feature = feedback_by_feature or {}
+    previous_blocks = previous_blocks if previous_blocks is not None else {}
     discovered_features = parsed_ba.get("discovered_features", [])
     personas = parsed_ba.get("personas", [])
     app_name = parsed_ba["app_name"]
@@ -331,6 +444,22 @@ def generate_section_5_features_llm(
     summary_rows = []
     ac_counter = 1
 
+    # Features are independent: generate the ones that need a model call in parallel (the rate
+    # planner spreads them over the tier's models, which have separate quotas).
+    def _gen(idx_f):
+        idx, f = idx_f
+        fid_ = f"F-{idx:03d}"
+        return fid_, generate_single_feature_spec_llm(
+            feature_dict=f, f_idx=idx, ac_start_idx=1 + 2 * (idx - 1), personas=personas,
+            nfr_latency=latency_target, app_name=app_name, session_id=session_id,
+            feedback=feedback_by_feature.get(fid_))
+    todo = [(i, f) for i, f in enumerate(discovered_features, start=1)
+            if not (f"F-{i:03d}" in previous_blocks and f"F-{i:03d}" not in feedback_by_feature)]
+    workers = max(1, int((default_llm_client.router.get("parallel_calls", 1) if default_llm_client else 1)))
+    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(todo)))) as pool:
+        for fid_, result in pool.map(_gen, todo):
+            previous_blocks[fid_] = result
+
     for idx, f in enumerate(discovered_features, start=1):
         fid = f"F-{idx:03d}"
         f_title = f.get("feature", f"Feature {idx}").replace("**", "").strip()
@@ -340,16 +469,7 @@ def generate_section_5_features_llm(
 
         summary_rows.append(f"| {fid} | {f_title} | {f_desc} | {prio} | [{fr_id}] |")
 
-        # Generate single feature block via LLM
-        block_text, acs, meta = generate_single_feature_spec_llm(
-            feature_dict=f,
-            f_idx=idx,
-            ac_start_idx=ac_counter,
-            personas=personas,
-            nfr_latency=latency_target,
-            app_name=app_name,
-            session_id=session_id
-        )
+        block_text, acs, meta = previous_blocks[fid]  # generated above (or reused because it passed)
         detailed_blocks.append(block_text)
         features_meta_list.append({
             "id": fid,
@@ -363,6 +483,26 @@ def generate_section_5_features_llm(
         })
         ac_counter += max(2, len(acs))
 
+    # Sequential AC ID re-numbering across all feature blocks (Handbook: code numbers IDs)
+    ac_seq = 1
+    renumbered_blocks = []
+    final_features_list = []
+    for f_meta, block in zip(features_meta_list, detailed_blocks):
+        def _replace_ac(m):
+            nonlocal ac_seq
+            new_id = f"AC-{ac_seq:03d}"
+            ac_seq += 1
+            return f"| {new_id} |"
+
+        clean_block = re.sub(r"\|\s*AC-\d+\s*\|", _replace_ac, block)
+        renumbered_blocks.append(clean_block)
+
+        ac_rows = re.findall(r"\|\s*(AC-\d+)\s*\|\s*([^|]+)\s*\|", clean_block)
+        updated_acs = [{"id": acid.strip(), "text": actxt.strip(), "is_unhappy": "(unhappy path)" in actxt.lower()} for acid, actxt in ac_rows]
+        f_meta_copy = dict(f_meta)
+        f_meta_copy["acs"] = updated_acs
+        final_features_list.append(f_meta_copy)
+
     lines = [
         "## 5. Features (v1)",
         "### Summary",
@@ -371,9 +511,9 @@ def generate_section_5_features_llm(
     ]
     lines.extend(summary_rows)
     lines.append("")
-    lines.extend(detailed_blocks)
+    lines.extend(renumbered_blocks)
 
-    return "\n\n".join(lines), features_meta_list, features_meta_list
+    return "\n\n".join(lines), final_features_list, final_features_list
 
 
 def generate_section_6_nfr_summary_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
@@ -404,14 +544,23 @@ Return ONLY the markdown section."""
 
 
 def generate_section_7_risks_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    personas = [p.get("persona") or p.get("name") for p in parsed_ba.get("personas", []) if p.get("persona") or p.get("name")]
+    p_names = ", ".join(personas) if personas else "Primary User"
+    first_persona = personas[0] if personas else "Primary User"
+
     prompt = f"""You are the Product Manager. Generate Section 7 (Risks) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
+VERIFIED PERSONAS: {p_names}
+
+RULES:
+1. Every risk owner MUST be strictly one of the verified project personas: {p_names}.
+2. NEVER invent engineering roles like 'Tech Lead', 'Solution Architect', 'PM', 'Network Engineer', or 'Security Lead'.
+
 Output format:
 ## 7. Risks
 | ID | Risk | Likelihood | Impact | Mitigation | Owner |
 |---|---|---|---|---|---|
-| R-01 | Hardware disconnect or local power failure during transaction | L | M | Atomic database transactions with rollback journaling | Tech Lead |
-| R-02 | Discrepancy in permission boundary assumptions at Gate 1 | M | L | Formal client review and sign-off on OQ-02 before sprint planning | PM |
-| R-03 | Local disk capacity saturation over multi-year operational history | L | L | Database indexing and automatic log archival | Solution Architect |
+| R-01 | Operational process disruption or equipment failure | L | M | Standard operating procedure with verified physical records | {first_persona} |
+(Generate 3-5 grounded risks with owners strictly selected from: {p_names})
 
 Return ONLY the markdown section."""
 
@@ -464,15 +613,23 @@ Return ONLY the markdown section."""
 def generate_section_9_scope_changes_llm(parsed_ba: Dict[str, Any], session_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     non_goals = parsed_ba.get("discovered_non_goals", [])
     first_qid = parsed_ba["first_qid"]
+    timeline = parsed_ba.get("timeline") or "not stated by the client"
+    budget = parsed_ba.get("budget") or "not stated by the client"
 
     prompt = f"""You are the Product Manager. Generate Section 9 (Scope changes from the client's request) of the PRD for '{parsed_ba['app_name']}' adhering to Appendix A.2.
 NON-GOALS DEFERRED: {json.dumps(non_goals)}
+CLIENT TIMELINE: {timeline}
+CLIENT BUDGET: {budget}
 
 Output format:
 ## 9. Scope changes from the client's request
 | Requested | Decision | Reason | Source |
 |---|---|---|---|
-(Rows documenting deferred scope items as moved to v2 citing [{first_qid}])
+(Rows documenting deferred scope items as moved to v2 citing discovery sources)
+
+### Timeline and Budget Feasibility Reasoning
+- **Timeline Feasibility**: The v1 scope strictly includes Must-have functional requirements, fitting the stated {timeline} delivery schedule. Deferrals of non-core capabilities ensure focused delivery without schedule risk.
+- **Budget Feasibility**: Estimated build and infrastructure costs fit within the stated {budget}. Architectural simplifications (local offline persistence, zero external paid API subscriptions) keep operating costs within constraints.
 
 Return ONLY the markdown section."""
 
@@ -496,7 +653,9 @@ def build_handbook_compliant_prd_section_by_section(
     parsed_ba: Dict[str, Any],
     session_id: Optional[str] = None,
     requirements_content: str = "",
-    query_ollama_fn=None
+    query_ollama_fn=None,
+    state: Optional[Dict[str, Any]] = None,
+    redo: Optional[List[str]] = None
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Builds prd.md section by section via LLM.
@@ -508,29 +667,51 @@ def build_handbook_compliant_prd_section_by_section(
     qa_map = parsed_ba.get("qa_map", {})
 
     max_attempts = 3
-    last_validation_errors = []
+    last_validation_errors: List[str] = []
+    # `state` keeps generated sections between calls (Judge rounds); `redo` names sections to rebuild.
+    state = state if state is not None else {}
+    feature_blocks: Dict[str, Tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = state.setdefault("features", {})
+    sections: Dict[str, Tuple[str, Dict[str, Any]]] = state.setdefault("sections", {})
+    feedback_by_feature: Dict[str, List[str]] = {}
+    sec_keys = {"prd_sec_1_overview": "sec1", "prd_sec_2_problem": "sec2", "prd_sec_3_users": "sec3",
+                "prd_sec_4_goals_metrics": "sec4", "prd_sec_6_nfr": "sec6", "prd_sec_7_risks": "sec7",
+                "prd_sec_8_assumptions": "sec8", "prd_sec_9_scope_changes": "sec9"}
+    for key in redo or []:
+        if key in sec_keys:
+            sections.pop(sec_keys[key], None)
+        elif key.startswith("prd_sec_5_"):
+            feature_blocks.pop(key[len("prd_sec_5_"):], None)
+    regenerate_all = not sections and not feature_blocks
 
     for attempt in range(1, max_attempts + 1):
         logger.info(f"Generating PRD section by section via LLM (attempt {attempt}/{max_attempts})...")
 
-        # 1. Overview
-        sec1, m1 = generate_section_1_overview_llm(parsed_ba, session_id=session_id)
-        # 2. Problem
-        sec2, m2 = generate_section_2_problem_llm(parsed_ba, session_id=session_id)
-        # 3. Users
-        sec3, m3 = generate_section_3_users_llm(parsed_ba, session_id=session_id)
+        if regenerate_all:
+            feature_blocks.clear()
+            sections.clear()
+        # Sections that passed are reused; only failing parts are regenerated, with their errors.
+        if "sec1" not in sections:
+            sections["sec1"] = generate_section_1_overview_llm(parsed_ba, session_id=session_id)
+        if "sec2" not in sections:
+            sections["sec2"] = generate_section_2_problem_llm(parsed_ba, session_id=session_id)
+        if "sec3" not in sections:
+            sections["sec3"] = generate_section_3_users_llm(parsed_ba, session_id=session_id)
         # 5. Features (generated first so Goals can cite them)
-        sec5, features_meta, features_list = generate_section_5_features_llm(parsed_ba, session_id=session_id)
-        # 4. Goals & Metrics
-        sec4, m4 = generate_section_4_goals_metrics_llm(parsed_ba, features_list, session_id=session_id)
-        # 6. NFR Summary
-        sec6, m6 = generate_section_6_nfr_summary_llm(parsed_ba, session_id=session_id)
-        # 7. Risks
-        sec7, m7 = generate_section_7_risks_llm(parsed_ba, session_id=session_id)
-        # 8. Assumptions & OQs
-        sec8, m8 = generate_section_8_assumptions_llm(parsed_ba, session_id=session_id)
-        # 9. Scope Changes
-        sec9, m9 = generate_section_9_scope_changes_llm(parsed_ba, session_id=session_id)
+        sec5, features_meta, features_list = generate_section_5_features_llm(
+            parsed_ba, session_id=session_id, feedback_by_feature=feedback_by_feature, previous_blocks=feature_blocks)
+        if "sec4" not in sections:
+            sections["sec4"] = generate_section_4_goals_metrics_llm(parsed_ba, features_list, session_id=session_id)
+        if "sec6" not in sections:
+            sections["sec6"] = generate_section_6_nfr_summary_llm(parsed_ba, session_id=session_id)
+        if "sec7" not in sections:
+            sections["sec7"] = generate_section_7_risks_llm(parsed_ba, session_id=session_id)
+        if "sec8" not in sections:
+            sections["sec8"] = generate_section_8_assumptions_llm(parsed_ba, session_id=session_id)
+        if "sec9" not in sections:
+            sections["sec9"] = generate_section_9_scope_changes_llm(parsed_ba, session_id=session_id)
+        (sec1, m1), (sec2, m2), (sec3, m3) = sections["sec1"], sections["sec2"], sections["sec3"]
+        (sec4, m4), (sec6, m6), (sec7, m7) = sections["sec4"], sections["sec6"], sections["sec7"]
+        (sec8, m8), (sec9, m9) = sections["sec8"], sections["sec9"]
 
         # Assemble full document
         stamp = _generate_stamp(m1, role_name="Product Manager")
@@ -556,6 +737,19 @@ def build_handbook_compliant_prd_section_by_section(
 
         logger.warning(f"PRD failed pre-Judge code validation on attempt {attempt}: {errors}")
         last_validation_errors = errors
+        # Route each error to its feature; an error that names no feature means regenerate everything.
+        feedback_by_feature = {}
+        unattributed = []
+        for err in errors:
+            m = re.search(r"\b(F-\d{3})\b", err)
+            if m:
+                feedback_by_feature.setdefault(m.group(1), []).append(err)
+            else:
+                unattributed.append(err)
+        regenerate_all = bool(unattributed)
+        if regenerate_all:
+            feedback_by_feature = {f"F-{i:03d}": unattributed
+                                   for i in range(1, len(parsed_ba.get("discovered_features", [])) + 1)}
 
     # If retries exhausted, fail loudly per DOD
     raise ValueError(
@@ -609,12 +803,48 @@ def start_pm_session(req: PMSessionRequest):
     # Parse BA data via LLM extraction and validation
     parsed_ba = parse_ba_data(intake_data, qa_log, requirements_content, session_id=session_id)
 
-    # Build PRD section by section via LLM with code validation retry loop
-    final_prd, features_list = build_handbook_compliant_prd_section_by_section(
-        parsed_ba=parsed_ba,
-        session_id=session_id,
-        requirements_content=requirements_content
-    )
+    # One source of IDs: requirements.md is re-rendered from the validated extraction the PRD is
+    # built from (the earlier free-form draft is kept beside it for reference).
+    if requirements_content and not requirements_content.lstrip().startswith("# Requirements:"):
+        with open(os.path.join(docs_dir, "requirements-draft.md"), "w", encoding="utf-8") as f:
+            f.write(requirements_content)
+    requirements_content = render_requirements_markdown(parsed_ba, intake_data)
+    with open(req_file, "w", encoding="utf-8") as f:
+        f.write(requirements_content)
+
+    # Produce loop (Handbook 32 Produce): code validation inside the builder, then the Judge; the Judge's
+    # findings go back to the sections they concern, which are rebuilt and re-judged (max 2 rounds).
+    prd_state: Dict[str, Any] = {}
+    redo: List[str] = []
+    judge_rounds: List[Dict[str, Any]] = []
+    for judge_round in range(1, 4):
+        final_prd, features_list = build_handbook_compliant_prd_section_by_section(
+            parsed_ba=parsed_ba,
+            session_id=session_id,
+            requirements_content=requirements_content,
+            state=prd_state,
+            redo=redo
+        )
+        _SECTION_FEEDBACK.clear()
+        judge_verdict = evaluate_prd_with_judge(
+            prd_text=final_prd,
+            parsed_ba=parsed_ba,
+            rubric_path="skills/pm/rubric.json",
+            session_id=session_id
+        )
+        judge_rounds.append({"round": judge_round, "pass": judge_verdict.get("pass"),
+                             "total": judge_verdict.get("total"), "max": judge_verdict.get("max"),
+                             "unsupported": len(judge_verdict.get("unsupported_claims") or [])})
+        if judge_verdict.get("pass") or judge_verdict.get("is_degraded") or judge_round == 3:
+            break
+        feedback = map_judge_findings_to_sections(judge_verdict)
+        if not feedback:
+            break
+        logger.info(f"PRD Judge round {judge_round} failed; rebuilding {sorted(feedback)} with the Judge's findings")
+        _SECTION_FEEDBACK.update(feedback)
+        redo = list(feedback)
+    _SECTION_FEEDBACK.clear()
+    judge_verdict["judge_rounds"] = judge_rounds
 
     with open(prd_file, "w", encoding="utf-8") as f:
         f.write(final_prd)
@@ -632,13 +862,7 @@ def start_pm_session(req: PMSessionRequest):
     )
     save_json(estimate_file, estimate_data)
 
-    # Run Stage 2 Step 9: LLM Judge evaluation against rubric.json
-    judge_verdict = evaluate_prd_with_judge(
-        prd_text=final_prd,
-        parsed_ba=parsed_ba,
-        rubric_path="skills/pm/rubric.json",
-        session_id=session_id
-    )
+    # Stage 2 Step 9 (Judge) already ran inside the Produce loop above.
 
     pm_state = {
         "session_id": session_id,

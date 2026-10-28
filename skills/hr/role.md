@@ -9,7 +9,7 @@ Decide which seats this project needs, how many of each and for how long, so no 
 - `docs/prd.md`: features, priorities, timeline.
 - `docs/architecture.md` summary and the Architect's team plan (seats and reasons), once available.
 - Roster of available agent roles and the models assigned to them.
-- Staffing assumptions configuration: `config/staffing_assumptions.json` ([ASM-01] to [ASM-05]).
+- Staffing configurations: `config/staffing_assumptions.json` ([CFG-01] to [CFG-05]).
 
 ## Output
 - `docs/team-plan.json`:

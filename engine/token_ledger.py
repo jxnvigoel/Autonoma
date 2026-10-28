@@ -126,11 +126,16 @@ def init_token_ledger_db(db_path: str = DEFAULT_DB_PATH):
                 output_tokens INTEGER NOT NULL,
                 cost_usd REAL NOT NULL DEFAULT 0,
                 latency_ms INTEGER,
+                wait_ms INTEGER NOT NULL DEFAULT 0,
                 stop TEXT,
                 at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_project ON llm_calls(project_id, agent_id);")
+        # Migration: latency_ms is model request time only; rate-limit/backoff waiting is wait_ms.
+        cols = {row[1] for row in cur.execute("PRAGMA table_info(llm_calls);").fetchall()}
+        if "wait_ms" not in cols:
+            cur.execute("ALTER TABLE llm_calls ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0;")
 
         # Table 2: token_rates (historical averages & seed defaults)
         cur.execute("""
@@ -240,10 +245,13 @@ def record_llm_call(
     cost_usd: float = 0.0,
     latency_ms: Optional[int] = None,
     task_id: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: str = DEFAULT_DB_PATH,
+    wait_ms: int = 0,
+    stop: Optional[str] = None
 ):
     """
     Appends an entry to the llm_calls token ledger table.
+    One row per model request; never write aggregate rows (they double-count the budget).
     """
     try:
         init_token_ledger_db(db_path)
@@ -253,11 +261,11 @@ def record_llm_call(
             cur.execute("""
                 INSERT INTO llm_calls (
                     project_id, agent_id, task_id, provider, model,
-                    input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms, wait_ms, stop
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """, (
                 project_id, agent_id.lower(), task_id, provider, model,
-                input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms
+                input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms, int(wait_ms or 0), stop
             ))
             conn.commit()
         finally:
@@ -270,7 +278,7 @@ PRICING_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".
 
 
 def get_model_price(model_name: str, provider: str = "groq") -> Dict[str, Any]:
-    if provider == "ollama" or model_name.startswith("ollama") or model_name == "llama3.2:3b":
+    if provider in ("ollama", "fake") or model_name.startswith("ollama"):
         return {
             "input_per_1k": 0.0,
             "output_per_1k": 0.0,
@@ -320,30 +328,16 @@ def calculate_project_estimate(
     total = Σ tokens(stage) × 1.20 (20% rework buffer)
     cost_usd = Σ over roles: tokens(role) × price(model of that role) (local models: $0)
     """
-    # If model_name or provider not provided, detect from llm_client if available
-    active_provider = provider or "groq"
-    active_model = model_name or "openai/gpt-oss-120b"
-    try:
-        from llm_client import default_llm_client
-        if default_llm_client.is_project_local_only(session_id):
-            active_provider = "ollama"
-            active_model = "llama3.2:3b"
-        elif not default_llm_client.is_groq_configured():
-            active_provider = "ollama"
-            active_model = "llama3.2:3b"
-        elif not model_name:
-            active_model = default_llm_client.role_configs.get("pm", {}).get("model", "openai/gpt-oss-120b")
-    except Exception:
+    # If model_name or provider not provided, use the router's live route for the PM role.
+    active_provider = provider or "ollama"
+    active_model = model_name or ""
+    if not model_name:
         try:
-            from engine.llm_client import default_llm_client
-            if default_llm_client.is_project_local_only(session_id):
-                active_provider = "ollama"
-                active_model = "llama3.2:3b"
-            elif not default_llm_client.is_groq_configured():
-                active_provider = "ollama"
-                active_model = "llama3.2:3b"
-            elif not model_name:
-                active_model = default_llm_client.role_configs.get("pm", {}).get("model", "openai/gpt-oss-120b")
+            try:
+                from llm_client import default_llm_client
+            except ImportError:
+                from engine.llm_client import default_llm_client
+            active_provider, active_model = default_llm_client.get_active_provider_and_model("pm", session_id=session_id)
         except Exception:
             pass
     # Size stories based on acceptance criteria count

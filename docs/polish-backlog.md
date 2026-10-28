@@ -127,7 +127,7 @@ This backlog tracks observations, edge cases, and quality improvements identifie
   6. Grounding: reject ungrounded UI elements (`PDF Summary`, `Assigned Contractor`, `ISO-standard deficiency codes`, `bounding boxes`); generate Navigation, Keyboard, and Footer dynamically with LLM from `architecture.md` / `prd.md` (WAL only if architecture specifies WAL, global search only if features require it).
   7. Judge calibration: run all checks as deterministic gates before LLM Judge; Judge quotes text behind each score; Judge model (`openai/gpt-oss-120b`, 120B) is distinct and larger than generator for every agent role; verify Judge fails deliberately broken copies across 3 cases including previous SiteAudit deliverable.
   8. Definition of Done: clean TypeScript build (`npx tsc --noEmit` = 0) and zero errors across 3 unrelated project domains (BioVault Lab, AeroFleet Hangar, and SiteAudit Pro built from scratch).
-- **Status**: **CLEARED & VERIFIED**
+- **Status**: **REOPENED (2026-10-25)** — the Round 3 code changes exist, but the end-to-end claim is not met. On disk all three projects are FAIL/escalated in `designer_state.json`: BioVault (1 validator error, Judge degraded), AeroFleet (5 validator errors, 77 unsupported claims; inputs were a hand-written seeded fixture), SiteAudit (3 validator errors, 14/24, must-pass failed). See Item 12.
 - **Resolution**:
   - Identified origin of SiteAudit J-2 residue in `engine/designer.py` lines 467–514 (`success_phrases`, `input_err_phrases`, `sys_err_phrases` template fallback when LLM output was truncated). Removed all template fallbacks and replaced with strict 3-attempt retry loops that feed back errors and fail loudly.
   - Implemented `generate_navigation_and_keyboard_with_llm` in `engine/designer.py` producing dynamic Navigation, Footer, and Keyboard rules derived from `architecture.md` and `prd.md`.
@@ -137,5 +137,63 @@ This backlog tracks observations, edge cases, and quality improvements identifie
   - Executed end-to-end across BioVault Lab, AeroFleet Hangar, and SiteAudit Pro.
   - Verified `npx tsc --noEmit` exits with 0 errors.
 
+## Stage 2 & 3 PM, Feasibility & Architect Rebuild (Resolved 2026-10-24)
+
+### Item 11: Real LLM Agent Rebuild for PM, Feasibility and Solution Architect
+- **Requirement**: Full rebuild per Handbook 2.7.3–2.7.4 (steps 7, 8, 11), Ch 3, Ch 5, Ch 7, Ch 14, and Appendices A.2, A.3, A.6:
+  1. **BA Extraction**: Replace regex extraction in `engine/requirements_parser.py` with LLM structured JSON extraction (`extract_requirements_with_llm`) from `qa_log.json`, validated by strict code schema checks with 3-attempt retry loop. Keep code for ID numbering and markdown structure only.
+  2. **PM Agent**: Rebuild `engine/pm.py` as a real LLM agent generating `prd.md` section-by-section and feature-by-feature via `query_llm_with_meta(role="pm")`. Real `llm_calls` logged in database. Code calculates `estimate.json` using the handbook formula ($\Sigma \text{tokens} \times 1.20$, per role, prices from `config/model_pricing.json`).
+  3. **Architect Feasibility**: LLM generation of `docs/feasibility.md` ($\le 1$ page) assessing technical risks and constraints from PRD.
+  4. **Architect Agent**: Real LLM agent generating `docs/architecture.md` (all 12 points of Appendix A.3 including HR team plan with seats, F-/ADR- refs, build order), ADRs (options considered, tradeoffs, why alternatives lost), `docs/schema.md` (relational SQLite DDL executed in-memory with real tables, FKs, CHECKs, indexes), and `docs/openapi.yaml` 3.0.3 (every F- maps to endpoints and tables, auth rule and RFC 9457 errors per endpoint).
+  5. **Delete Canned Assemblers**: Deleted all canned schema/OpenAPI generators and domain keyword logic in `engine/` and `skills/`.
+  6. **General Grounding Check**: Replaced domain-cluster and phrase blacklists with general check: a term/number/UI element/feature not in discovery corpus is unsupported.
+  7. **Standards & Pricing**: Real verified per-token prices on Groq pricing page; updated `standards.md` with RFC 9110, PCI DSS v4.0.1, NIST SP 800-63B Rev 4, and exact doc URLs for Stripe, Twilio, AWS.
+  8. **Auth Detection False Positive**: Digital signature $\ne$ authentication; verified with unit test.
+- **Status**: **REOPENED (2026-10-25)** — the Round 4 code changes exist, but the end-to-end claim is not met. On disk all three projects are FAIL/escalated in `designer_state.json`: BioVault (1 validator error, Judge degraded), AeroFleet (5 validator errors, 77 unsupported claims; inputs were a hand-written seeded fixture), SiteAudit (3 validator errors, 14/24, must-pass failed). See Item 12.
+- **Resolution**:
+  - Implemented `engine/requirements_parser.py`, `engine/pm.py`, `engine/architect.py`, `engine/validators.py`.
+  - Created 12/12 passing tests in `tests/test_broken_artifacts.py`.
+  - Ran clean across 3 unrelated domains (BioVault Lab, AeroFleet Hangar, PayFlow Global).
+  - TypeScript build clean (`npx tsc --noEmit` = 0 errors).
 
 
+
+
+
+
+## Stage A Corrections: Local-First Routing, Honest Ledger, Scoping (2026-10-25)
+
+### Item 12: Review findings fixed
+- **Status**: **FIXED IN CODE; Designer re-run still required** (needs a client budget raise and a capable local model).
+- **Changes**:
+  1. **Local-first** (`engine/llm_client.py`): cloud is off by default (`config/model_router.json` `cloud_enabled: false`, `/settings/cloud` toggle). While off, the engine makes no outbound request; startup no longer calls Groq.
+  2. **One router**: `config/model_router.json` tiers now drive real calls; the Recruiter report and `/status` / `/models` use the same `resolve_route`. Downgrades carry their quality note.
+  3. **Judge integrity**: the Judge picks a different installed model where possible and is marked degraded if weaker than the author. Design, HR and Recruiter Judge calls now pass `session_id` / `target_role` and honour degraded status.
+  4. **Ledger**: removed the Designer aggregate row (double-count), the HR duplicate (`hr-1`) row and the fabricated Recruiter row; 70 existing rows moved to `llm_calls_removed` with reasons. `latency_ms` is now request time only; waiting is `wait_ms`.
+  5. **Budget hard stop**: every call runs the budget guard and is refused at 100%; `/budget/raise` resumes. Fixed `engine/budget.py` missing `import re`, which silently ignored the client's budget from the intake.
+  6. **Provenance**: `scripts/setup_and_run_aerofleet.py` and the AeroFleet PRD/architecture no longer claim to be LLM output; they are labelled seeded fixtures.
+  7. **Electron**: file IPC handlers are limited to folders opened via the dialog plus `data/projects`.
+  8. `requirements.txt`: added `python-dotenv`.
+- **Tests**: `tests/test_local_first.py` (10 tests). Full suite: 73 passed, run with all non-local network blocked.
+- **Open**: BioVault, AeroFleet and SiteAudit are over their token budgets (1040%, 100%, 297%) and paused until the client raises them.
+
+## Stages 6-9: Build Loop, Alpha, Beta, Release, Delivery (2026-10-25)
+
+### Item 13: Build loop through delivery, per Handbook 2.7.7-2.7.11, 10, 13-16, 20.4, 23, 25, 32
+- **Status**: **BUILT; dry run passes end to end; real local-model run fails at the model, as expected**
+- **New modules**:
+  - `engine/events.py` — append-only event log (20.4); every model call is an `llm.call` event.
+  - `engine/sandbox.py` — path-scoped file tools (symlinks resolved, `.git` blocked), per-role write scope, allowlist-only commands without a shell, scrubbed environment (no API keys; network blocked by dead proxies and offline package flags), compact tool output with full logs saved (23.4-23.5, 29.1).
+  - `engine/workspace.py` — one local git repo per project, one worktree per story, merges into `main`; a repo with a remote is refused (nothing is ever pushed).
+  - `engine/retriever.py` — ID-based retrieval: cited items plus one hop, titles-only past the budget (25.2-25.3).
+  - `engine/agent_runtime.py` — runAgent tool loop: stable prompt prefix, JSON tool protocol, one parse retry, 25/8 round caps, token caps, tool errors returned to the model.
+  - `engine/build_loop.py` — BuildStory: dev → CI → Tech Lead (code-enforced: AC-to-test coverage, contract files, secrets, severities) → merge → QA (orchestrator runs the regression suite; bugs need evidence) → fix rounds → perf → Judge (rubric arithmetic by code) → done; 3-round caps, escalation, budget pause and resume.
+  - `engine/devops.py` — allowlist proposal and approval, CI, preview with seed data and runtime-error capture, rollback and backup/restore drills, Dockerfile checks, runbook rendered from recorded runs.
+  - `engine/release.py` — Gate 3 (UAT feedback via BA as Q-; bugs become UAT stories), Gate 4, delivery (git bundle, docs, final report from records).
+  - UI: `src/components/office/BuildViewer.tsx` (Tech Lead → Build & Release tab); the readiness "proceed to build" button no longer shows a fake alert.
+- **Review fixes found on the way**: readiness verdict now fails closed; Scrum daily report no longer hard-codes bugs, cycle time or client needs and uses the real ledger schema; project ids are validated (no path traversal, no stray folders); test runs no longer write to the real ledger or event log.
+- **Evidence**:
+  - `scripts/dry_run_stages_6_9.py` (fake provider, isolated temp root): 4/4 stories delivered; caught and recovered from red CI, a Tech Lead blocker, a QA bug with evidence, and a Gate 3 UAT bug; an evidence-free bug claim was discarded; rollback (to `beta-1`) and backup/restore drills passed; delivery bundle written; repo has no remote.
+  - Real local model (`gemma3:1b`, the only installed model): follows the tool protocol after normalisation but writes no files (125 `run lint` calls); the story escalates after 3 rounds with every call in the ledger. A larger local model is needed for real builds.
+  - Tests: 97 passed (`tests/test_build_stages.py` adds 25), with all non-local network blocked.
+- **Open**: k6 not installed (performance stories are marked `done_perf_not_run`); Docker image builds are off by default (`AUTONOMA_DOCKER=1`, never pulls); Electron bundle must be rebuilt with `npm run compile:electron`; the BioVault, AeroFleet and SiteAudit budgets need a client raise before re-running.

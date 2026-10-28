@@ -20,6 +20,7 @@ import { useConversation } from "../context/ConversationContext";
 import { EngineStatus } from "../lib/engine";
 import { StatusBadge } from "../components/StatusBadge";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { AccountUser } from "../lib/auth";
 
 interface ProjectSelectorProps {
   onSelectProject: (sessionId: string) => Promise<void>;
@@ -28,6 +29,9 @@ interface ProjectSelectorProps {
   status?: EngineStatus | null;
   isCheckingStatus?: boolean;
   onRefreshStatus?: () => void;
+  user?: AccountUser | null;
+  onOpenProfile?: () => void;
+  onSignIn?: () => void;
 }
 
 function formatSessionDate(isoString: string): string {
@@ -64,6 +68,9 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   status,
   isCheckingStatus = false,
   onRefreshStatus,
+  user,
+  onOpenProfile,
+  onSignIn,
 }) => {
   const { sessions, isLoadingSessions, refreshSessions } = useConversation();
 
@@ -142,6 +149,25 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                   onRefresh={onRefreshStatus}
                 />
               </div>
+            )}
+            {user ? (
+              <button
+                type="button"
+                onClick={onOpenProfile}
+                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-brand-subtle cursor-pointer"
+                title="Profile"
+              >
+                <span className="w-6 h-6 rounded-full bg-brand-accent text-brand-accent-text flex items-center justify-center text-[10px] font-bold">
+                  {user.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
+                </span>
+                <span className="hidden sm:inline text-xs text-brand-body">Signed in as {user.name}</span>
+              </button>
+            ) : (
+              onSignIn && (
+                <button type="button" onClick={onSignIn} className="text-xs font-semibold text-brand-headline hover:underline cursor-pointer">
+                  Log in / Sign up
+                </button>
+              )
             )}
             <ThemeToggle />
           </div>

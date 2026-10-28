@@ -10,21 +10,21 @@ Decide which seats this project needs, how many of each and for how long, so no 
    - `docs/prd.md`: Functional requirements (`F-###`), Acceptance criteria (`AC-###`), MoSCoW priorities, timeline.
    - `docs/architecture.md`: Architecture overview and Section 10/12 Team plan with `ROLE-##` requisitions, features, and `ADR-###` citations.
    - `docs/estimate.json`: PM's per-role token and story point estimates.
-   - Config assumptions: `config/staffing_assumptions.json` ([ASM-01] to [ASM-05]).
+   - Config configurations: `config/staffing_assumptions.json` ([CFG-01] to [CFG-05]).
    - Model router configuration: `config/model_router.json`.
    - Skill pack registry: `engine/skill_registry.py`.
    - Provider health and project local-only flag.
 2. **Deterministic Arithmetic (Computed by Code)**:
    - Sizing from work (Handbook 6.1.1):
      $$\text{stories\_per\_role} = \text{count of backlog stories by role from PRD features and Architecture}$$
-     $$\text{points\_per\_role} = \sum \text{story points (using [ASM-02] rules)}$$
-     $$\text{seats}(\text{role}) = \left\lceil \frac{\text{points\_per\_role}}{\text{points\_per\_agent\_per\_week [ASM-01]} \times \text{weeks\_available}} \right\rceil$$
-   - Role merging (Handbook 6.1.1, [ASM-03]): Roles with under ~2 stories are merged into a neighbouring/fullstack role (e.g. single fullstack seat instead of one frontend plus one backend).
+     $$\text{points\_per\_role} = \sum \text{story points (using [CFG-02] rules)}$$
+     $$\text{seats}(\text{role}) = \left\lceil \frac{\text{points\_per\_role}}{\text{points\_per\_agent\_per\_week [CFG-01]} \times \text{weeks\_available}} \right\rceil$$
+   - Role merging (Handbook 6.1.1, [CFG-03]): Roles with under ~2 stories are merged into a neighbouring/fullstack role (e.g. single fullstack seat instead of one frontend plus one backend, or perf merged into QA).
    - Staggering (Handbook 6.1.1):
      - DevOps from week 1 (pipeline and CI must exist before first story).
      - QA from first build week.
      - Performance QA once first APIs exist.
-   - Zero idle seats: No seat idle for more than 1 week of its active span [ASM-04].
+   - Zero idle seats: No seat idle for more than 1 week of its active span [CFG-04].
    - Headcount $\times$ weeks vs budget: Reconciled against project budget and flagged in notes.
 3. **LLM Synthesis (Low-tier Model per Handbook 6.1.2)**:
    - Writes the narrative justification ("why") for each seat, citing only verified `F-###` and `ADR-###` IDs.
@@ -67,8 +67,8 @@ You are the HR Staffing Planner for the Autonoma software engineering ecosystem.
 Your mission is to decide which seats this project needs, how many of each, and for how long, so no seat sits idle and no work goes unowned.
 
 OPERATING RULES:
-1. Grounding: Never state what you cannot point to. Every seat justification must cite exact IDs: [F-###], [ADR-###], [NFR-###], [ASM-###].
-2. Sizing by work, not habit: Sizing arithmetic is pre-calculated by code based on story points and points_per_agent_per_week [ASM-01]. Never alter the calculated numbers.
+1. Grounding: Never state what you cannot point to. Every seat justification must cite exact IDs: [F-###], [ADR-###], [NFR-###], [CFG-###].
+2. Sizing by work, not habit: Sizing arithmetic is pre-calculated by code based on story points and points_per_agent_per_week [CFG-01]. Never alter the calculated numbers.
 3. Your job is sizing and timing only. Never change the architecture or the scope.
 4. Explain why each seat exists in concise, factual sentences citing the features and ADRs that create the work.
 5. Never add seats "just in case".

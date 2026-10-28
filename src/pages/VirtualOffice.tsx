@@ -43,6 +43,9 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
     architectureContent,
     gate1State,
     appFlowContent,
+    teamPlanData,
+    staffingReportContent,
+    gate2State,
     activeOfficeAgent,
     setActiveOfficeAgent,
     refreshOfficeStatus,
@@ -114,6 +117,27 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       : "idle");
   const isDesUnlocked = Boolean(gate1Approved || appFlowContent);
 
+  const hrStatus =
+    officeStatus?.agents?.hr?.status ||
+    (teamPlanData ? "done" : architectureContent ? "waiting-on-you" : "idle");
+  const isHrUnlocked = Boolean(architectureContent);
+
+  const recStatus =
+    officeStatus?.agents?.recruiter?.status ||
+    (staffingReportContent ? "done" : teamPlanData ? "waiting-on-you" : "idle");
+  const isRecUnlocked = Boolean(teamPlanData);
+
+  const gate2Approved = Boolean(gate2State?.approved);
+  const scrumStatus =
+    officeStatus?.agents?.scrum?.status ||
+    (gate2Approved ? "waiting-on-you" : "idle");
+  const isScrumUnlocked = Boolean(gate2Approved);
+
+  const tlStatus =
+    officeStatus?.agents?.["tech-lead"]?.status ||
+    (gate2Approved ? "waiting-on-you" : "idle");
+  const isTlUnlocked = Boolean(gate2Approved);
+
   const isLocal = Boolean(llmSettings?.local_only);
 
   const getRoleModelAndProvider = (role: string) => {
@@ -175,6 +199,54 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       isUnlocked: isDesUnlocked,
       provider: getRoleModelAndProvider("designer").provider,
       model: getRoleModelAndProvider("designer").model,
+    },
+    {
+      roleKey: "hr" as AgentRoleKey,
+      roleName: "Staffing Planner",
+      roleAbbr: "HR",
+      status: hrStatus,
+      hasOutput: Boolean(teamPlanData),
+      outputName: "team-plan.json",
+      messageCount: teamPlanData ? 1 : 0,
+      isUnlocked: isHrUnlocked,
+      provider: getRoleModelAndProvider("hr").provider,
+      model: getRoleModelAndProvider("hr").model,
+    },
+    {
+      roleKey: "recruiter" as AgentRoleKey,
+      roleName: "Technical Recruiter",
+      roleAbbr: "REC",
+      status: recStatus,
+      hasOutput: Boolean(staffingReportContent),
+      outputName: "staffing-report.md",
+      messageCount: staffingReportContent ? 1 : 0,
+      isUnlocked: isRecUnlocked,
+      provider: getRoleModelAndProvider("recruiter").provider,
+      model: getRoleModelAndProvider("recruiter").model,
+    },
+    {
+      roleKey: "scrum" as AgentRoleKey,
+      roleName: "Scrum Master",
+      roleAbbr: "SCRUM",
+      status: scrumStatus,
+      hasOutput: false,
+      outputName: "backlog.json",
+      messageCount: 0,
+      isUnlocked: isScrumUnlocked,
+      provider: getRoleModelAndProvider("scrum").provider,
+      model: getRoleModelAndProvider("scrum").model,
+    },
+    {
+      roleKey: "tech-lead" as AgentRoleKey,
+      roleName: "Tech Lead",
+      roleAbbr: "TL",
+      status: tlStatus,
+      hasOutput: false,
+      outputName: "readiness.md",
+      messageCount: 0,
+      isUnlocked: isTlUnlocked,
+      provider: getRoleModelAndProvider("tech-lead").provider,
+      model: getRoleModelAndProvider("tech-lead").model,
     },
     {
       roleKey: "engineer" as AgentRoleKey,

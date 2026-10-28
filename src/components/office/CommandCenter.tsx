@@ -18,6 +18,8 @@ import {
   Cpu,
   Palette,
   Users,
+  ListChecks,
+  ShieldCheck,
 } from "lucide-react";
 import { AgentRoleKey, AgentPixelAvatar } from "./AgentAvatars";
 import { AgentStatusBadge } from "./AgentStatusBadge";
@@ -28,9 +30,24 @@ import { ArchitectOutputViewer } from "./ArchitectOutputViewer";
 import { DesignerOutputViewer } from "./DesignerOutputViewer";
 import { TeamPlanViewer } from "./TeamPlanViewer";
 import { StaffingReportViewer } from "./StaffingReportViewer";
+import { BacklogViewer } from "./BacklogViewer";
+import { PlanViewer } from "./PlanViewer";
+import { ReadinessViewer } from "./ReadinessViewer";
+import { BuildViewer } from "./BuildViewer";
 
 import { useConversation } from "../../context/ConversationContext";
-import { AgentLiveStatus } from "../../lib/engine";
+import {
+  AgentLiveStatus,
+  BacklogData,
+  GanttData,
+  ReadinessState,
+  apiGetScrumBacklog,
+  apiStartScrumStage,
+  apiGetScrumPlan,
+  apiGetScrumGantt,
+  apiStartReadinessReview,
+  apiGetReadinessStatus,
+} from "../../lib/engine";
 
 interface CommandCenterProps {
   activeAgent: AgentRoleKey;
@@ -44,6 +61,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   onSwitchAgent,
 }) => {
   const {
+    sessionId,
     intakeData,
     messages: baMessages,
     qaLog,
@@ -72,6 +90,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     startPm,
     sendPm,
     approveGate1,
+    gate1Refusal,
     requestGate1Changes,
     generateArchitectArtifacts,
     teamPlanData,
@@ -100,7 +119,76 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   const isDesigner = activeAgent === "designer";
   const isHR = activeAgent === "hr";
   const isRecruiter = activeAgent === "recruiter";
+  const isScrum = activeAgent === "scrum";
+  const isTechLead = activeAgent === "tech-lead";
   const gate1Approved = Boolean(officeStatus?.gate1?.approved || gate1State?.approved);
+  const isGate2Approved = Boolean(gate2State?.approved);
+
+  const [backlogData, setBacklogData] = useState<BacklogData | null>(null);
+  const [planData, setPlanData] = useState<any | null>(null);
+  const [ganttData, setGanttData] = useState<GanttData | null>(null);
+  const [readinessState, setReadinessState] = useState<ReadinessState | null>(null);
+  const [readinessContent, setReadinessContent] = useState<string>("");
+  const [isScrumGenerating, setIsScrumGenerating] = useState(false);
+  const [isReadinessGenerating, setIsReadinessGenerating] = useState(false);
+  const [scrumViewTab, setScrumViewTab] = useState<"backlog" | "plan" | "readiness" | "build">("backlog");
+
+  const loadScrumAndReadiness = async () => {
+    if (!sessionId) return;
+    try {
+      const bRes = await apiGetScrumBacklog(sessionId).catch(() => ({ stories: [] }));
+      if (bRes && bRes.stories && bRes.stories.length > 0) {
+        setBacklogData(bRes);
+      }
+      const pRes = await apiGetScrumPlan(sessionId).catch(() => null);
+      if (pRes) {
+        setPlanData(pRes);
+      }
+      const gRes = await apiGetScrumGantt(sessionId).catch(() => null);
+      if (gRes && gRes.gantt) {
+        setGanttData(gRes.gantt);
+      }
+      const rRes = await apiGetReadinessStatus(sessionId).catch(() => null);
+      if (rRes) {
+        setReadinessState(rRes.state);
+        setReadinessContent(rRes.content);
+      }
+    } catch (e) {
+      console.warn("Could not load scrum/readiness:", e);
+    }
+  };
+
+  useEffect(() => {
+    loadScrumAndReadiness();
+  }, [sessionId, activeAgent]);
+
+  const handleGenerateBacklog = async () => {
+    if (!sessionId) return;
+    setIsScrumGenerating(true);
+    try {
+      await apiStartScrumStage(sessionId);
+      await loadScrumAndReadiness();
+    } catch (err: any) {
+      console.error("Failed to generate backlog:", err);
+      alert(err.message || "Failed to generate backlog. Check Gate 2 approval.");
+    } finally {
+      setIsScrumGenerating(false);
+    }
+  };
+
+  const handleRunReadinessReview = async () => {
+    if (!sessionId) return;
+    setIsReadinessGenerating(true);
+    try {
+      await apiStartReadinessReview(sessionId);
+      await loadScrumAndReadiness();
+    } catch (err: any) {
+      console.error("Failed to run readiness review:", err);
+      alert(err.message || "Failed to run readiness review.");
+    } finally {
+      setIsReadinessGenerating(false);
+    }
+  };
 
   const currentMessages = isBA ? baMessages : pmMessages;
   const isAgentThinking = isBA ? isBaSending : isPmSending;
@@ -154,6 +242,22 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
         (staffingReportContent ? "done" : teamPlanData ? "waiting-on-you" : "idle")) as AgentLiveStatus,
       description: "Routes model risk tiers, validates least privilege, and registers Gate 2",
       outputTitle: "Staffing Report & Model Tiers",
+    },
+    scrum: {
+      role: "Scrum Master",
+      abbr: "SCRUM",
+      status: (officeStatus?.agents?.scrum?.status ||
+        (backlogData ? "done" : isGate2Approved ? "waiting-on-you" : "idle")) as AgentLiveStatus,
+      description: "INVEST story breakdown, walking skeleton, critical path calculation, and Gantt charts",
+      outputTitle: "Sprint Backlog & Implementation Plan",
+    },
+    "tech-lead": {
+      role: "Tech Lead",
+      abbr: "TL",
+      status: (officeStatus?.agents?.["tech-lead"]?.status ||
+        (readinessState?.passed ? "done" : backlogData ? "waiting-on-you" : "idle")) as AgentLiveStatus,
+      description: "Pre-build readiness review, traceability matrix, ADR stack confirmation, and code review",
+      outputTitle: "Readiness Review & Traceability Matrix",
     },
     engineer: {
       role: "Software Engineer",
@@ -326,6 +430,32 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
             <Users className="w-3.5 h-3.5 text-teal-500" />
             <span>Recruiter</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => onSwitchAgent("scrum")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              isScrum
+                ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
+                : "text-brand-body hover:text-brand-headline"
+            }`}
+          >
+            <ListChecks className="w-3.5 h-3.5 text-orange-500" />
+            <span>Scrum</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSwitchAgent("tech-lead")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              isTechLead
+                ? "bg-brand-card text-brand-headline shadow-2xs font-bold"
+                : "text-brand-body hover:text-brand-headline"
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-purple-500" />
+            <span>Tech Lead</span>
+          </button>
         </div>
 
 
@@ -477,6 +607,46 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                   >
                     Request Changes
                   </button>
+                </div>
+              )}
+              {!gate1Approved && gate1Refusal && (
+                <div className="mt-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-1.5">
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                    Not approved yet: {gate1Refusal.summary}
+                  </p>
+                  {gate1Refusal.unsupportedClaims.length > 0 && (
+                    <ul className="text-[11px] text-brand-body list-disc pl-4 space-y-0.5">
+                      {gate1Refusal.unsupportedClaims.slice(0, 6).map((c, i) => (
+                        <li key={i}>
+                          <span className="font-medium">{c.text}</span>
+                          {c.reason ? ` — ${c.reason}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const feedback = prompt("What should the PM fix?", gate1Refusal.summary);
+                        if (feedback) requestGate1Changes(feedback);
+                      }}
+                      className="px-2.5 py-1 rounded-md bg-brand-card border border-brand-border text-[11px] font-medium cursor-pointer"
+                    >
+                      Send back to the PM
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("Approve this PRD even though the Judge did not pass it? This decision is recorded.")) {
+                          approveGate1(undefined, true);
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold cursor-pointer"
+                    >
+                      Approve anyway (accept known issues)
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -880,6 +1050,167 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               onRequestGate2Changes={requestGate2Changes}
               isApprovingGate2={isGate2Approving}
             />
+          ) : isScrum ? (
+            <div className="h-full flex flex-col space-y-3">
+              <div className="flex items-center gap-2 px-1">
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("backlog")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "backlog"
+                      ? "bg-orange-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Backlog (Board)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("plan")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "plan"
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Plan (Gantt)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("readiness")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "readiness"
+                      ? "bg-purple-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Readiness
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">
+                {scrumViewTab === "backlog" && (
+                  <BacklogViewer
+                    backlog={backlogData}
+                    projectName={intakeData?.projectName}
+                    isGenerating={isScrumGenerating}
+                    onGenerate={handleGenerateBacklog}
+                    canStart={Boolean(gate2State?.approved)}
+                    onProceedToPlan={() => setScrumViewTab("plan")}
+                  />
+                )}
+                {scrumViewTab === "plan" && (
+                  <PlanViewer
+                    planContent={planData?.content}
+                    criticalPath={planData?.critical_path}
+                    loadBalance={planData?.load_balance}
+                    gantt={ganttData}
+                    onProceedToReadiness={() => {
+                      setScrumViewTab("readiness");
+                      onSwitchAgent("tech-lead");
+                    }}
+                  />
+                )}
+                {scrumViewTab === "readiness" && (
+                  <ReadinessViewer
+                    readinessState={readinessState}
+                    readinessContent={readinessContent}
+                    isExecutingReview={isReadinessGenerating}
+                    onExecuteReview={handleRunReadinessReview}
+                    canStartReview={Boolean(backlogData?.stories?.length)}
+                    onProceedToBuild={() => {
+                      setScrumViewTab("build");
+                      onSwitchAgent("tech-lead");
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          ) : isTechLead ? (
+            <div className="h-full flex flex-col space-y-3">
+              <div className="flex items-center gap-2 px-1">
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("readiness")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "readiness"
+                      ? "bg-purple-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Readiness Review
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("backlog")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "backlog"
+                      ? "bg-orange-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Backlog
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("plan")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "plan"
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Plan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScrumViewTab("build")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    scrumViewTab === "build"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "bg-brand-surface text-brand-muted hover:text-brand-headline border border-brand-border"
+                  }`}
+                >
+                  Build &amp; Release
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">
+                {scrumViewTab === "build" && (
+                  <BuildViewer
+                    sessionId={sessionId}
+                    canBuild={Boolean(gate2State?.approved) && readinessState?.verdict === "ready"}
+                  />
+                )}
+                {scrumViewTab === "readiness" && (
+                  <ReadinessViewer
+                    readinessState={readinessState}
+                    readinessContent={readinessContent}
+                    isExecutingReview={isReadinessGenerating}
+                    onExecuteReview={handleRunReadinessReview}
+                    canStartReview={Boolean(backlogData?.stories?.length)}
+                    onProceedToBuild={() => setScrumViewTab("build")}
+                  />
+                )}
+                {scrumViewTab === "backlog" && (
+                  <BacklogViewer
+                    backlog={backlogData}
+                    projectName={intakeData?.projectName}
+                    isGenerating={isScrumGenerating}
+                    onGenerate={handleGenerateBacklog}
+                    canStart={Boolean(gate2State?.approved)}
+                    onProceedToPlan={() => setScrumViewTab("plan")}
+                  />
+                )}
+                {scrumViewTab === "plan" && (
+                  <PlanViewer
+                    planContent={planData?.content}
+                    criticalPath={planData?.critical_path}
+                    loadBalance={planData?.load_balance}
+                    gantt={ganttData}
+                    onProceedToReadiness={() => setScrumViewTab("readiness")}
+                  />
+                )}
+              </div>
+            </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-brand-card rounded-2xl border border-brand-border">
               <Layers className="w-8 h-8 text-brand-body/40 mb-2" />

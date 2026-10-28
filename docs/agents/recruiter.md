@@ -29,13 +29,13 @@ Per requisition (`ROLE-##`) from HR:
    - Enforced in code: Any profile exceeding its role allowance is rejected.
 4. **Token Cap Derivation (Handbook 5.1.6 & 6.3.4)**:
    - Reads the PM's per-role estimate from `docs/estimate.json`.
-   - Applies the 20% rework buffer ($1.20 \times \text{estimate}$) [ASM-05].
+   - Applies the 20% rework buffer ($1.20 \times \text{estimate}$) [CFG-05].
    - If a role is missing from the estimate, flags it clearly; never guesses.
 5. **Org Chart Hierarchy (Handbook 2.1 & 6.3.4)**:
    - Sets `reports_to` following the org chart:
      - Developers, QA, DevOps, Perf $\rightarrow$ `tech-lead`.
      - Tech Lead, Designer, Scrum Master, HR $\rightarrow$ PM / Architect per 2.1 chart.
-   - Names agents deterministically from `config/agent_names.json` (not LLM-generated, not domain-specific).
+   - Names agents deterministically from `config/agent_names.json` [CFG-06] (not LLM-generated, not domain-specific).
 6. **Outputs**:
    - One `agents`-table row per filled seat in `data/office.db` (Handbook 24.1):
      `id`, `project_id`, `name`, `role`, `seat_id`, `reports_to`, `tier`, `provider`, `model`, `tools` JSON, `token_cap`, `status` 'idle'.

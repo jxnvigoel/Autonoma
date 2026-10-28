@@ -103,7 +103,7 @@ class TestHRStaffingSizingArithmetic(unittest.TestCase):
 
     def test_sizing_arithmetic_from_story_points(self):
         """
-        Verify story point derivation ([ASM-02]) and sizing arithmetic:
+        Verify story point derivation ([CFG-02]) and sizing arithmetic:
         seats(role) = ceil(points / (velocity * weeks))
         """
         features = [
@@ -113,7 +113,7 @@ class TestHRStaffingSizingArithmetic(unittest.TestCase):
         ]
         arch_team_plan = "ROLE-01 backend 2 engineers weeks 1-4 for APIs\nROLE-02 frontend 1 engineer weeks 2-4"
 
-        # Under ASM-02:
+        # Under CFG-02:
         # F-001 (2 AC) -> 2 points
         # F-002 (4 AC) -> 3 points
         # F-003 (6 AC) -> 5 points
@@ -137,7 +137,7 @@ class TestHRStaffingSizingArithmetic(unittest.TestCase):
         self.assertLessEqual(be_seat["to_week"], 4)
 
     def test_role_merging_under_two_stories(self):
-        """Handbook 6.1.1 & [ASM-03]: Roles under ~2 stories are merged into neighbouring/fullstack role."""
+        """Handbook 6.1.1 & [CFG-03]: Roles under ~2 stories are merged into neighbouring/fullstack role."""
         stories_per_role = {"frontend": 1, "backend": 6}
         plan_unmerged = {
             "seats": [

@@ -16,6 +16,7 @@ export interface ReadDirectoryResult {
 export interface ElectronAPI {
   platform: string;
   getEngineUrl: () => Promise<string>;
+  openExternal: (url: string) => Promise<boolean>;
   openFolderDialog: () => Promise<string | null>;
   openFileDialog: () => Promise<string | null>;
   readDirectory: (dirPath: string) => Promise<ReadDirectoryResult>;

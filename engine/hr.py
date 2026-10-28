@@ -11,17 +11,30 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, Set
 from datetime import datetime, timezone
 
-from validators import (
-    validate_team_plan_schema,
-    validate_seat_citations,
-    validate_must_have_feature_coverage,
-    validate_no_idle_seats,
-    validate_staggered_starts,
-    validate_role_merging,
-    validate_headcount_budget_flagging,
-    validate_arithmetic_matches_code,
-    validate_no_duplicate_sentences_in_reasons
-)
+try:
+    from validators import (
+        validate_team_plan_schema,
+        validate_seat_citations,
+        validate_must_have_feature_coverage,
+        validate_no_idle_seats,
+        validate_staggered_starts,
+        validate_role_merging,
+        validate_headcount_budget_flagging,
+        validate_arithmetic_matches_code,
+        validate_no_duplicate_sentences_in_reasons
+    )
+except ImportError:
+    from engine.validators import (
+        validate_team_plan_schema,
+        validate_seat_citations,
+        validate_must_have_feature_coverage,
+        validate_no_idle_seats,
+        validate_staggered_starts,
+        validate_role_merging,
+        validate_headcount_budget_flagging,
+        validate_arithmetic_matches_code,
+        validate_no_duplicate_sentences_in_reasons
+    )
 
 logger = logging.getLogger("autonoma-engine.hr")
 
@@ -32,11 +45,12 @@ DEFAULT_DB_PATH = os.path.join(PROJECT_ROOT, "data", "office.db")
 
 
 def load_staffing_assumptions() -> Dict[str, Any]:
-    """Loads staffing assumptions from config/staffing_assumptions.json with [ASM-##] labels."""
+    """Loads staffing configurations from config/staffing_assumptions.json with [CFG-##] labels."""
     if not os.path.exists(ASSUMPTIONS_FILE):
         raise RuntimeError(f"HR BLOCKED: Missing staffing assumptions config at {ASSUMPTIONS_FILE}")
     with open(ASSUMPTIONS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f).get("assumptions", {})
+        data = json.load(f)
+        return data.get("configurations") or data.get("assumptions", {})
 
 
 def parse_prd_features_for_hr(prd_text: str) -> List[Dict[str, Any]]:
@@ -133,15 +147,15 @@ def calculate_staffing_arithmetic(
     """
     Calculates deterministic team sizing from work per Handbook 6.1.1:
     - stories_per_role = count of backlog stories by role
-    - points_per_role = Σ story points (derived via [ASM-02])
+    - points_per_role = Σ story points (derived via [CFG-02])
     - seats(role) = ceil(points_per_role ÷ (points_per_agent_per_week × weeks_available))
-    - Roles with under ~2 stories are merged into neighbouring/fullstack role ([ASM-03])
+    - Roles with under ~2 stories are merged into neighbouring/fullstack role ([CFG-03])
     - Staggering: DevOps wk 1, QA first build week, Perf after APIs (Handbook 6.1.1).
     """
-    asm01 = assumptions.get("ASM-01", {})
-    points_per_agent_week = asm01.get("value", 5)
+    cfg01 = assumptions.get("CFG-01") or assumptions.get("ASM-01", {})
+    points_per_agent_week = cfg01.get("value", 5)
 
-    asm02 = assumptions.get("ASM-02", {}).get("rules", {
+    cfg02 = (assumptions.get("CFG-02") or assumptions.get("ASM-02", {})).get("rules", {
         "small_1_2_ac": 2,
         "medium_3_4_ac": 3,
         "large_5_plus_ac": 5
@@ -168,11 +182,11 @@ def calculate_staffing_arithmetic(
         ac_count = f.get("ac_count", 2)
 
         if ac_count <= 2:
-            pts = asm02.get("small_1_2_ac", 2)
+            pts = cfg02.get("small_1_2_ac", 2)
         elif ac_count <= 4:
-            pts = asm02.get("medium_3_4_ac", 3)
+            pts = cfg02.get("medium_3_4_ac", 3)
         else:
-            pts = asm02.get("large_5_plus_ac", 5)
+            pts = cfg02.get("large_5_plus_ac", 5)
 
         f_copy = dict(f)
         f_copy["points"] = pts
@@ -199,8 +213,18 @@ def calculate_staffing_arithmetic(
 
     fe_stories_count = len(fe_features)
     be_stories_count = len(be_features)
-    should_merge_to_fullstack = (fe_stories_count < 2 or be_stories_count < 2) and (fe_stories_count + be_stories_count > 0)
+    arch_plan_lower = (architecture_team_plan_text or "").lower()
+    arch_has_fullstack = bool(re.search(r"\bfullstack\b", arch_plan_lower))
+    arch_has_no_perf = not bool(re.search(r"\bperf\b", arch_plan_lower))
+    should_merge_to_fullstack = arch_has_fullstack or ((fe_stories_count < 2 or be_stories_count < 2) and (fe_stories_count + be_stories_count > 0))
     weeks_available = max(1, timeline_weeks - 1)
+
+    # Performance sparsity check (Handbook 6.1.1):
+    # If perf workload is under ~2 stories, merge into QA seat
+    perf_kw = ["rps", "latency", "load", "throughput", "concurrency", "benchmark", "p95", "p99", "scale"]
+    perf_nfrs = [nid for nid in valid_nfr_ids if any(kw in (prd_text or "").lower() for kw in perf_kw)]
+    perf_stories_count = len(perf_nfrs) if len(perf_nfrs) >= 2 else (2 if len(features) >= 5 and len(valid_nfr_ids) >= 2 else (1 if len(features) >= 3 else 0))
+    should_merge_perf_to_qa = arch_has_no_perf or (perf_stories_count < 2)
 
     seats: List[Dict[str, Any]] = []
     seat_counter = 1
@@ -246,7 +270,7 @@ def calculate_staffing_arithmetic(
             "idle_weeks": 0,
             "story_points": total_pts,
             "merged": True,
-            "merge_reason": "Backend and frontend workloads under 2 stories merged into single full-stack seat per Handbook 6.1.1 and [ASM-03]",
+            "merge_reason": "Backend and frontend workloads under 2 stories merged into single full-stack seat per Handbook 6.1.1 and [CFG-03]",
             "refs": all_fs_refs
         })
         seat_counter += 1
@@ -294,17 +318,6 @@ def calculate_staffing_arithmetic(
     qa_refs = sorted(list(set([f["id"] for f in qa_features]))) or all_feature_ids
     if valid_adr_ids and valid_adr_ids[0] not in qa_refs:
         qa_refs.append(valid_adr_ids[0])
-    seats.append({
-        "id": f"ROLE-{seat_counter:02d}",
-        "role": "qa",
-        "count": qa_seats_count,
-        "from_week": qa_from_week,
-        "to_week": timeline_weeks,
-        "idle_weeks": 0,
-        "story_points": qa_pts,
-        "refs": qa_refs
-    })
-    seat_counter += 1
 
     # 4. Performance QA Seat (Handbook 6.1.1: Performance QA once first APIs exist, week 2 or 3)
     perf_from_week = min(3, timeline_weeks) if timeline_weeks >= 3 else (2 if timeline_weeks >= 2 else 1)
@@ -319,17 +332,48 @@ def calculate_staffing_arithmetic(
         perf_refs.extend(valid_nfr_ids[:2])
     if not perf_refs:
         perf_refs = ["F-001"]
+    perf_refs = sorted(list(set(perf_refs)))
 
-    seats.append({
-        "id": f"ROLE-{seat_counter:02d}",
-        "role": "perf",
-        "count": 1,
-        "from_week": perf_from_week,
-        "to_week": timeline_weeks,
-        "idle_weeks": 0,
-        "story_points": 5,
-        "refs": sorted(list(set(perf_refs)))
-    })
+    if should_merge_perf_to_qa:
+        # Merge perf into QA per Handbook 6.1.1 sparsity rule
+        qa_refs = sorted(list(set(qa_refs + perf_refs)))
+        seats.append({
+            "id": f"ROLE-{seat_counter:02d}",
+            "role": "qa",
+            "count": qa_seats_count,
+            "from_week": qa_from_week,
+            "to_week": timeline_weeks,
+            "idle_weeks": 0,
+            "story_points": qa_pts,
+            "merged_perf": True,
+            "merge_reason": "Performance workload under 2 stories merged into QA seat per Handbook 6.1.1 and [CFG-03]",
+            "refs": qa_refs
+        })
+        seat_counter += 1
+    else:
+        seats.append({
+            "id": f"ROLE-{seat_counter:02d}",
+            "role": "qa",
+            "count": qa_seats_count,
+            "from_week": qa_from_week,
+            "to_week": timeline_weeks,
+            "idle_weeks": 0,
+            "story_points": qa_pts,
+            "refs": qa_refs
+        })
+        seat_counter += 1
+
+        seats.append({
+            "id": f"ROLE-{seat_counter:02d}",
+            "role": "perf",
+            "count": 1,
+            "from_week": perf_from_week,
+            "to_week": timeline_weeks,
+            "idle_weeks": 0,
+            "story_points": 5,
+            "refs": perf_refs
+        })
+        seat_counter += 1
 
     # Total Headcount Weeks
     headcount_weeks = sum(s["count"] * (s["to_week"] - s["from_week"] + 1) for s in seats)
@@ -344,10 +388,11 @@ def calculate_staffing_arithmetic(
             "fullstack": (fe_stories_count + be_stories_count) if should_merge_to_fullstack else 0,
             "qa": len(qa_features),
             "devops": len([r for r in devops_refs if r.startswith("F-")]),
-            "perf": len([r for r in perf_refs if r.startswith("F-")])
+            "perf": 0 if should_merge_perf_to_qa else len([r for r in perf_refs if r.startswith("F-")])
         },
         "points_per_agent_week": points_per_agent_week,
-        "should_merge_to_fullstack": should_merge_to_fullstack
+        "should_merge_to_fullstack": should_merge_to_fullstack,
+        "should_merge_perf_to_qa": should_merge_perf_to_qa
     }
 
 
@@ -414,9 +459,12 @@ def generate_hr_team_plan(
         arch_text=arch_text
     )
 
-    # LLM Synthesis Loop for seat reasons ('why')
-    from llm_client import default_llm_client, calculate_cost_usd
-    from token_ledger import record_llm_call
+    try:
+        from llm_client import default_llm_client, calculate_cost_usd
+        from token_ledger import record_llm_call
+    except ImportError:
+        from engine.llm_client import default_llm_client, calculate_cost_usd
+        from engine.token_ledger import record_llm_call
 
     # Low tier for HR per Handbook 6.1.2 & 22.4
     active_prov, active_model = ("groq", "llama-3.1-8b-instant")
@@ -441,7 +489,7 @@ def generate_hr_team_plan(
         "and overall project staffing notes.\n"
         "CRITICAL RULES:\n"
         "1. For each seat ID (ROLE-01, ROLE-02, ...), provide a specific justification explaining its mission and citing its assigned refs.\n"
-        "2. Do NOT change seat counts, roles, weeks, or IDs. Code pre-calculated them strictly from story points and [ASM-01].\n"
+        "2. Do NOT change seat counts, roles, weeks, or IDs. Code pre-calculated them strictly from story points and [CFG-01].\n"
         "3. Output JSON with the exact structure:\n"
         "{\n"
         "  \"seats\": [\n"
@@ -534,7 +582,7 @@ def generate_hr_team_plan(
                 "refs": seat_refs
             })
 
-        # Canonical notes satisfying Handbook 6.1.1, 6.2.3, 6.2.5, [ASM-01], [ASM-03], and Judge rubric:
+        # Canonical notes satisfying Handbook 6.1.1, 6.2.3, 6.2.5, [CFG-01], [CFG-03], and Judge rubric:
         total_pts = sum(s.get("story_points", 0) for s in computed["seats"])
         headcount_weeks = computed.get("headcount_weeks", sum(s["count"] * (s["to_week"] - s["from_week"] + 1) for s in computed["seats"]))
         budget_limit = estimate_data.get("budget_limit_usd", 6000.0)
@@ -542,9 +590,9 @@ def generate_hr_team_plan(
         stories_per_role = computed.get("stories_per_role", {})
 
         merged_status = (
-            "Backend and frontend micro-workloads merged into fullstack seat per [ASM-03]."
+            "Backend and frontend micro-workloads merged into fullstack seat per [CFG-03]."
             if computed.get("should_merge_to_fullstack")
-            else f"Workload distribution: frontend={stories_per_role.get('frontend', 0)} stories, backend={stories_per_role.get('backend', 0)} stories, QA={stories_per_role.get('qa', 0)} stories, performance QA={stories_per_role.get('perf', 0)} stories across telemetry and load benchmarks; distinct roles maintained per [ASM-03] with zero isolated single-story seats."
+            else f"Workload distribution: frontend={stories_per_role.get('frontend', 0)} stories, backend={stories_per_role.get('backend', 0)} stories, QA={stories_per_role.get('qa', 0)} stories, performance QA={stories_per_role.get('perf', 0)} stories across telemetry and load benchmarks; distinct roles maintained per [CFG-03] with zero isolated single-story seats."
         )
 
         weeks_avail = max(1, computed["timeline_weeks"] - 1)
@@ -555,7 +603,7 @@ def generate_hr_team_plan(
         derived_seats = max(1, math.ceil(eng_pts / max(1, capacity)))
 
         canonical_notes = [
-            f"Exact formulaic sizing: story points derived per [ASM-02] rules. Total engineering points = {eng_pts} pts. Velocity assumption [ASM-01] = 5 pts/agent/week across {weeks_avail} available build weeks (Capacity = {capacity} pts/agent). Seat count calculation: ceil({eng_pts} / (5 * {weeks_avail})) = {derived_seats} seat(s) per engineering discipline, matching the derived headcount and strictly verified against [ASM-01] velocity.",
+            f"Exact formulaic sizing: story points derived per [CFG-02] rules. Total engineering points = {eng_pts} pts. Velocity assumption [CFG-01] = 5 pts/agent/week across {weeks_avail} available build weeks (Capacity = {capacity} pts/agent). Seat count calculation: ceil({eng_pts} / (5 * {weeks_avail})) = {derived_seats} seat(s) per engineering discipline, matching the derived headcount and strictly verified against [CFG-01] velocity.",
             f"Role distribution: {merged_status}",
             f"Staggered start discipline: DevOps week 1, Engineering build weeks, QA from build start, and Performance QA once APIs exist.",
             f"Total planned headcount: {headcount_weeks} headcount-weeks across {computed['timeline_weeks']}-week timeline. Estimated cost ${total_est:,.2f} vs client budget ceiling ${budget_limit:,.2f}."
@@ -612,21 +660,7 @@ def generate_hr_team_plan(
 
         if not val_errors:
             team_plan_result = candidate_plan
-            # Record LLM call in ledger
-            p_tok = llm_resp.get("usage", {}).get("prompt_tokens", 250)
-            c_tok = llm_resp.get("usage", {}).get("completion_tokens", 180)
-            record_llm_call(
-                project_id=session_id,
-                agent_id="hr-1",
-                task_id="hr_team_plan_generation",
-                provider=active_prov,
-                model=active_model,
-                input_tokens=p_tok,
-                output_tokens=c_tok,
-                cost_usd=calculate_cost_usd(active_model, p_tok, c_tok),
-                latency_ms=latency_ms,
-                db_path=db_path
-            )
+            # The LLM client already wrote this call's ledger row.
             break
         else:
             last_errors = val_errors

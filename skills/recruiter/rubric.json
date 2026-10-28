@@ -32,14 +32,14 @@
     },
     {
       "id": "downgrade_transparency",
-      "name": "Model Downgrade Logging and Quality Impact",
+      "name": "Model Downgrade Recording",
       "max": 3,
       "must_pass": false,
-      "description": "Every model tier fallback/downgrade is explicitly logged in notes with expected effect on output quality per Handbook 22.4 rule 2.",
+      "description": "Every model tier fallback/downgrade is explicitly recorded in notes with expected effect on quality per Handbook 6.1.2 and 22.4 rule 2.",
       "scale": {
         "3": "Every downgrade documented with original tier, fallback tier, and explicit quality effect statement.",
-        "2": "Downgrade noted with fallback model, but quality impact statement is brief.",
-        "1": "Downgrade occurred but missing expected quality impact.",
+        "2": "Downgrade noted with fallback model, but expected effect on quality is brief.",
+        "1": "Downgrade occurred but missing expected effect on quality.",
         "0": "Silent downgrade hidden without logging."
       }
     },
@@ -63,7 +63,7 @@
       "must_pass": false,
       "description": "Agent fs_scope is narrowed to exact role folder per Handbook 6.1.3 (docs/, own worktree, tests/, repo root).",
       "scale": {
-        "3": "Every agent profile has strictly bounded fs_scope according with Handbook Table 6.1.3.",
+        "3": "Every agent profile has strictly bounded fs_scope according with Handbook 6.1.3 Least privilege.",
         "2": "Scoped correctly, minor relative path normalization variation.",
         "1": "Scope broader than necessary (e.g. repo root given to document role).",
         "0": "Unbounded root or system filesystem access."

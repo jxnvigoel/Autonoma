@@ -1,19 +1,72 @@
 {
+  "cloud_enabled": true,
+  "local_default_model": "gemma3:1b",
   "tiers": {
     "high": [
-      { "provider": "groq", "model": "openai/gpt-oss-120b" },
-      { "provider": "groq", "model": "llama-3.3-70b-versatile" },
-      { "provider": "ollama", "model": "llama3.2:3b" }
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b"
+      },
+      {
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:14b"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:7b"
+      },
+      {
+        "provider": "ollama",
+        "model": "llama3.1:8b"
+      }
     ],
     "medium": [
-      { "provider": "groq", "model": "qwen/qwen3.8-27b" },
-      { "provider": "groq", "model": "llama-3.1-8b-instant" },
-      { "provider": "ollama", "model": "llama3.2:3b" }
+      {
+        "provider": "groq",
+        "model": "qwen/qwen3.8-27b"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b"
+      },
+      {
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5:7b"
+      },
+      {
+        "provider": "ollama",
+        "model": "llama3.2:3b"
+      }
     ],
     "low": [
-      { "provider": "groq", "model": "llama-3.1-8b-instant" },
-      { "provider": "groq", "model": "qwen/qwen3.8-27b" },
-      { "provider": "ollama", "model": "llama3.2:3b" }
+      {
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant"
+      },
+      {
+        "provider": "groq",
+        "model": "qwen/qwen3.8-27b"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b"
+      },
+      {
+        "provider": "ollama",
+        "model": "llama3.2:3b"
+      },
+      {
+        "provider": "ollama",
+        "model": "gemma3:1b"
+      }
     ]
   },
   "roles": {
@@ -32,12 +85,34 @@
     "ba": "low",
     "hr": "low",
     "recruiter": "low",
-    "scrum": "low"
+    "scrum": "low",
+    "general": "medium"
+  },
+  "embeddings": {
+    "provider": "ollama",
+    "model": "nomic-embed-text"
   },
   "downgrade_quality_effects": {
     "high_to_medium": "Reduced synthesis capability on compound architectural and algorithmic design decisions.",
     "high_to_low": "Significant quality degradation; simple templated implementations only; high risk of logical omissions.",
     "medium_to_low": "Lower nuanced adherence to edge cases; structured templates will still be maintained.",
+    "to_local_default": "No model of the target tier is installed locally; running on the local default model. Expect much lower quality.",
     "cloud_to_local": "Running on local hardware ($0 cost); slower inference latency; reduced capacity on complex reasoning."
-  }
+  },
+  "max_quota_wait_s": 600,
+  "reasoning_effort": {
+    "models": [
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b"
+    ],
+    "by_tier": {
+      "high": "medium",
+      "medium": "low",
+      "low": "low"
+    }
+  },
+  "parallel_calls": 3,
+  "build_parallelism_cloud": 2,
+  "max_network_wait_s": 900,
+  "allow_tier_downgrade": false
 }

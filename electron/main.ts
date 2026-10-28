@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -197,9 +197,77 @@ async function readDirectoryRecursive(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Filesystem scope (Handbook 29.1 threats 1-2): the renderer may only touch
+// folders the user explicitly opened via the folder dialog, plus the app's own
+// data/projects folder. Real paths are resolved (symlinks too) before checking.
+// ---------------------------------------------------------------------------
+const approvedRoots = new Set<string>();
+
+function approvedRootsFile(): string {
+  return path.join(app.getPath("userData"), "approved-roots.json");
+}
+
+function loadApprovedRoots() {
+  const appRoot = app.isPackaged ? process.resourcesPath : app.getAppPath();
+  approvedRoots.add(resolveReal(path.join(appRoot, "data", "projects")));
+  try {
+    const saved = JSON.parse(fs.readFileSync(approvedRootsFile(), "utf-8"));
+    if (Array.isArray(saved)) saved.forEach((r: string) => approvedRoots.add(resolveReal(r)));
+  } catch {
+    // no saved roots yet
+  }
+}
+
+function approveRoot(dirPath: string) {
+  approvedRoots.add(resolveReal(dirPath));
+  try {
+    fs.writeFileSync(approvedRootsFile(), JSON.stringify([...approvedRoots], null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Electron] Could not persist approved roots:", err);
+  }
+}
+
+// realpath of the longest existing prefix, so not-yet-created paths are checked too.
+function resolveReal(p: string): string {
+  let current = path.resolve(p);
+  const rest: string[] = [];
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    rest.unshift(path.basename(current));
+    current = parent;
+  }
+  let real = current;
+  try {
+    real = fs.realpathSync(current);
+  } catch {
+    // keep resolved path
+  }
+  return path.join(real, ...rest);
+}
+
+function assertInScope(p: string): string {
+  if (!p || typeof p !== "string") throw new Error("Invalid path");
+  const real = resolveReal(p);
+  for (const root of approvedRoots) {
+    if (real === root || real.startsWith(root + path.sep)) return real;
+  }
+  throw new Error(`Path is outside the opened project folders: ${p}`);
+}
+
 function registerIpcHandlers() {
   // Engine URL
   ipcMain.handle("get-engine-url", () => ENGINE_URL);
+
+  // Open a URL in the system browser: only Google's sign-in page (used by "Continue with Google").
+  ipcMain.handle("shell:openExternal", async (_event, url: string) => {
+    if (typeof url !== "string" || !url.startsWith("https://accounts.google.com/")) {
+      throw new Error("Only the Google sign-in page may be opened externally");
+    }
+    await shell.openExternal(url);
+    return true;
+  });
 
   // Dialog: Open Folder
   ipcMain.handle("dialog:openFolder", async () => {
@@ -211,6 +279,7 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) {
       return null;
     }
+    approveRoot(result.filePaths[0]);
     return result.filePaths[0];
   });
 
@@ -229,6 +298,7 @@ function registerIpcHandlers() {
 
   // File System: Read Directory Tree
   ipcMain.handle("fs:readDirectory", async (_event, dirPath: string) => {
+    assertInScope(dirPath);
     if (!dirPath || !fs.existsSync(dirPath)) {
       throw new Error(`Directory does not exist: ${dirPath}`);
     }
@@ -242,6 +312,7 @@ function registerIpcHandlers() {
 
   // File System: Read File Content
   ipcMain.handle("fs:readFile", async (_event, filePath: string) => {
+    assertInScope(filePath);
     if (!filePath || !fs.existsSync(filePath)) {
       throw new Error(`File does not exist: ${filePath}`);
     }
@@ -251,6 +322,7 @@ function registerIpcHandlers() {
 
   // File System: Write File Content
   ipcMain.handle("fs:writeFile", async (_event, filePath: string, content: string) => {
+    assertInScope(filePath);
     const parentDir = path.dirname(filePath);
     if (!fs.existsSync(parentDir)) {
       await fs.promises.mkdir(parentDir, { recursive: true });
@@ -261,6 +333,7 @@ function registerIpcHandlers() {
 
   // File System: Create New File
   ipcMain.handle("fs:createFile", async (_event, targetPath: string) => {
+    assertInScope(targetPath);
     const parentDir = path.dirname(targetPath);
     if (!fs.existsSync(parentDir)) {
       await fs.promises.mkdir(parentDir, { recursive: true });
@@ -274,6 +347,7 @@ function registerIpcHandlers() {
 
   // File System: Create New Folder
   ipcMain.handle("fs:createFolder", async (_event, targetPath: string) => {
+    assertInScope(targetPath);
     if (fs.existsSync(targetPath)) {
       throw new Error(`Folder already exists: ${path.basename(targetPath)}`);
     }
@@ -283,6 +357,10 @@ function registerIpcHandlers() {
 
   // File System: Delete Entry
   ipcMain.handle("fs:deleteEntry", async (_event, targetPath: string) => {
+    const real = assertInScope(targetPath);
+    if (approvedRoots.has(real)) {
+      throw new Error("Refusing to delete an opened project root folder");
+    }
     if (!fs.existsSync(targetPath)) {
       throw new Error(`Entry does not exist: ${targetPath}`);
     }
@@ -292,6 +370,8 @@ function registerIpcHandlers() {
 
   // File System: Rename Entry
   ipcMain.handle("fs:renameEntry", async (_event, oldPath: string, newPath: string) => {
+    assertInScope(oldPath);
+    assertInScope(newPath);
     if (!fs.existsSync(oldPath)) {
       throw new Error(`Source does not exist: ${oldPath}`);
     }
@@ -304,6 +384,7 @@ function registerIpcHandlers() {
 
   // File System: Upload / Copy File from outside into folder
   ipcMain.handle("fs:uploadFile", async (_event, targetDirPath: string) => {
+    assertInScope(targetDirPath);
     if (!mainWindow) return null;
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openFile"],
@@ -453,6 +534,7 @@ app.whenReady().then(() => {
   startPythonEngine();
 
   // Register all file system, dialog, and PTY terminal IPC handlers
+  loadApprovedRoots();
   registerIpcHandlers();
 
   createWindow();

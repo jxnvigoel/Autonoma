@@ -7,7 +7,8 @@ import uuid
 import re
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Header
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
@@ -25,13 +26,13 @@ except ImportError:
 
 # Import Unified LLM Client (Groq default, Ollama fallback)
 try:
-    from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
+    from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
 except ImportError:
     try:
-        from engine.llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
+        from engine.llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
     except ImportError:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config
+        from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
 
 # Import Specialist Skill Registry
 try:
@@ -70,10 +71,25 @@ try:
         approve_gate2,
         request_changes_gate2,
         check_budget_guard,
+        raise_budget,
         recompute_budget_step16,
         enforce_gate2_server_side,
     )
     from skill_registry import get_agents_by_project
+    from scrum import (
+        generate_backlog_and_plan,
+        generate_daily_report,
+        calculate_critical_path,
+        calculate_load_balance,
+        generate_gantt_chart_data,
+        init_tasks_db,
+    )
+    from readiness import (
+        run_readiness_review,
+        get_readiness_state,
+        enforce_readiness_server_side,
+        init_reviews_db,
+    )
 except ImportError:
     try:
         from engine.hr import generate_hr_team_plan
@@ -84,10 +100,26 @@ except ImportError:
             approve_gate2,
             request_changes_gate2,
             check_budget_guard,
+            raise_budget,
+        raise_budget,
             recompute_budget_step16,
             enforce_gate2_server_side,
         )
         from engine.skill_registry import get_agents_by_project
+        from engine.scrum import (
+            generate_backlog_and_plan,
+            generate_daily_report,
+            calculate_critical_path,
+            calculate_load_balance,
+            generate_gantt_chart_data,
+            init_tasks_db,
+        )
+        from engine.readiness import (
+            run_readiness_review,
+            get_readiness_state,
+            enforce_readiness_server_side,
+            init_reviews_db,
+        )
     except ImportError:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from hr import generate_hr_team_plan
@@ -98,10 +130,26 @@ except ImportError:
             approve_gate2,
             request_changes_gate2,
             check_budget_guard,
+            raise_budget,
+        raise_budget,
             recompute_budget_step16,
             enforce_gate2_server_side,
         )
         from skill_registry import get_agents_by_project
+        from scrum import (
+            generate_backlog_and_plan,
+            generate_daily_report,
+            calculate_critical_path,
+            calculate_load_balance,
+            generate_gantt_chart_data,
+            init_tasks_db,
+        )
+        from readiness import (
+            run_readiness_review,
+            get_readiness_state,
+            enforce_readiness_server_side,
+            init_reviews_db,
+        )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -119,7 +167,7 @@ app.add_middleware(
 )
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL") or OLLAMA_DEFAULT_MODEL
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PROJECTS_DIR = os.path.join(PROJECT_ROOT, "data", "projects")
@@ -129,8 +177,18 @@ BA_STATE_PATTERN = re.compile(r"<!--\s*BA_STATE:\s*(\{.*?\})\s*-->", re.DOTALL)
 
 
 # Data helper utilities
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
+
+
+def validate_session_id(session_id: str) -> str:
+    """Project ids become folder names: reject anything that could escape data/projects (Handbook 29.1)."""
+    if not isinstance(session_id, str) or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail=f"Invalid project id: {session_id!r}")
+    return session_id
+
+
 def get_session_dir(session_id: str) -> str:
-    path = os.path.join(DATA_PROJECTS_DIR, session_id)
+    path = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     os.makedirs(path, exist_ok=True)
     os.makedirs(os.path.join(path, "docs"), exist_ok=True)
     return path
@@ -369,120 +427,98 @@ conversation_store: List[Dict[str, Any]] = load_conversation()
 
 @app.get("/status", response_model=StatusResponse)
 def get_status():
-    """Checks Groq cloud LLM and local Ollama status."""
-    groq_conf = default_llm_client.is_groq_configured()
-    masked_key = default_llm_client.get_masked_api_key()
-    active_gen = default_llm_client.role_configs.get("pm", {}).get("model", "openai/gpt-oss-120b")
-    active_judge = default_llm_client.role_configs.get("judge", {}).get("model", "openai/gpt-oss-20b")
-
-    groq_online = False
-    if groq_conf:
-        try:
-            models = default_llm_client.fetch_groq_models()
-            groq_online = len(models) > 0
-        except Exception:
-            groq_online = False
+    """Local-first status (Handbook 22.6): Ollama health always; Groq only when cloud is enabled."""
+    cloud_on = default_llm_client.cloud_enabled()
+    gen_route = default_llm_client.resolve_route("pm")
+    judge_route = default_llm_client.resolve_judge_route("pm")
+    groq_online = bool(default_llm_client.fetch_groq_models()) if cloud_on else False
 
     ollama_online = False
-    ollama_ready = False
     version = "unknown"
     try:
         v_res = requests.get(f"{OLLAMA_HOST}/api/version", timeout=1.5)
         if v_res.status_code == 200:
             ollama_online = True
             version = v_res.json().get("version", "unknown")
-            t_res = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
-            if t_res.status_code == 200:
-                m_names = [m.get("name", "") for m in t_res.json().get("models", [])]
-                ollama_ready = any(DEFAULT_MODEL in name for name in m_names)
     except Exception:
         pass
+    local_models = default_llm_client.list_ollama_models(force_refresh=True) if ollama_online else []
+    model_ready = gen_route["provider"] != "none"
 
-    if groq_conf and groq_online:
-        return StatusResponse(
-            status="ready",
-            ollama_online=ollama_online,
-            model_ready=True,
-            version=version,
-            groq_configured=True,
-            groq_online=True,
-            masked_groq_key=masked_key,
-            active_generator_model=active_gen,
-            active_judge_model=active_judge,
-            default_provider="groq",
-            message=f"Groq Cloud LLM online (Generator: {active_gen}, Judge: {active_judge})",
-        )
-    elif not groq_conf:
-        return StatusResponse(
-            status="error" if not ollama_online else "warning",
-            ollama_online=ollama_online,
-            model_ready=ollama_ready,
-            version=version,
-            groq_configured=False,
-            groq_online=False,
-            masked_groq_key="",
-            active_generator_model=active_gen,
-            active_judge_model=active_judge,
-            default_provider="groq",
-            message="GROQ_API_KEY is missing from environment. Configure .env with GROQ_API_KEY.",
-        )
+    if not ollama_online and not groq_online:
+        status_val, msg = "error", f"Ollama is not running at {OLLAMA_HOST}. Start it with `ollama serve`."
+    elif not model_ready:
+        status_val, msg = "error", gen_route["downgrade_note"]
+    elif any(default_llm_client.resolve_route(r)["downgraded"] for r in ("architect", "judge", "backend")):
+        status_val = "warning"
+        msg = (f"Running locally on {gen_route['model']}. Some roles are below their target tier; "
+               f"install a larger local model for better quality.")
     else:
-        return StatusResponse(
-            status="ready" if ollama_ready else "error",
-            ollama_online=ollama_online,
-            model_ready=ollama_ready,
-            version=version,
-            groq_configured=True,
-            groq_online=False,
-            masked_groq_key=masked_key,
-            active_generator_model=active_gen,
-            active_judge_model=active_judge,
-            default_provider="groq",
-            message="Groq API key configured but endpoint unreachable. Ollama fallback ready.",
-        )
+        status_val, msg = "ready", f"Running locally (Generator: {gen_route['model']}, Judge: {judge_route['model']})"
+    if cloud_on:
+        msg += f" Cloud enabled (Groq {'online' if groq_online else 'unreachable'})."
+
+    return StatusResponse(
+        status=status_val,
+        ollama_online=ollama_online,
+        model_ready=model_ready,
+        version=version,
+        groq_configured=default_llm_client.is_groq_configured(),
+        groq_online=groq_online,
+        masked_groq_key=default_llm_client.get_masked_api_key(),
+        active_generator_model=gen_route["model"],
+        active_judge_model=judge_route["model"],
+        default_provider="groq" if cloud_on else "ollama",
+        message=msg + (f" Installed local models: {', '.join(m['name'] for m in local_models)}." if local_models else ""),
+    )
 
 
 @app.get("/models")
 def get_models_endpoint():
     """
-    Returns available models, active role mappings, and validates Judge capability per Handbook 14.1 & 22.4.
+    Active route per role and Judge validity per Handbook 14.1.2 & 22.4 rule 3:
+    the Judge uses a different model from each author where possible and is never weaker.
     """
-    groq_models = default_llm_client.fetch_groq_models(force_refresh=True)
-    role_configs = default_llm_client.role_configs
-
-    judge_model = role_configs.get("judge", {}).get("model", "")
-    judge_score = default_llm_client._score_model_capability(judge_model)
-
     agent_validations = {}
     all_valid = True
-    for role in ["ba", "pm", "architect", "designer", "engineer", "qa"]:
-        gen_model = role_configs.get(role, {}).get("model", "")
-        gen_score = default_llm_client._score_model_capability(gen_model)
-        different_family = gen_model != judge_model
-        valid = (judge_score >= gen_score) and different_family
-        if not valid:
-            all_valid = False
+    for role in ["ba", "pm", "architect", "designer", "hr", "recruiter", "scrum", "tech-lead", "backend", "frontend", "qa", "devops"]:
+        gen = default_llm_client.resolve_route(role)
+        judge = default_llm_client.resolve_judge_route(role)
+        valid = not judge["weaker_than_author"]
+        all_valid = all_valid and valid
         agent_validations[role] = {
-            "generator_model": gen_model,
-            "generator_capability_score": gen_score,
-            "judge_model": judge_model,
-            "judge_capability_score": judge_score,
-            "different_model": different_family,
-            "is_valid": valid
+            "generator_model": gen["model"],
+            "generator_capability_score": gen["capability"],
+            "judge_model": judge["model"],
+            "judge_capability_score": judge["capability"],
+            "different_model": not judge["same_model_as_author"],
+            "is_valid": valid,
+            "downgrade_note": gen["downgrade_note"],
         }
-
     return {
         "status": "success",
-        "models": groq_models,
-        "role_configs": role_configs,
+        "cloud_enabled": default_llm_client.cloud_enabled(),
+        "models": default_llm_client.fetch_groq_models(),
+        "local_models": default_llm_client.list_ollama_models(),
+        "role_configs": default_llm_client.role_configs,
         "judge_validation": {
-            "judge_model": judge_model,
-            "judge_capability_score": judge_score,
             "all_roles_valid": all_valid,
             "agent_validations": agent_validations,
-            "note": "Per Handbook 14.1.2: Judge model is >= generator capability and from a distinct model family for every agent." if all_valid else "Capability or distinct family violation detected."
-        }
+            "note": ("Judge is never weaker than the author; a different model is used where one is installed."
+                     if all_valid else "A Judge would be weaker than its author: install a larger local model."),
+        },
     }
+
+
+class CloudToggleRequest(BaseModel):
+    enabled: bool
+
+
+@app.post("/settings/cloud")
+def toggle_cloud(req: CloudToggleRequest):
+    """Cloud is opt-in (Handbook 1.4). While disabled, the engine makes no outbound network calls."""
+    default_llm_client.set_cloud_enabled(req.enabled)
+    return {"status": "ok", "cloud_enabled": default_llm_client.cloud_enabled()}
 
 
 @app.get("/settings/llm")
@@ -595,11 +631,12 @@ def chat(req: ChatRequest):
 # -----------------------------------------------------------------------------
 
 @app.post("/ba/start")
-def ba_start(req: IntakeRequest):
+def ba_start(req: IntakeRequest, authorization: Optional[str] = Header(None)):
     """
     Creates a new BA session, stores intake to data/projects/<session_id>/intake.json,
     and calls Ollama with BA_SYSTEM_PROMPT to produce the round 0 opening greeting + intro + permission ask.
     """
+    current_user = office_auth.require_user(authorization)
     session_id = str(uuid.uuid4())
     session_dir = get_session_dir(session_id)
 
@@ -629,7 +666,8 @@ def ba_start(req: IntakeRequest):
         ],
         "round": 0,
         "ready_for_requirements": False,
-        "local_only": True,
+        # New projects follow the router: cloud first when cloud is enabled, local otherwise.
+        "local_only": not default_llm_client.cloud_enabled(),
         "messages": [],
     }
     save_json(os.path.join(session_dir, "session_state.json"), initial_state)
@@ -672,6 +710,8 @@ At the end on its own line append:
     })
     save_json(os.path.join(session_dir, "session_state.json"), initial_state)
 
+    if current_user:
+        office_auth.assign_project(session_id, current_user["id"])
     return {
         "session_id": session_id,
         "message": cleaned_message,
@@ -891,16 +931,20 @@ def get_ba_requirements(session_id: str):
 
 
 @app.get("/ba/sessions")
-def list_ba_sessions():
+def list_ba_sessions(authorization: Optional[str] = Header(None)):
     """
     Lists all BA sessions under DATA_PROJECTS_DIR with project name, timestamps, and status.
     """
     if not os.path.exists(DATA_PROJECTS_DIR):
         return []
+    current_user = office_auth.require_user(authorization)
+    mine = set(office_auth.projects_of(current_user["id"])) if current_user else None
 
     sessions = []
     try:
         for item in os.listdir(DATA_PROJECTS_DIR):
+            if mine is not None and item not in mine:
+                continue
             session_dir = os.path.join(DATA_PROJECTS_DIR, item)
             if not os.path.isdir(session_dir):
                 continue
@@ -947,10 +991,11 @@ def list_ba_sessions():
 
 
 @app.get("/ba/session/{session_id}")
-def get_ba_session(session_id: str):
+def get_ba_session(session_id: str, authorization: Optional[str] = Header(None)):
     """
     Returns a session's full intake, conversation messages, qa_log, and requirements status.
     """
+    office_auth.require_owner(session_id, office_auth.require_user(authorization))
     session_dir = get_session_dir(session_id)
     intake_file = os.path.join(session_dir, "intake.json")
     state_file = os.path.join(session_dir, "session_state.json")
@@ -1308,6 +1353,7 @@ def attach_skill_endpoint(req: SkillAttachRequest):
     # Load agent profile or build default
     profile = get_agent_profile_from_db(agent_id) if get_agent_profile_from_db else None
     if not profile:
+        route = default_llm_client.resolve_route(req.role, session_id=req.session_id)
         profile = {
             "agent_id": agent_id,
             "project_id": req.session_id,
@@ -1315,9 +1361,9 @@ def attach_skill_endpoint(req: SkillAttachRequest):
             "role": req.role.lower(),
             "seat_id": f"ROLE-{req.role.upper()}",
             "reports_to": "tech-lead-1",
-            "tier": "high",
-            "provider": "groq",
-            "model": "llama-3.3-70b-versatile",
+            "tier": route["target_tier"],
+            "provider": route["provider"],
+            "model": route["model"],
             "tools": ["read_file", "write_file"],
             "skill_packs": [],
             "fs_scope": f"projects/{req.session_id}/",
@@ -1582,6 +1628,19 @@ def request_changes_gate2_endpoint(req: Gate2ChangeRequest):
     return request_changes_gate2(session_id=req.session_id, feedback=req.feedback)
 
 
+class BudgetRaiseRequest(BaseModel):
+    session_id: str
+    budget_limit_tokens: Optional[int] = None
+    budget_limit_usd: Optional[float] = None
+    note: Optional[str] = ""
+
+
+@app.post("/budget/raise")
+def raise_budget_endpoint(req: BudgetRaiseRequest):
+    """Client raises the budget to resume a project paused at 100% (Handbook 26.4)."""
+    return raise_budget(req.session_id, req.budget_limit_tokens, req.budget_limit_usd, req.note or "")
+
+
 @app.get("/budget/status/{session_id}")
 def get_budget_status_endpoint(session_id: str):
     """
@@ -1597,24 +1656,403 @@ def get_budget_status_endpoint(session_id: str):
     }
 
 
+# ==============================================================================
+# STAGE 5 SCRUM MASTER & TECH LEAD READINESS ENDPOINTS (Handbook Ch 9, 10.1.4, 2.7.6)
+# ==============================================================================
+
 @app.post("/scrum/start/{session_id}")
 def start_scrum_stage(session_id: str):
     """
     Starts Stage 5 (Scrum Master).
     Enforces Gate 2 server-side: returns HTTP 403 if Gate 2 is not approved or invalidated.
+    Generates docs/backlog.json, computes critical path, renders implementation-plan.md and Gantt chart.
     """
     enforce_gate2_server_side(session_id)
+    try:
+        result = generate_backlog_and_plan(session_id)
+        return {
+            "status": "success",
+            "stage": "Stage 5 Scrum Master",
+            "session_id": session_id,
+            "message": "Gate 2 verified approved. Backlog and implementation plan generated successfully.",
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Scrum Master generation failed for {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/scrum/backlog/{session_id}")
+def get_scrum_backlog(session_id: str):
+    """Returns current project backlog from docs/backlog.json."""
+    session_dir = os.path.join("data", "projects", session_id)
+    backlog_file = os.path.join(session_dir, "docs", "backlog.json")
+    if os.path.exists(backlog_file):
+        try:
+            with open(backlog_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read backlog.json: {e}")
+    return {"stories": []}
+
+
+@app.get("/scrum/plan/{session_id}")
+def get_scrum_implementation_plan(session_id: str):
+    """Returns docs/implementation-plan.md and scheduling metrics."""
+    session_dir = os.path.join("data", "projects", session_id)
+    plan_file = os.path.join(session_dir, "docs", "implementation-plan.md")
+    content = ""
+    if os.path.exists(plan_file):
+        with open(plan_file, "r", encoding="utf-8") as f:
+            content = f.read()
+
+    backlog_file = os.path.join(session_dir, "docs", "backlog.json")
+    stories = []
+    if os.path.exists(backlog_file):
+        try:
+            with open(backlog_file, "r", encoding="utf-8") as f:
+                stories = json.load(f).get("stories", [])
+        except Exception:
+            pass
+
+    crit_info = calculate_critical_path(stories)
+    load_info = calculate_load_balance(stories)
+
     return {
-        "status": "started",
-        "stage": "Stage 5 Scrum Master",
         "session_id": session_id,
-        "message": "Gate 2 verified approved. Stage 5 sprint planning unlocked."
+        "content": content,
+        "critical_path": crit_info,
+        "load_balance": load_info
     }
 
 
-if __name__ == "__main__":
+@app.get("/scrum/gantt/{session_id}")
+def get_scrum_gantt(session_id: str):
+    """Returns Gantt chart data and Mermaid diagram for the backlog."""
+    session_dir = os.path.join("data", "projects", session_id)
+    backlog_file = os.path.join(session_dir, "docs", "backlog.json")
+    stories = []
+    if os.path.exists(backlog_file):
+        try:
+            with open(backlog_file, "r", encoding="utf-8") as f:
+                stories = json.load(f).get("stories", [])
+        except Exception:
+            pass
 
+    crit_info = calculate_critical_path(stories)
+    gantt_info = generate_gantt_chart_data(stories, crit_info)
+    return {
+        "session_id": session_id,
+        "gantt": gantt_info
+    }
+
+
+@app.get("/scrum/daily-report/{session_id}")
+def get_scrum_daily_report(session_id: str, day: int = 1):
+    """Returns the daily report (reports/day-NN.md)."""
+    session_dir = os.path.join("data", "projects", session_id)
+    report_file = os.path.join(session_dir, "reports", f"day-{day:02d}.md")
+    if os.path.exists(report_file):
+        with open(report_file, "r", encoding="utf-8") as f:
+            return {"session_id": session_id, "day": day, "content": f.read()}
+
+    report_content = generate_daily_report(session_id, day=day)
+    return {"session_id": session_id, "day": day, "content": report_content}
+
+
+@app.post("/readiness/{session_id}")
+def start_readiness_review_endpoint(session_id: str):
+    """
+    Executes Tech Lead pre-build readiness review (Handbook 10.1.4, 2.7.6 step 19b).
+    Enforces Gate 2 approval. Returns readiness verdict, gaps, contradictions, and traceability.
+    """
+    enforce_gate2_server_side(session_id)
+    try:
+        result = run_readiness_review(session_id)
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Readiness review failed for {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/readiness/{session_id}")
+def get_readiness_status_endpoint(session_id: str):
+    """
+    Queries current Tech Lead readiness review state and verifies invalidation status.
+    Handbook 10.1.4: Changes to backlog, architecture, or PRD invalidate the verdict.
+    """
+    state = get_readiness_state(session_id)
+    session_dir = os.path.join("data", "projects", session_id)
+    readiness_file = os.path.join(session_dir, "docs", "readiness.md")
+    content = ""
+    if os.path.exists(readiness_file):
+        with open(readiness_file, "r", encoding="utf-8") as f:
+            content = f.read()
+
+    return {
+        "session_id": session_id,
+        "state": state,
+        "content": content
+    }
+
+
+# =========================================================================
+# Accounts: sign up, log in, profiles, Google sign-in (local accounts in data/office.db)
+# =========================================================================
+
+try:
+    import auth as office_auth
+    import google_oauth
+except ImportError:
+    from engine import auth as office_auth, google_oauth
+
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    title: Optional[str] = None
+    organization: Optional[str] = None
+
+
+@app.post("/auth/signup")
+def auth_signup(req: SignupRequest):
+    return office_auth.signup(req.name, req.email, req.password)
+
+
+@app.post("/auth/login")
+def auth_login(req: LoginRequest):
+    return office_auth.login(req.email, req.password)
+
+
+@app.get("/auth/me")
+def auth_me(authorization: Optional[str] = Header(None)):
+    user = office_auth.user_for_token(office_auth.token_from_header(authorization))
+    return {"user": user, "accounts_exist": office_auth.users_exist(),
+            "google_enabled": google_oauth.is_configured()}
+
+
+@app.post("/auth/logout")
+def auth_logout(authorization: Optional[str] = Header(None)):
+    office_auth.logout(office_auth.token_from_header(authorization))
+    return {"status": "logged_out"}
+
+
+@app.get("/auth/profile")
+def auth_get_profile(authorization: Optional[str] = Header(None)):
+    user = office_auth.require_user(authorization)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Please log in")
+    return office_auth.update_profile(user)
+
+
+@app.put("/auth/profile")
+def auth_update_profile(req: ProfileUpdateRequest, authorization: Optional[str] = Header(None)):
+    user = office_auth.require_user(authorization)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Please log in")
+    return office_auth.update_profile(user, req.name, req.title, req.organization)
+
+
+@app.get("/auth/google/start")
+def auth_google_start():
+    return google_oauth.start()
+
+
+@app.get("/auth/google/callback", response_class=HTMLResponse)
+def auth_google_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    return google_oauth.finish(code, state, error, office_auth.login_or_create_google_user)
+
+
+@app.get("/auth/google/result/{state}")
+def auth_google_result(state: str):
+    return google_oauth.result(state)
+
+
+# =========================================================================
+# Stages 6-9: Build loop, Alpha, Beta (Gate 3), Release (Gate 4), Delivery
+# Handbook 2.7.7-2.7.10, 10, 13-16, 20.4, 23, 32
+# =========================================================================
+
+try:
+    import events as office_events
+    import devops as office_devops
+    import release as office_release
+    from build_loop import start_build_in_background, get_build_state, BuildLoop
+except ImportError:
+    from engine import events as office_events, devops as office_devops, release as office_release
+    from engine.build_loop import start_build_in_background, get_build_state, BuildLoop
+
+default_llm_client.add_call_listener(office_events.llm_call_listener())
+
+
+class AllowlistApprovalRequest(BaseModel):
+    session_id: str
+    commands: Optional[Dict[str, str]] = None
+    network_allowed: bool = False
+
+
+class GateDecisionRequest(BaseModel):
+    session_id: str
+    note: Optional[str] = ""
+
+
+class UATFeedbackRequest(BaseModel):
+    session_id: str
+    feedback: str
+    kind: str = "bug"  # bug -> new UAT story; change -> scope question for the PM
+
+
+def _require_project(session_id: str) -> None:
+    if not os.path.isdir(os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))):
+        raise HTTPException(status_code=404, detail=f"Project {session_id} not found")
+
+
+@app.get("/build/allowlist/{session_id}")
+def get_command_allowlist(session_id: str):
+    _require_project(session_id)
+    current = office_devops.get_allowlist(session_id)
+    return current if current.get("commands") else office_devops.propose_allowlist(session_id)
+
+
+@app.post("/build/allowlist/approve")
+def approve_command_allowlist(req: AllowlistApprovalRequest):
+    """Client approves the agent command allowlist (Handbook 23.4.1). Network stays off unless approved."""
+    _require_project(req.session_id)
+    enforce_gate2_server_side(req.session_id)
+    try:
+        return office_devops.approve_allowlist(req.session_id, req.commands, req.network_allowed)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/build/start/{session_id}")
+def start_build_stage_endpoint(session_id: str):
+    """
+    Stage 6 Build Loop (Handbook 2.7.7, 32 BuildStory). Server-side gates: Gate 2 approved,
+    readiness verdict ready, command allowlist approved. Runs in the background.
+    """
+    _require_project(session_id)
+    enforce_gate2_server_side(session_id)
+    enforce_readiness_server_side(session_id)
+    if not office_devops.get_allowlist(session_id).get("approved"):
+        raise HTTPException(status_code=403, detail={"error": "ALLOWLIST_NOT_APPROVED",
+                                                     "rule": "Handbook 23.4.1: the command allowlist is approved by the client."})
+    guard = check_budget_guard(session_id)
+    if guard.get("pause_100"):
+        raise HTTPException(status_code=402, detail=guard["message"])
+    try:
+        return start_build_in_background(session_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/build/status/{session_id}")
+def get_build_status_endpoint(session_id: str):
+    _require_project(session_id)
+    return get_build_state(session_id)
+
+
+@app.get("/build/daily-report/{session_id}")
+def get_build_daily_report(session_id: str):
+    path = os.path.join(get_session_dir(session_id), "reports", "build-daily.md")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No build report yet")
+    with open(path, "r", encoding="utf-8") as f:
+        return {"session_id": session_id, "markdown": f.read()}
+
+
+@app.get("/events/{session_id}")
+def get_events_endpoint(session_id: str, after: int = 0, limit: int = 500, task_id: Optional[str] = None):
+    _require_project(session_id)
+    return {"session_id": session_id, "events": office_events.list_events(session_id, after, task_id=task_id, limit=limit)}
+
+
+@app.get("/preview/{session_id}")
+def get_preview_endpoint(session_id: str):
+    _require_project(session_id)
+    return office_devops.get_preview_state(session_id)
+
+
+@app.post("/preview/stop/{session_id}")
+def stop_preview_endpoint(session_id: str):
+    _require_project(session_id)
+    office_devops.stop_preview(session_id)
+    return office_devops.get_preview_state(session_id)
+
+
+@app.post("/beta/start/{session_id}")
+def start_beta_endpoint(session_id: str):
+    """Stage 8: preview with seed data, then Gate 3 opens for client UAT."""
+    _require_project(session_id)
+    return office_release.start_beta(session_id)
+
+
+@app.get("/gate/{gate}/status/{session_id}")
+def get_gate_status_endpoint(gate: int, session_id: str):
+    _require_project(session_id)
+    if gate not in (3, 4):
+        raise HTTPException(status_code=400, detail="Gates 1 and 2 have their own endpoints")
+    return office_release.gate_state(session_id, gate)
+
+
+@app.post("/gate3/approve")
+def approve_gate3_endpoint(req: GateDecisionRequest):
+    _require_project(req.session_id)
+    return office_release.decide_gate(req.session_id, 3, True, req.note or "")
+
+
+@app.post("/gate3/feedback")
+def gate3_feedback_endpoint(req: UATFeedbackRequest):
+    """UAT feedback through the BA (new Q-); bugs re-enter Stage 6 as UAT stories."""
+    _require_project(req.session_id)
+    if req.kind not in ("bug", "change"):
+        raise HTTPException(status_code=400, detail="kind must be 'bug' or 'change'")
+    return office_release.uat_feedback(req.session_id, req.feedback, req.kind)
+
+
+@app.post("/release/prepare/{session_id}")
+def prepare_release_endpoint(session_id: str, version: str = "v1.0.0"):
+    """Stage 9: CI on main, rollback and restore drills, image, runbook; then Gate 4 opens."""
+    _require_project(session_id)
+    return office_release.prepare_release(session_id, version)
+
+
+@app.post("/gate4/approve")
+def approve_gate4_endpoint(req: GateDecisionRequest):
+    _require_project(req.session_id)
+    return office_release.decide_gate(req.session_id, 4, True, req.note or "")
+
+
+@app.post("/gate4/request-changes")
+def request_changes_gate4_endpoint(req: GateDecisionRequest):
+    _require_project(req.session_id)
+    return office_release.decide_gate(req.session_id, 4, False, req.note or "")
+
+
+@app.post("/deliver/{session_id}")
+def deliver_endpoint(session_id: str):
+    """Delivery: local repo bundle, docs, runbook and final report. Nothing is pushed or uploaded."""
+    _require_project(session_id)
+    return office_release.deliver(session_id)
+
+
+if __name__ == "__main__":
     port = int(os.environ.get("ENGINE_PORT", 8765))
     logger.info(f"Starting Autonoma Python Engine on http://127.0.0.1:{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+
 

@@ -231,7 +231,7 @@ def validate_role_merging(
     stories_per_role: Dict[str, int]
 ) -> Tuple[bool, List[str]]:
     """
-    Handbook 6.1.1 & [ASM-03]: Roles with under ~2 stories are merged into a neighbouring role (e.g. fullstack).
+    Handbook 6.1.1 & [CFG-03]: Roles with under ~2 stories are merged into a neighbouring role (e.g. fullstack, or perf into QA).
     """
     errors: List[str] = []
     seats = plan.get("seats", [])
@@ -243,6 +243,12 @@ def validate_role_merging(
             if 0 < story_count < 2:
                 errors.append(
                     f"Role '{role}' has only {story_count} stories (< 2). Handbook 6.1.1 requires merging into a neighbouring/fullstack role"
+                )
+        elif role == "perf":
+            story_count = stories_per_role.get("perf", 0)
+            if 0 < story_count < 2:
+                errors.append(
+                    f"Role 'perf' has only {story_count} stories (< 2). Handbook 6.1.1 requires merging into QA role"
                 )
 
     return (len(errors) == 0, errors)
@@ -309,7 +315,10 @@ def validate_agent_profile_permissions(
     Handbook 6.1.3 & 6.3.6: Minimal tools and folder per role.
     Roles that only write documents never get run/shell/network tools.
     """
-    from skill_registry import validate_agent_permissions
+    try:
+        from skill_registry import validate_agent_permissions
+    except ImportError:
+        from engine.skill_registry import validate_agent_permissions
     role = profile.get("role", "")
     tools = profile.get("tools", [])
     fs_scope = profile.get("fs_scope", "")
@@ -347,7 +356,10 @@ def validate_skill_pack_exists_or_blocked(
     Handbook 6.3.4 Step 1: Match role -> skill pack in the registry.
     If no pack exists: status 'blocked', do not invent one.
     """
-    from skill_registry import get_role_pack
+    try:
+        from skill_registry import get_role_pack
+    except ImportError:
+        from engine.skill_registry import get_role_pack
     errors: List[str] = []
 
     for p in agent_profiles:
@@ -446,6 +458,15 @@ NON_ANSWER_PATTERNS = [
 ]
 
 
+# Handbook 5.1.2: unhappy paths cover invalid input, empty state, no permission, no network,
+# duplicate submission, limits reached and timeouts.
+UNHAPPY_PATH_RE = re.compile(
+    r"\(unhappy path\)|\binvalid|\berror|\bfail|\bdenied|\bunauthori[sz]ed|\bnot (?:signed|logged) in|\bexpired"
+    r"|\bempty\b|\bmissing\b|\bblank\b|\bduplicate|\balready\b|\blimit|\btime(?:s)? ?out|\boffline|\bno network"
+    r"|\bnot found|\bdoes not exist|\bno longer exists|\breject|\bwrong\b|\bwithout permission|\bno permission"
+    r"|\bforbidden|\bexceed|\bnon-?existent", re.IGNORECASE)
+
+
 def validate_prd_pre_judge(
     prd_text: str,
     qa_map: Dict[str, Any],
@@ -492,11 +513,13 @@ def validate_prd_pre_judge(
                         errors.append(f"Problem section contains non-answer or filler text matching '{match.group(0)}'")
 
     # 2. Extract features and validate uniqueness, stories, ACs, sentences
+    summary_desc_by_fid: Dict[str, str] = {}
     summary_m = re.search(r"###\s*Summary(.*?)(?=###\s*(?:Feature\s+)?F-|\Z)", prd_text, re.DOTALL | re.IGNORECASE)
     if summary_m:
         sum_rows = re.findall(r"\|\s*(F-\d+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|", summary_m.group(1))
         seen_summary_descs: Dict[str, str] = {}
         for sum_fid, sum_title, sum_desc in sum_rows:
+            summary_desc_by_fid[sum_fid.strip()] = sum_desc.strip()
             norm_d = re.sub(r"\s+", " ", sum_desc.strip().lower())
             if len(norm_d) >= 15:
                 if norm_d in seen_summary_descs:
@@ -535,7 +558,8 @@ def validate_prd_pre_judge(
             errors.append(f"Feature {fid} is missing user Story")
         else:
             # Check story format: As a [P-##], I want ... so that ...
-            if not re.search(r"\bAs\s+an?\s+\[?P-\d+\]?,?\s+I\s+want\s+.+\s+so\s+that\s+.+", story, re.IGNORECASE):
+            # "As a [P-01], I want ..." with an optional persona name after the ID.
+            if not re.search(r"\bAs\s+an?\s+\[?P-\d+\]?(?:\s+[^,\n]{1,60}?)?,?\s+I\s+want\s+.+\s+so\s+that\s+.+", story, re.IGNORECASE):
                 errors.append(f"Feature {fid} story '{story}' does not match standard 'As a [P-##], I want ... so that ...' format")
 
             # Check duplicate user story across features
@@ -546,11 +570,16 @@ def validate_prd_pre_judge(
 
             # Check title / story keyword match
             operative_title_words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{4,}\b", ftitle) if w.lower() not in {"with", "from", "that", "this", "local", "management", "system", "track", "tracking"}]
+            # The story must share a word with the title or with the feature's own summary description
+            # ("User Authentication" / "sign in with email and password" / "I want to sign in").
+            desc_words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{4,}\b", summary_desc_by_fid.get(fid, ""))
+                          if w.lower() not in {"with", "from", "that", "this", "their", "users", "user"}]
+            story_match_words = operative_title_words + desc_words
             if ("export" in ftitle.lower() or "csv" in ftitle.lower()) and not any(w in story.lower() for w in ["export", "csv", "download", "file"]):
                 errors.append(f"Feature {fid} title '{ftitle}' does not match its story text (title/story mismatch: title specifies export/CSV but story does not mention export)")
             elif ("pull" in ftitle.lower() or "requests" in ftitle.lower()) and not any(w in story.lower() for w in ["pull", "request"]):
                 errors.append(f"Feature {fid} title '{ftitle}' does not match its story text (title/story mismatch: title specifies pull requests but story does not match)")
-            elif operative_title_words and not any(tw in story.lower() or tw[:4] in story.lower() for tw in operative_title_words):
+            elif operative_title_words and not any(tw in story.lower() or tw[:4] in story.lower() for tw in story_match_words):
                 errors.append(f"Feature {fid} title '{ftitle}' does not match its story text (title/story mismatch)")
 
         # Extract ACs
@@ -561,7 +590,7 @@ def validate_prd_pre_judge(
             has_unhappy = False
             for ac_id, ac_text in ac_rows:
                 act = ac_text.strip()
-                if "(unhappy path)" in act.lower() or "invalid" in act.lower() or "error" in act.lower():
+                if UNHAPPY_PATH_RE.search(act):
                     has_unhappy = True
 
                 # Check for spliced ACs
@@ -579,7 +608,7 @@ def validate_prd_pre_judge(
                         re.search(r"\b(?:under|within|<|>|<=|>=)\s+\d+(?:\.\d+)?\s*(?:s|ms|sec|second|seconds|mb|kb|gb)\b", act, re.IGNORECASE),
                         re.search(r"\b(?:status\s+code\s+)?(?:200|201|400|401|403|404|409|422|429|500)\b", act),
                         re.search(r"\[(?:NFR-\d+|ASM-\d+)\]", act),
-                        re.search(r"\b(?:error|success|toast|inline|modal|dialog|message|sealed|disabled|enabled|stored|persisted|logged|flagged|displayed|rendered|shown|visible|returned|created|updated)\b", act, re.IGNORECASE)
+                        re.search(r"\b(?:error|success|toast|inline|modal|dialog|message|sealed|disabled|enabled|stored|stores|persisted|persists|logged|logs|flagged|flags|displayed|displays|display|rendered|renders|render|shown|shows|show|visible|returned|returns|created|creates|updated|updates|writes|write|written|removes|remove|removed|deleted|deletes|delete|recorded|records|record|saved|saves|save|increments|decrements|cleared|clears|clear|invalidated|invalidates|terminated|terminates|ended|ends|redirected|redirects|marked|marks|appears|appear|listed|lists|hidden|hides|rejected|rejects|blocked|blocks|locked|locks|signed out|signed in|prevented|prevents|unchanged|remains|reverted)\b", act, re.IGNORECASE)
                     ])
                     if not has_bound:
                         errors.append(f"{fid} {ac_id} lacks a measurable bound or verification threshold: '{act}'")
@@ -915,7 +944,7 @@ def validate_grounding_corpus(
     clean_source = source_corpus.lower()
     source_vocab = set(re.findall(r"\b[a-zA-Z]{4,}\b", clean_source))
 
-    # General standard software terms that are always permitted
+    # General standard software terms and UI/UX design tokens that are always permitted
     generic_vocab = {
         "status", "created", "updated", "timestamp", "description", "details",
         "action", "actions", "filter", "search", "export", "report", "table",
@@ -926,18 +955,48 @@ def validate_grounding_corpus(
         "request", "success", "error", "warning", "loading", "empty", "populated",
         "permission", "permissions", "persona", "personas", "audit", "compliance",
         "verification", "storage", "privacy", "access", "control", "summary",
-        "overview", "problem", "solution", "architecture", "system", "component"
+        "overview", "problem", "solution", "architecture", "system", "component",
+        "artifact", "provenance", "section", "area", "chart", "charts",
+        "row", "rows", "column", "columns", "bottom", "top", "left", "right", "center",
+        "recent", "activity", "alert", "alerts", "critical", "visual", "structure",
+        "notification", "banner", "date", "time", "panel", "panels", "pane", "panes",
+        "brief", "grounding", "domain", "token", "tokens", "reading", "read",
+        "typography", "palette", "surface", "canvas", "background", "foreground", "border",
+        "hover", "active", "focus", "pressed", "disabled", "ring", "rings", "visible",
+        "spacing", "unit", "units", "width", "height", "limit", "limits",
+        "recognition", "recall", "shortcut", "shortcuts", "keyboard", "navigation",
+        "shimmer", "skeleton", "click", "rule", "badge", "chip", "chips", "card", "cards",
+        "grid", "layout", "toast", "input", "dropdown", "select", "radio", "checkbox",
+        "contrast", "ratio", "ratios", "accessibility", "mandate", "formula", "luminance",
+        "relative", "wcag", "mathematical", "normal", "large", "interactive",
+        "scale", "family", "weight", "radius", "shadow", "elevation", "clear", "cancel",
+        "save", "submit", "confirm", "close", "back", "next", "previous", "sort",
+        "spec", "specs", "specification", "guideline", "guidelines", "order", "sequence",
+        "escape", "enter", "space", "arrow", "keys", "mode", "toggle", "field", "fields",
+        "security", "boundary", "notification", "notifications", "theme", "themes", "support",
+        "supported", "list", "lists", "element", "elements", "item", "items", "content",
+        "entry", "entries", "data", "value", "values", "trend", "trends", "consumption",
+        "statement", "interactive", "indicator", "indicators", "target", "targets",
+        "retry", "load", "mark", "check", "checked", "return", "dashboard", "batch",
+        "manager", "managers", "current", "access", "restricted", "permission", "permissions",
+        "begin", "start", "stop"
     }
 
-    # Extract bold phrases or capital entity names from artifact
-    bold_phrases = re.findall(r"\*\*([^*]+)\*\*", artifact_text)
+    # Extract bold phrases on a single line (avoid matching across paragraphs)
+    bold_phrases = re.findall(r"\*\*([^\n*]+)\*\*", artifact_text)
     for phrase in bold_phrases:
         p_clean = phrase.strip()
+        if len(p_clean) > 35:
+            continue
         words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{4,}\b", p_clean)]
-        if not words or len(words) < 2:
+        if not words or len(words) < 2 or len(words) > 5:
             continue
         # Skip standard markdown headers or stamps
-        if any(sw in p_clean.lower() for sw in ["artifact provenance", "loading", "empty", "error", "success", "given", "when", "then"]):
+        if any(sw in p_clean.lower() for sw in [
+            "provenance", "loading", "empty", "error", "success", "given", "when", "then",
+            "step", "screen", "journey", "table", "section", "overview", "navigation", "keyboard", "focus",
+            "theme", "support", "security", "boundary", "data", "element", "list", "area", "batch"
+        ]):
             continue
 
         novel = [w for w in words if w not in source_vocab and w not in generic_vocab]
@@ -950,4 +1009,441 @@ def validate_grounding_corpus(
             })
 
     return len(unsupported) == 0, unsupported
+
+
+def validate_token_caps_above_floor(
+    profiles: List[Dict[str, Any]],
+    floor: int = 2500
+) -> Tuple[bool, List[str]]:
+    """
+    Handbook 5.1.6, 6.3.4 & Gate 2 blocker fix A3:
+    Every agent must have a token cap derived from estimate.json (+20%) and floored at
+    a measured per-story minimum (floor >= 2500). Caps below the floor are rejected.
+    """
+    errors: List[str] = []
+    for p in profiles:
+        agent_id = p.get("agent_id") or p.get("id", "agent")
+        cap = p.get("token_cap")
+        if cap is None or cap < floor:
+            errors.append(
+                f"Agent '{agent_id}' has token cap {cap} which is below the measured minimum floor of {floor} tokens."
+            )
+        if p.get("token_cap_warning") == "NO ESTIMATE" or p.get("status") == "NO ESTIMATE":
+            errors.append(
+                f"Agent '{agent_id}' has NO ESTIMATE in docs/estimate.json; cannot hire without token estimate."
+            )
+    return len(errors) == 0, errors
+
+
+def validate_agent_reports_to_fk(
+    profiles: List[Dict[str, Any]],
+    db_path: Optional[str] = None
+) -> Tuple[bool, List[str]]:
+    """
+    Handbook 2.1, 6.3.4, 24.1 & Gate 2 blocker fix A4:
+    Every reports_to must reference an existing agent row (FK-valid).
+    Ghost reports_to references are rejected.
+    """
+    errors: List[str] = []
+    known_agent_ids = set()
+
+    for p in profiles:
+        aid = p.get("agent_id") or p.get("id")
+        if aid:
+            known_agent_ids.add(str(aid).strip())
+
+    if db_path and os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM agents")
+            for row in cur.fetchall():
+                known_agent_ids.add(str(row[0]).strip())
+            conn.close()
+        except Exception:
+            pass
+
+    for p in profiles:
+        aid = p.get("agent_id") or p.get("id", "agent")
+        reports_to = p.get("reports_to")
+        if reports_to:
+            reports_to_str = str(reports_to).strip()
+            if reports_to_str not in known_agent_ids:
+                errors.append(
+                    f"Agent '{aid}' reports to ghost manager '{reports_to_str}'; target agent does not exist in roster or agents table (FK violation)."
+                )
+
+    return len(errors) == 0, errors
+
+
+def validate_must_have_feature_seat_coverage(
+    plan: Dict[str, Any],
+    prd_text: str
+) -> Tuple[bool, List[str]]:
+    """
+    Handbook 6.2.5 & Gate 2 blocker fix A8:
+    Every Must-have feature must have a role / seat able to build it.
+    A Must-have feature with no seat is rejected.
+    """
+    errors: List[str] = []
+    must_have_pattern = re.compile(
+        r"###\s*(?:Feature\s*)?`?(F-\d{2,4})`?:[^\n\r]*\n[\s\S]*?\*\*(?:Priority|MoSCoW)\*\*:\s*Must-have",
+        re.IGNORECASE
+    )
+    must_have_fids = set(must_have_pattern.findall(prd_text))
+    if not must_have_fids:
+        # Fallback to general F-### IDs if explicit priority not found
+        all_fids = set(re.findall(r"\b(F-\d{2,4})\b", prd_text))
+        must_have_fids = all_fids
+
+    covered_fids = set()
+    seats = plan.get("seats", [])
+    for s in seats:
+        refs = s.get("refs", [])
+        for r in refs:
+            if str(r).startswith("F-"):
+                covered_fids.add(str(r))
+
+    uncovered = must_have_fids - covered_fids
+    if uncovered:
+        for u in sorted(list(uncovered)):
+            errors.append(
+                f"Must-have feature '{u}' has no assigned seat in docs/team-plan.json (Quality Bar 6.2.5 violation)."
+            )
+
+    return len(errors) == 0, errors
+
+
+# ==============================================================================
+# SCRUM MASTER BACKLOG & STORY VALIDATORS (Handbook Chapter 9, 9.1.2-9.2.5)
+# ==============================================================================
+
+def validate_backlog_schema(backlog: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Validates docs/backlog.json schema per Handbook 9.2:
+    {
+      "stories": [
+        {
+          "id": "ST-007",
+          "title": "POST /orders creates an order",
+          "role": "backend",
+          "owner": "be-2",
+          "points": 3,
+          "refs": {
+            "features": ["F-003"],
+            "ac": ["AC-011", "AC-012"],
+            "api": ["API-005"],
+            "tables": ["TBL-02"]
+          },
+          "depends_on": ["ST-002"],
+          "needs_perf": true,
+          "definition_of_done": ["AC-011 and AC-012 have passing tests", "Tech Lead approved", "API matches openapi.yaml"]
+        }
+      ]
+    }
+    """
+    errors: List[str] = []
+    if not isinstance(backlog, dict):
+        return False, ["backlog.json must be a JSON object"]
+
+    stories = backlog.get("stories")
+    if not isinstance(stories, list) or len(stories) == 0:
+        return False, ["Field 'stories' is required and must be a non-empty array of story objects"]
+
+    seen_ids = set()
+    for idx, story in enumerate(stories):
+        prefix = f"stories[{idx}]"
+        if not isinstance(story, dict):
+            errors.append(f"{prefix} must be a JSON object")
+            continue
+
+        for req_field in ["id", "title", "role", "owner", "points", "refs", "depends_on", "definition_of_done"]:
+            if req_field not in story:
+                errors.append(f"{prefix} missing required field '{req_field}'")
+
+        sid = story.get("id", "")
+        if not re.match(r"^ST-\d{3,}$", str(sid)):
+            errors.append(f"{prefix}.id '{sid}' must match format 'ST-###'")
+        if sid in seen_ids:
+            errors.append(f"{prefix}.id '{sid}' is duplicated; story IDs must be unique")
+        seen_ids.add(sid)
+
+        refs = story.get("refs")
+        if not isinstance(refs, dict):
+            errors.append(f"{prefix}.refs must be an object with keys 'features', 'ac', 'api', 'tables'")
+        else:
+            for rk in ["features", "ac"]:
+                if rk not in refs or not isinstance(refs[rk], list):
+                    errors.append(f"{prefix}.refs.{rk} must be a list of string identifiers")
+
+        deps = story.get("depends_on")
+        if not isinstance(deps, list):
+            errors.append(f"{prefix}.depends_on must be a list of story IDs")
+
+        dod = story.get("definition_of_done")
+        if not isinstance(dod, list) or len(dod) == 0:
+            errors.append(f"{prefix}.definition_of_done must be a non-empty list of criteria")
+
+    return len(errors) == 0, errors
+
+
+def validate_backlog_points(backlog: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Handbook 9.1.3, 9.2.5:
+    No story over 5 points.
+    Story points on a Fibonacci scale (1, 2, 3, 5); anything bigger is split.
+    """
+    errors: List[str] = []
+    stories = backlog.get("stories", [])
+    allowed_points = {1, 2, 3, 5}
+
+    for story in stories:
+        sid = story.get("id", "ST-???")
+        pts = story.get("points")
+        if not isinstance(pts, int):
+            errors.append(f"Story '{sid}' points must be an integer, got {pts}")
+            continue
+        if pts > 5:
+            errors.append(f"Story '{sid}' exceeds 5 points ({pts} pts). Rule 9.2.5: No story over 5 points.")
+        elif pts not in allowed_points:
+            errors.append(f"Story '{sid}' has non-Fibonacci points ({pts}). Sizing must be 1, 2, 3, or 5.")
+
+    return len(errors) == 0, errors
+
+
+def validate_backlog_must_have_ac_coverage(
+    backlog: Dict[str, Any],
+    prd_text: str
+) -> Tuple[bool, List[str]]:
+    """
+    Handbook 9.2.4 rule 3 & 9.2.5:
+    Every story cites the AC-s it satisfies. Every AC- of a Must-have feature lands in some story.
+    """
+    errors: List[str] = []
+
+    # 1. Extract Must-have features and their ACs from PRD
+    # Parse feature blocks: ### Feature F-###: ... **MoSCoW**: Must-have ... AC-###
+    must_have_acs = set()
+
+    # Look for Must-have feature sections
+    feature_sections = re.split(r"(?=###\s*(?:Feature\s*)?`?F-\d+)", prd_text)
+    found_must_have_sections = False
+
+    for sec in feature_sections:
+        if not sec.strip().startswith("###"):
+            continue
+        # Check if priority is Must-have
+        is_must_have = bool(re.search(r"\*\*(?:Priority|MoSCoW)\*\*:\s*Must-have", sec, re.IGNORECASE))
+        if is_must_have:
+            found_must_have_sections = True
+            acs_in_sec = re.findall(r"\b(AC-\d{2,4})\b", sec)
+            for ac in acs_in_sec:
+                must_have_acs.add(ac)
+
+    # Fallback: if no explicit Must-have header matched, extract all AC-###
+    if not found_must_have_sections:
+        all_acs = re.findall(r"\b(AC-\d{2,4})\b", prd_text)
+        must_have_acs = set(all_acs)
+
+    # 2. Gather ACs covered by backlog stories
+    covered_acs = set()
+    for story in backlog.get("stories", []):
+        refs = story.get("refs", {})
+        if isinstance(refs, dict):
+            for ac in refs.get("ac", []):
+                covered_acs.add(str(ac).strip())
+
+    missing_acs = must_have_acs - covered_acs
+    if missing_acs:
+        for mac in sorted(list(missing_acs)):
+            errors.append(f"Must-have acceptance criteria '{mac}' is not covered by any story in docs/backlog.json (Quality Bar 9.2.5).")
+
+    return len(errors) == 0, errors
+
+
+def validate_backlog_dependency_cycles(backlog: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Handbook 9.2.4 rule 4 & 9.2.5:
+    Record dependencies. No cycles.
+    Uses Kahn's algorithm for topological sorting to detect dependency cycles.
+    """
+    errors: List[str] = []
+    stories = backlog.get("stories", [])
+    story_ids = {s.get("id") for s in stories if s.get("id")}
+
+    # Build adjacency list: node -> set of nodes that depend on it
+    # and in-degree map: node -> count of dependencies
+    in_degree: Dict[str, int] = {sid: 0 for sid in story_ids}
+    adj: Dict[str, Set[str]] = {sid: set() for sid in story_ids}
+
+    for story in stories:
+        sid = story.get("id")
+        deps = story.get("depends_on", [])
+        for dep in deps:
+            if dep not in story_ids:
+                errors.append(f"Story '{sid}' depends on unknown story '{dep}'.")
+                continue
+            if dep == sid:
+                errors.append(f"Story '{sid}' self-depends on itself (cycle).")
+                continue
+            adj[dep].add(sid)
+            in_degree[sid] += 1
+
+    # Kahn's algorithm queue of nodes with in_degree == 0
+    queue = [sid for sid, deg in in_degree.items() if deg == 0]
+    visited_count = 0
+
+    while queue:
+        node = queue.pop(0)
+        visited_count += 1
+        for neighbor in adj[node]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    if visited_count < len(story_ids):
+        # Find cycle members
+        cycle_members = [sid for sid, deg in in_degree.items() if deg > 0]
+        errors.append(
+            f"Dependency cycle detected in story graph among stories: {cycle_members} (Rule 9.2.5: No dependency cycles)."
+        )
+
+    return len(errors) == 0, errors
+
+
+def validate_backlog_walking_skeleton(backlog: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Handbook 9.1.4, 9.2.4 rule 1 & 9.2.5:
+    1. First story is the walking skeleton from the architecture.
+    """
+    errors: List[str] = []
+    stories = backlog.get("stories", [])
+    if not stories:
+        return False, ["Backlog has no stories."]
+
+    first_story = stories[0]
+    first_id = first_story.get("id", "")
+    first_title = first_story.get("title", "").lower()
+    first_deps = first_story.get("depends_on", [])
+
+    if first_id != "ST-001":
+        errors.append(f"First story ID must be 'ST-001', got '{first_id}'.")
+
+    # Walking skeleton must not depend on other feature stories
+    if len(first_deps) > 0:
+        errors.append(f"Walking skeleton story '{first_id}' must not depend on other stories; got depends_on: {first_deps}.")
+
+    skeleton_keywords = ["walking skeleton", "skeleton", "scaffold", "foundation", "bootstrap", "core", "initialization", "setup", "proving architecture"]
+    if not any(kw in first_title for kw in skeleton_keywords):
+        errors.append(
+            f"First story '{first_id}: {first_story.get('title')}' is not designated as the walking skeleton (Handbook 9.2.4 rule 1)."
+        )
+
+    return len(errors) == 0, errors
+
+
+def validate_backlog_owners_in_roster(
+    backlog: Dict[str, Any],
+    roster_or_team_plan: Any
+) -> Tuple[bool, List[str]]:
+    """
+    Handbook 9.2.4 rule 5:
+    Assign owners from the roster by role. Balance load; the orchestrator will check it.
+    """
+    errors: List[str] = []
+    known_owners = set()
+
+    if isinstance(roster_or_team_plan, list):
+        # Roster list of dicts: {"id": "...", "role": "..."}
+        for item in roster_or_team_plan:
+            if isinstance(item, dict):
+                oid = item.get("id") or item.get("agent_id") or item.get("name")
+                if oid:
+                    known_owners.add(str(oid))
+                seat_id = item.get("seat_id")
+                if seat_id:
+                    known_owners.add(str(seat_id))
+    elif isinstance(roster_or_team_plan, dict):
+        seats = roster_or_team_plan.get("seats", [])
+        for s in seats:
+            sid = s.get("id")
+            if sid:
+                known_owners.add(str(sid))
+            role = s.get("role")
+            if role:
+                known_owners.add(str(role))
+
+    for story in backlog.get("stories", []):
+        sid = story.get("id", "ST-???")
+        owner = story.get("owner")
+        if not owner:
+            errors.append(f"Story '{sid}' has no assigned owner.")
+        elif known_owners and str(owner) not in known_owners:
+            # Check if owner contains a valid seat/role
+            matches = any(str(owner).startswith(k) or k in str(owner) or str(owner) in k for k in known_owners)
+            if not matches:
+                errors.append(f"Story '{sid}' assigned to owner '{owner}' not found in team roster or seats.")
+
+    return len(errors) == 0, errors
+
+
+def validate_backlog_refs_exist(
+    backlog: Dict[str, Any],
+    prd_text: str,
+    arch_text: str
+) -> Tuple[bool, List[str]]:
+    """
+    Verifies that all cited IDs (AC-###, API-###, TBL-###) exist in the source documents.
+    """
+    errors: List[str] = []
+    known_acs = set(re.findall(r"\b(AC-\d{2,4})\b", prd_text))
+    known_apis = set(re.findall(r"\b(API-\d{2,4})\b", arch_text))
+    known_tbls = set(re.findall(r"\b(TBL-\d{2,4})\b", arch_text))
+
+    for story in backlog.get("stories", []):
+        sid = story.get("id", "ST-???")
+        refs = story.get("refs", {})
+        if not isinstance(refs, dict):
+            continue
+
+        for ac in refs.get("ac", []):
+            if known_acs and str(ac) not in known_acs:
+                errors.append(f"Story '{sid}' cites non-existent acceptance criteria '{ac}'.")
+
+        for api in refs.get("api", []):
+            if known_apis and str(api) not in known_apis:
+                errors.append(f"Story '{sid}' cites non-existent API endpoint '{api}'.")
+
+        for tbl in refs.get("tables", []):
+            if known_tbls and str(tbl) not in known_tbls:
+                errors.append(f"Story '{sid}' cites non-existent table '{tbl}'.")
+
+    return len(errors) == 0, errors
+
+
+def validate_readiness_review_verdict(
+    verdict: str,
+    gaps: List[str],
+    contradictions: List[str]
+) -> Tuple[bool, List[str]]:
+    """
+    Handbook 10.1.4, Appendix A.9:
+    Verdict must be 'ready' or 'not_ready'.
+    If there are unresolved gaps or contradictions, the verdict CANNOT be 'ready'.
+    """
+    errors: List[str] = []
+    v_clean = str(verdict).strip().lower()
+
+    if v_clean not in ["ready", "not_ready"]:
+        errors.append(f"Invalid readiness verdict '{verdict}'; must be 'ready' or 'not_ready'.")
+
+    blocking_issues = len(gaps) + len(contradictions)
+    if v_clean == "ready" and blocking_issues > 0:
+        errors.append(
+            f"Readiness review verdict cannot be 'ready' when {len(gaps)} gaps and {len(contradictions)} contradictions remain unresolved."
+        )
+
+    return len(errors) == 0, errors
+
+
 

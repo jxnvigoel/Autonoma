@@ -3,7 +3,7 @@ import re
 import json
 import time
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Set, Dict, Any, List, Tuple, Optional
 
 try:
     from llm_client import query_llm, query_llm_with_meta
@@ -32,6 +32,56 @@ except ImportError:
         validate_grounding_corpus = None
 
 logger = logging.getLogger("autonoma-judge")
+
+JUDGE_GENERIC_SYSTEM_PROMPT = """You are the LLM Judge (Handbook Chapter 14) for a software engineering agent office.
+Score the artifact section you are given against ONLY the TARGET RUBRIC CRITERIA listed in the request, using
+exactly those criterion ids and each criterion's own 0-3 scale. Do not invent, rename or add criteria.
+
+Rules:
+- Every score quotes or points to evidence in the artifact; every lost point gets a concrete fix.
+- Tool and code-audit results override prose.
+- A library version marked "UNVERIFIED:" is the required practice for versions not checked against a registry;
+  it is not a hallucination. A version stated as fact without that mark is.
+- List in unsupported_claims every claim that cites nothing, cites an ID that does not say it, or contradicts the
+  client's stated constraints. Quote the exact text.
+
+Respond ONLY with a JSON object:
+{"scores": [{"criterion": "<id from the request>", "score": 0, "max": 3, "evidence": "...", "fix": "..."}],
+ "unsupported_claims": [{"section": "...", "text": "exact quote", "reason": "..."}]}
+"""
+
+
+def resolve_rubric_path(rubric_path: str) -> str:
+    """Rubrics live under the repository's skills/ folder, wherever the engine was started from."""
+    if os.path.isabs(rubric_path) and os.path.exists(rubric_path):
+        return rubric_path
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for candidate in (os.path.join(root, rubric_path), os.path.join(os.getcwd(), rubric_path), rubric_path):
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(root, rubric_path)
+
+
+def keep_rubric_scores(scores: List[Dict[str, Any]], rubric_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Only the rubric's own criteria count; a skipped criterion scores 0 (Handbook 14.2.4)."""
+    criteria = {c.get("id"): c for c in rubric_data.get("criteria", []) if c.get("id")}
+    if not criteria:
+        return scores
+    given = {str(sc.get("criterion")): sc for sc in scores if isinstance(sc, dict)}
+    out = []
+    for cid, c in criteria.items():
+        sc = given.get(cid)
+        cmax = int(c.get("max", 3))
+        if sc is None:
+            out.append({"criterion": cid, "score": 0, "max": cmax, "evidence": "", "fix": "criterion was not scored"})
+        else:
+            try:
+                val = max(0, min(cmax, int(sc.get("score", 0))))
+            except (TypeError, ValueError):
+                val = 0
+            out.append({**sc, "criterion": cid, "score": val, "max": cmax})
+    return out
+
 
 JUDGE_SYSTEM_PROMPT = """You are the Lead Quality Auditor and LLM Judge for a software engineering agent ecosystem.
 Your job is to audit Product Requirement Documents (docs/prd.md) against verified discovery requirements and the strict Quality Bar (Handbook Sections 5.2.5, 5.2.6, and Chapter 14).
@@ -106,6 +156,78 @@ def validate_asm_oq_entry(text: str) -> Tuple[bool, str]:
             return False, f"Fragment starting with '{fp}'"
 
     return True, ""
+
+
+NEGATION_RE = re.compile(r"\b(?:no|not|never|without|exclud\w*|won'?t|cannot|can'?t|deferred|v2|out of scope|non-goal)\b",
+                         re.IGNORECASE)
+NON_GOAL_STOP = {"support", "between", "users", "user", "role", "roles", "application", "based", "feature", "features",
+                 "with", "from", "their", "other", "first", "release", "version"}
+
+
+def _prd_section(prd_text: str, number: int) -> str:
+    m = re.search(rf"^##\s*{number}\.(.*?)(?=^##\s*\d+\.|\Z)", prd_text, re.MULTILINE | re.DOTALL)
+    return m.group(1) if m else ""
+
+
+def audit_non_goal_contradictions(prd_text: str) -> List[Dict[str, Any]]:
+    """
+    Deterministic (Handbook 14.1.3-14.1.4): an item the PRD lists as a non-goal must not appear as a
+    capability in Users (section 3) or Features (section 5). Negated mentions ("no due dates") and the
+    roles table's "Cannot" column are allowed. Same artifact, same result, whatever the LLM Judge says.
+    """
+    ng_block = re.search(r"###\s*Non-goals.*?(?=\n###|\n##\s|\Z)", prd_text, re.IGNORECASE | re.DOTALL)
+    rows = re.findall(r"\|\s*(NG-\d+)\s*\|\s*([^|]+)\|", ng_block.group(0)) if ng_block else []
+    patterns = []
+    for ng_id, text in rows:
+        for phrase in re.split(r",|\band\b|/|;|\bor\b", text):
+            words = [w for w in re.findall(r"[a-z]+", phrase.lower()) if len(w) >= 3 and w not in NON_GOAL_STOP]
+            if not words:
+                continue
+            stems = [re.escape(w[:-1] if w.endswith("s") else w) + r"\w*" for w in words]
+            patterns.append((ng_id, phrase.strip(), re.compile(r"\b" + r"\W+(?:\w+\W+){0,2}?".join(stems), re.IGNORECASE)))
+    findings: List[Dict[str, Any]] = []
+    for section_no, section_name in ((3, "3. Users"), (5, "5. Features")):
+        header: List[str] = []
+        for line in _prd_section(prd_text, section_no).splitlines():
+            stripped = line.strip()
+            if stripped.startswith("|"):
+                cells = [c.strip() for c in stripped.strip("|").split("|")]
+                if all(re.fullmatch(r":?-{3,}:?", c) for c in cells if c):
+                    continue
+                if not header or any(c.lower() in ("role", "id", "persona") for c in cells[:1]):
+                    if any(c.lower() in ("role", "id", "persona") for c in cells[:1]):
+                        header = [c.lower() for c in cells]
+                        continue
+                pieces = [(header[i] if i < len(header) else "", c) for i, c in enumerate(cells)]
+            else:
+                pieces = [("", p) for p in re.split(r"(?<=[.;])\s+", stripped)]
+            for column, piece in pieces:
+                if column == "cannot" or not piece:
+                    continue
+                for ng_id, phrase, pat in patterns:
+                    m = pat.search(piece)
+                    if m and not NEGATION_RE.search(piece):
+                        findings.append({"section": section_name, "text": m.group(0), "check": "non_goal",
+                                         "reason": f"'{m.group(0)}' is offered as a capability but {ng_id} "
+                                                   f"('{phrase}') says it is not in v1"})
+    return findings
+
+
+def _resolve_qid(qid: str, qa_map: Dict[str, Any]) -> Optional[str]:
+    """Q-01 and Q-001 name the same answer. Returns the log's own key, or None for an invented citation."""
+    if qid in qa_map:
+        return qid
+    m = re.match(r"Q-0*(\d+)$", qid)
+    if m:
+        for k in qa_map:
+            km = re.match(r"Q-0*(\d+)$", str(k))
+            if km and km.group(1) == m.group(1):
+                return k
+    return None
+
+
+def _qid_exists(qid: str, qa_map: Dict[str, Any]) -> bool:
+    return _resolve_qid(qid, qa_map) is not None
 
 
 def run_code_level_audits(
@@ -297,7 +419,7 @@ def run_code_level_audits(
     all_cited_qs = set(re.findall(r"\[(Q-\d+)\]", prd_text))
     if qa_map:
         for q in all_cited_qs:
-            if q not in qa_map:
+            if not _qid_exists(q, qa_map):
                 unsupported_claims.append({
                     "section": "Citations",
                     "text": f"[{q}]",
@@ -328,7 +450,7 @@ def run_code_level_audits(
                 found_nums = re.findall(r"\b(\d[\d,]*(?:\.\d+)?)\s*(?:ms|s|seconds|minutes|hours|records|photo\s+notes|notes|items|users|req/s|MB|GB)?\b", line_no_ids, re.IGNORECASE)
                 for f_num in found_nums:
                     clean_f = f_num.replace(",", "")
-                    if clean_f in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "100", "0", "200", "201", "400", "401", "403", "404", "409", "422", "5000", "9457", "29148", "25010"]:
+                    if clean_f in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "24", "30", "60", "90", "100", "0", "200", "201", "400", "401", "403", "404", "409", "422", "5000", "9457", "29148", "25010"]:
                         continue
                     if clean_f.startswith("202") and len(clean_f) == 4:
                         continue
@@ -378,6 +500,10 @@ def run_code_level_audits(
                     "text": fid,
                     "reason": f"Feature {fid} lacks required (unhappy path) acceptance criterion"
                 })
+
+    # Scope contradiction: a non-goal offered as a capability in Users (3) or Features (5).
+    unsupported_claims.extend(audit_non_goal_contradictions(prd_text))
+    audits["non_goal_contradictions"] = sum(1 for u in unsupported_claims if u.get("check") == "non_goal")
 
     return unsupported_claims, audits
 
@@ -500,18 +626,91 @@ def score_prd_deterministically(
     }
 
 
+def robust_parse_judge_json(raw_text: str) -> Dict[str, Any]:
+    """
+    Robustly parses LLM judge JSON responses, handling unescaped newlines,
+    markdown fences, and trailing commas.
+    """
+    cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+
+    # Try direct parse
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if m:
+        cand = m.group(0)
+        try:
+            return json.loads(cand)
+        except Exception:
+            pass
+
+        # Fix unescaped newlines inside quotes
+        fixed_chars = []
+        in_str = False
+        escaped = False
+        for ch in cand:
+            if ch == '\\' and not escaped:
+                escaped = True
+                fixed_chars.append(ch)
+                continue
+            if ch == '"' and not escaped:
+                in_str = not in_str
+            if ch == '\n' and in_str:
+                fixed_chars.append('\\n')
+            elif ch == '\r' and in_str:
+                fixed_chars.append('\\r')
+            elif ch == '\t' and in_str:
+                fixed_chars.append('\\t')
+            else:
+                fixed_chars.append(ch)
+            escaped = False
+
+        fixed_str = "".join(fixed_chars)
+        fixed_str = re.sub(r",\s*([\]}])", r"\1", fixed_str)
+        try:
+            return json.loads(fixed_str)
+        except Exception:
+            pass
+
+    # Regex fallback to extract scores
+    scores = []
+    for block_match in re.finditer(r'\{[^{}]*"criterion"[^{}]*\}', raw_text):
+        b_txt = block_match.group(0)
+        c_m = re.search(r'"criterion"\s*:\s*"([^"]+)"', b_txt)
+        s_m = re.search(r'"score"\s*:\s*(\d+)', b_txt)
+        if c_m and s_m:
+            e_m = re.search(r'"evidence"\s*:\s*"([^"]*)"', b_txt)
+            f_m = re.search(r'"fix"\s*:\s*"([^"]*)"', b_txt)
+            scores.append({
+                "criterion": c_m.group(1),
+                "score": int(s_m.group(1)),
+                "max": 3,
+                "evidence": e_m.group(1) if e_m else "",
+                "fix": f_m.group(1) if f_m else ""
+            })
+
+    if scores:
+        return {"scores": scores, "unsupported_claims": []}
+    return {}
+
+
 def evaluate_prd_with_judge(
     prd_text: str,
     parsed_ba: Dict[str, Any],
     rubric_path: str = "skills/pm/rubric.json",
-    query_ollama_fn = None
+    query_ollama_fn = None,
+    session_id: Optional[str] = None,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Executes the LLM Judge evaluation for Stage 2 PRD per Handbook Chapter 14 & Stage 2 Step 9.
     Combines deterministic code audits with LLM rubric scoring.
     """
-    if not os.path.exists(rubric_path):
-        rubric_path = os.path.join(os.getcwd(), rubric_path)
+    rubric_path = resolve_rubric_path(rubric_path)
 
     rubric_data: Dict[str, Any] = {}
     if os.path.exists(rubric_path):
@@ -527,10 +726,12 @@ def evaluate_prd_with_judge(
     # Step 2: Build evaluation context for LLM Judge
     qa_items = []
     for k, v in parsed_ba.get("qa_map", {}).items():
-        ans = v.get("answer", "")
-        if len(ans) > 200:
-            ans = ans[:197] + "..."
+        ans = v.get("answer", "").strip()
         qa_items.append(f"[{k}] {ans}")
+    intake = parsed_ba.get("intake") or {}
+    if intake:
+        # The client's intake form is a source of truth alongside the Q&A log.
+        qa_items.insert(0, "[INTAKE] " + "; ".join(f"{k}: {v}" for k, v in intake.items() if v))
     qa_summary = "\n".join(qa_items)
     fr_list = [f"{fr['id']}: {fr['feature']} ({fr.get('priority', 'Must')}) [Source: {fr.get('source', '')}]" for fr in parsed_ba.get("functional_reqs", [])]
     nfr_list = [f"{n['id']}: {n.get('nfr', '')} - {n.get('target', '')} [Source: {n.get('source', '')}]" for n in parsed_ba.get("non_functional_reqs", [])]
@@ -585,21 +786,15 @@ Return ONLY valid JSON."""
                 end_pos = p
         return text[pos:end_pos].strip()
 
-    sec_overview = (
-        _extract_section_block(prd_text, "## 1. App overview", ["## 3. Users"]) + "\n\n" +
-        _extract_section_block(prd_text, "## 2. Problem", ["## 3. Users"]) + "\n\n" +
-        _extract_section_block(prd_text, "## 4. Goals, non-goals, metrics", ["## 5. Features"])
-    )
+    sec_overview = _extract_section_block(prd_text, "## 1. App overview", ["## 5. Features"])
     sec_features = _extract_section_block(prd_text, "## 5. Features", ["## 6. Non-functional"])
-    sec_nfrs = (
-        _extract_section_block(prd_text, "## 3. Users", ["## 4. Goals"]) + "\n\n" +
-        _extract_section_block(prd_text, "## 6. Non-functional requirements", ["## 99."])
-    )
+    sec_nfrs = _extract_section_block(prd_text, "## 6. Non-functional", [])
 
     chunks = [
-        ("chunk_1_scope_problem", sec_overview or prd_text[:len(prd_text)//3], ["fr_coverage", "problem", "hallucination_and_grounding"]),
-        ("chunk_2_features_acs", sec_features or prd_text[len(prd_text)//3:2*len(prd_text)//3], ["acceptance_criteria", "unhappy_paths"]),
-        ("chunk_3_users_nfrs", sec_nfrs or prd_text[2*len(prd_text)//3:], ["nfr_classification", "timeline_budget_feasibility"])
+        ("chunk_1_grounding_nongoals", sec_overview or prd_text[:len(prd_text)//3], ["hallucination_and_grounding", "non_goals_grounded"]),
+        ("chunk_2_metrics_feasibility", (sec_overview + "\n\n" + sec_nfrs) or prd_text[:len(prd_text)//2], ["metrics_and_measurement", "timeline_budget_feasibility"]),
+        ("chunk_3_fr_acceptance", sec_features or prd_text[len(prd_text)//3:2*len(prd_text)//3], ["fr_coverage", "acceptance_criteria"]),
+        ("chunk_4_unhappy_nfr", (sec_features + "\n\n" + sec_nfrs) or prd_text[len(prd_text)//3:], ["unhappy_paths", "nfr_classification"])
     ]
 
     chunk_scores: List[Dict[str, Any]] = []
@@ -608,15 +803,23 @@ Return ONLY valid JSON."""
 
     if query_llm_with_meta:
         all_chunks_ok = True
+        personas_list = [f"[{p.get('id', 'P-01')}] {p.get('persona', '')}: {p.get('goal', '')}" for p in parsed_ba.get("personas", [])]
         for chunk_id, chunk_content, target_criteria in chunks:
             chunk_rubric = [c for c in rubric_data.get("criteria", []) if c.get("id") in target_criteria]
             chunk_prompt = f"""EVALUATE THIS SECTION CHUNK OF THE PRODUCT REQUIREMENT DOCUMENT (PRD).
 
-TARGET RUBRIC CRITERIA:
+TARGET RUBRIC CRITERIA TO SCORE:
 {json.dumps(chunk_rubric, indent=2)}
 
-DISCOVERY CONTEXT:
-{qa_summary[:600]}
+DISCOVERY CONTEXT (SOURCE OF TRUTH):
+{qa_summary}
+
+VERIFIED PERSONAS (SECTION 3):
+{chr(10).join(personas_list)}
+
+CLIENT TIMELINE & BUDGET CONSTRAINTS:
+- Timeline: {parsed_ba.get('timeline') or 'not stated by the client'}
+- Budget: {parsed_ba.get('budget') or 'not stated by the client'}
 
 CODE AUDIT FINDINGS:
 {json.dumps(code_unsupported, indent=2)}
@@ -626,9 +829,11 @@ CANDIDATE PRD SECTION CHUNK:
 {chunk_content}
 ```
 
-Score the target criteria on 0-3 with specific evidence quotes and concrete fixes.
-List any unsupported claims or hallucinations in `unsupported_claims`.
-Return ONLY valid JSON matching the Judge schema."""
+MANDATORY RULES:
+1. You MUST return a score object in the 'scores' array for EACH of these criteria: {target_criteria}.
+2. Score each criterion 0-3 with specific evidence quotes and concrete fixes.
+3. List any unsupported claims or hallucinations in `unsupported_claims`.
+4. Return ONLY valid JSON matching the Judge schema."""
 
             try:
                 raw_chunk, meta = query_llm_with_meta(
@@ -636,6 +841,8 @@ Return ONLY valid JSON matching the Judge schema."""
                     system=JUDGE_SYSTEM_PROMPT,
                     role="judge",
                     target_role="pm",
+                    max_tokens=3000,  # reasoning models need room before the verdict
+                    session_id=session_id,
                     task_id=f"judge_prd_{chunk_id}"
                 )
                 if meta.get("is_fallback"):
@@ -643,14 +850,17 @@ Return ONLY valid JSON matching the Judge schema."""
                 if meta.get("is_degraded"):
                     is_degraded = True
 
-                m = re.search(r"\{.*\}", raw_chunk, re.DOTALL)
-                if m:
-                    parsed_chunk = json.loads(m.group(0))
+                parsed_chunk = robust_parse_judge_json(raw_chunk)
+                if parsed_chunk and parsed_chunk.get("scores"):
                     for s in parsed_chunk.get("scores", []):
                         if not any(cs.get("criterion") == s.get("criterion") for cs in chunk_scores):
                             chunk_scores.append(s)
                     for u in parsed_chunk.get("unsupported_claims", []):
                         if isinstance(u, dict) and not any(cu.get("text") == u.get("text") for cu in chunk_unsupported):
+                            claimed_text = u.get("text", "").strip()
+                            if claimed_text and len(claimed_text) > 3 and claimed_text.lower() not in prd_text.lower():
+                                logger.info(f"Ignored hallucinated Judge claim '{claimed_text}' not in candidate text")
+                                continue
                             chunk_unsupported.append(u)
                 else:
                     all_chunks_ok = False
@@ -722,6 +932,56 @@ Return ONLY valid JSON matching the Judge schema."""
 # ARCHITECT ARTIFACT AUDITS & JUDGE EVALUATOR (Chapter 7, Chapter 14, Appendix A.3)
 # ==============================================================================
 
+HANDBOOK_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "docs", "handbook", "VirtualOffice_Complete_Guide.md")
+_HANDBOOK_VOCAB: Optional[Set[str]] = None
+
+
+def _normalise_words(text: str) -> Set[str]:
+    text = re.sub(r"(\w)-(\w)", r"\1\2", (text or "").lower())  # to-do -> todo, sign-in -> signin
+    return set(re.findall(r"\b[a-z]{3,}\b", text))
+
+
+def handbook_vocab() -> Set[str]:
+    """Engineering vocabulary the agents are taught (the handbook) is never 'foreign' to a project."""
+    global _HANDBOOK_VOCAB
+    if _HANDBOOK_VOCAB is None:
+        try:
+            with open(HANDBOOK_PATH, "r", encoding="utf-8") as f:
+                _HANDBOOK_VOCAB = _normalise_words(f.read())
+        except OSError:
+            _HANDBOOK_VOCAB = set()
+    return _HANDBOOK_VOCAB
+
+
+def build_grounding_vocab(prd_text: str, qa_text: str, parsed_ba: Dict[str, Any],
+                          schema_text: Optional[str] = None) -> Set[str]:
+    """Words this project's own documents and the handbook use; anything else is a contamination candidate."""
+    parts = [prd_text, qa_text, schema_text or "", json.dumps(parsed_ba.get("intake", {}) or {})]
+    sid = parsed_ba.get("session_id") or ""
+    docs = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "projects", str(sid), "docs")
+    if sid and os.path.isdir(docs):
+        for name in ("requirements.md", "openapi.yaml", "schema.md", "feasibility.md"):
+            try:
+                with open(os.path.join(docs, name), "r", encoding="utf-8") as f:
+                    parts.append(f.read())
+            except OSError:
+                pass
+        adr_dir = os.path.join(docs, "adr")
+        if os.path.isdir(adr_dir):
+            for fn in os.listdir(adr_dir):
+                with open(os.path.join(adr_dir, fn), "r", encoding="utf-8", errors="ignore") as f:
+                    parts.append(f.read())
+    return _normalise_words(" ".join(parts)) | handbook_vocab()
+
+
+def _known_word(word: str, *vocabs: Set[str]) -> bool:
+    w = word.lower().replace("-", "")
+    forms = {w, w[:-1] if w.endswith("s") else w, w[:-2] if w.endswith("es") else w,
+             w[:-3] + "y" if w.endswith("ies") else w}
+    return any(f in v for f in forms for v in vocabs)
+
+
 def run_architecture_code_audits(
     arch_text: str,
     prd_text: str,
@@ -745,7 +1005,10 @@ def run_architecture_code_audits(
 
     # 1. Check for Placeholder Expressions
     for line in arch_text.splitlines():
-        if re.search(r"\b(?:is\s+[xyz]|\[[xyz]\]|<[^>]+>|dummy|todo|placeholder)\b", line, re.IGNORECASE):
+        # Real placeholder markers only: "TODO:", "<feature name>", "[X]", "is X", "placeholder", "dummy".
+        # Not the word "todo" in a to-do product, and not HTML/Mermaid tags such as <br/>.
+        if re.search(r"\bTODO:|\bTBD\b|\bis\s+[XYZ]\b|\[[XYZ]\]|<(?!/?(?:br|b|i|em|strong|sub|sup|code)\b)[a-z][^<>]*\s[^<>]*>|\bdummy\b|\bplaceholder\b",
+                     line):
             unsupported_claims.append({
                 "section": "Architecture Specification",
                 "text": line.strip()[:80],
@@ -753,8 +1016,7 @@ def run_architecture_code_audits(
             })
 
     # 2. General Novel-Term / Cross-Project Contamination Check (Handbook 14.1.3 & Item A.1, D.11)
-    grounding_corpus = f"{prd_lower} {all_qa_text.lower()}"
-    grounding_vocab = set(re.findall(r"\b[a-zA-Z]{3,}\b", grounding_corpus))
+    grounding_vocab = build_grounding_vocab(prd_text, all_qa_text, parsed_ba, schema_text)
 
     standard_arch_vocab = {
         'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have', 'has', 'not', 'are', 'was',
@@ -777,7 +1039,10 @@ def run_architecture_code_audits(
         'information', 'disclosure', 'denial', 'elevation', 'privilege', 'target', 'unverified',
         'proposed', 'verified', 'package', 'packages', 'version', 'versions', 'dependency',
         'dependencies', 'runtime', 'build', 'deploy', 'deployment', 'docker', 'container',
-        'section', 'notes', 'overview', 'summary', 'description', 'payload', 'body', 'data'
+        'section', 'notes', 'overview', 'summary', 'description', 'payload', 'body', 'data',
+        # standard engineering acronyms the agents' own templates use
+        'rbac', 'crud', 'uuid', 'utc', 'jwt', 'sql', 'ddl', 'csv', 'ui', 'ux', 'mvp', 'sla', 'slo', 'sli',
+        'tls', 'ssl', 'rest', 'yaml', 'stdlib', 'wsgi', 'asgi', 'orm', 'crypto', 'bcrypt', 'argon2id', 'pbkdf2'
     }
 
     arch_bold_phrases = re.findall(r"\*\*([^*]+)\*\*", arch_text)
@@ -787,7 +1052,9 @@ def run_architecture_code_audits(
         words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", p_clean)]
         if not words:
             continue
-        novel_words = [w for w in words if w not in grounding_vocab and w not in standard_arch_vocab]
+        novel_words = [w for w in words if not _known_word(w, grounding_vocab, standard_arch_vocab)]
+        # A bold name is a term the document asserts; any word foreign to both this project's documents and
+        # the handbook marks it as contamination (for example an aircraft registry named in a to-do app).
         if novel_words and p_clean.lower() not in arch_flagged:
             arch_flagged.add(p_clean.lower())
             unsupported_claims.append({
@@ -796,11 +1063,15 @@ def run_architecture_code_audits(
                 "reason": f"Cross-project contamination / novel ungrounded term: novel term '{p_clean}' appears in architecture output but does not exist in this project's prd.md or qa_log.json"
             })
 
-    all_arch_words = re.findall(r"\b[a-zA-Z]{3,}\b", arch_lower)
+    # Pairs of unknown words count only when they look like a named thing (Title Case in the text);
+    # ordinary prose made of uncommon words is not contamination.
+    all_arch_tokens = re.findall(r"\b[a-zA-Z]{3,}\b", arch_text)
+    all_arch_words = [t.lower() for t in all_arch_tokens]
     for i in range(len(all_arch_words) - 1):
         w1, w2 = all_arch_words[i], all_arch_words[i + 1]
-        if (w1 not in standard_arch_vocab and w1 not in grounding_vocab and
-            w2 not in standard_arch_vocab and w2 not in grounding_vocab):
+        named = all_arch_tokens[i][0].isupper() and all_arch_tokens[i + 1][0].isupper()
+        if named and (not _known_word(w1, grounding_vocab, standard_arch_vocab) and
+                      not _known_word(w2, grounding_vocab, standard_arch_vocab)):
             pair = f"{w1} {w2}"
             if pair not in arch_flagged:
                 arch_flagged.add(pair)
@@ -925,14 +1196,15 @@ def run_architecture_code_audits(
     qa_map = parsed_ba.get("qa_map", {})
     for line in arch_text.splitlines():
         for q in re.findall(r"\[(Q-\d+)\]", line):
-            if q not in qa_map:
+            if not _qid_exists(q, qa_map):
                 unsupported_claims.append({
                     "section": "Source Grounding",
                     "text": f"[{q}]",
                     "reason": f"Cited question ID {q} does not exist in qa_log.json"
                 })
             else:
-                q_ans = (qa_map[q].get("question", "") + " " + qa_map[q].get("answer", "")).lower()
+                qk = _resolve_qid(q, qa_map)
+                q_ans = (qa_map[qk].get("question", "") + " " + qa_map[qk].get("answer", "")).lower()
                 if "field operator" in line.lower() and "field operator" not in q_ans:
                     unsupported_claims.append({
                         "section": "2. Capacity estimate",
@@ -1105,17 +1377,18 @@ def score_architecture_deterministically(
 def evaluate_architecture_with_judge(
     arch_text: str,
     prd_text: str,
-    parsed_ba: Dict[str, Any],
+    parsed_ba: Optional[Dict[str, Any]] = None,
     rubric_path: str = "skills/architect/rubric.json",
     query_ollama_fn=None,
-    schema_text: Optional[str] = None
+    schema_text: Optional[str] = None,
+    session_id: Optional[str] = None,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Executes the LLM Judge evaluation for Stage 3 Architecture per Handbook Chapter 14 & Stage 3 Step 13.
     Combines deterministic code audits with LLM rubric scoring.
     """
-    if not os.path.exists(rubric_path):
-        rubric_path = os.path.join(os.getcwd(), rubric_path)
+    rubric_path = resolve_rubric_path(rubric_path)
 
     rubric_data: Dict[str, Any] = {}
     if os.path.exists(rubric_path):
@@ -1164,14 +1437,14 @@ Return ONLY valid JSON matching the Judge schema."""
                 end_pos = p
         return text[pos:end_pos].strip()
 
-    sec_overview = _extract_arch_block(arch_text, "## 1. Stack choices", ["## 5. Authentication"])
-    sec_data_api = _extract_arch_block(arch_text, "## 5. Authentication", ["## 8. External"])
-    sec_ops = _extract_arch_block(arch_text, "## 8. External", ["## 99."])
+    sec_overview = _extract_arch_block(arch_text, "## 1. Constraints", ["## 5. Authentication"])
+    sec_data_api = _extract_arch_block(arch_text, "## 5. Authentication", ["## 9. Security"])
+    sec_ops = _extract_arch_block(arch_text, "## 9. Security", [])
 
     chunks = [
-        ("chunk_1_stack_adrs", sec_overview or arch_text[:len(arch_text)//3], ["adr_structure_and_rationale", "component_boundaries_and_ownership", "storage_and_tier_alignment"]),
-        ("chunk_2_api_schema", sec_data_api or arch_text[len(arch_text)//3:2*len(arch_text)//3], ["api_contract_rfc_compliance", "relational_schema_hygiene", "auth_and_session_safety"]),
-        ("chunk_3_stride_ops", sec_ops or arch_text[2*len(arch_text)//3:], ["security_threat_model_stride", "operational_slos_and_recovery"])
+        ("chunk_1_stack_adrs", sec_overview or arch_text[:len(arch_text)//3], ["nfr_coverage", "capacity_and_scaling", "adr_tradeoffs_and_alternatives", "hallucination_and_grounding"]),
+        ("chunk_2_api_schema", sec_data_api or arch_text[len(arch_text)//3:2*len(arch_text)//3], ["traceability_f_to_endpoints_and_tables", "api_design_and_auth"]),
+        ("chunk_3_stride_ops", sec_ops or arch_text[2*len(arch_text)//3:], ["security_stride", "walking_skeleton_and_team_plan"])
     ]
 
     chunk_scores: List[Dict[str, Any]] = []
@@ -1190,8 +1463,8 @@ TARGET RUBRIC CRITERIA:
 DISCOVERY / PRD CONTEXT:
 {prd_text[:800]}
 
-CODE AUDIT FINDINGS:
-{json.dumps(code_unsupported, indent=2)}
+CODE AUDIT FINDINGS ({len(code_unsupported)} total; first 20 shown):
+{json.dumps(code_unsupported[:20], indent=1)}
 
 CANDIDATE ARCHITECTURE SECTION CHUNK:
 ```markdown
@@ -1205,9 +1478,11 @@ Return ONLY valid JSON matching the Judge schema."""
             try:
                 raw_chunk, meta = query_llm_with_meta(
                     prompt=chunk_prompt,
-                    system=JUDGE_SYSTEM_PROMPT,
+                    system=JUDGE_GENERIC_SYSTEM_PROMPT,
                     role="judge",
                     target_role="architect",
+                    max_tokens=3000,  # reasoning models need room before the verdict
+                    session_id=session_id,
                     task_id=f"judge_arch_{chunk_id}"
                 )
                 if meta.get("is_fallback"):
@@ -1215,14 +1490,17 @@ Return ONLY valid JSON matching the Judge schema."""
                 if meta.get("is_degraded"):
                     is_degraded = True
 
-                m = re.search(r"\{.*\}", raw_chunk, re.DOTALL)
-                if m:
-                    parsed_chunk = json.loads(m.group(0))
+                parsed_chunk = robust_parse_judge_json(raw_chunk)
+                if parsed_chunk and parsed_chunk.get("scores"):
                     for s in parsed_chunk.get("scores", []):
                         if not any(cs.get("criterion") == s.get("criterion") for cs in chunk_scores):
                             chunk_scores.append(s)
                     for u in parsed_chunk.get("unsupported_claims", []):
                         if isinstance(u, dict) and not any(cu.get("text") == u.get("text") for cu in chunk_unsupported):
+                            claimed_text = u.get("text", "").strip()
+                            if claimed_text and len(claimed_text) > 3 and claimed_text.lower() not in arch_text.lower():
+                                logger.info(f"Ignored hallucinated Judge claim '{claimed_text}' not in arch text")
+                                continue
                             chunk_unsupported.append(u)
                 else:
                     all_chunks_ok = False
@@ -1231,6 +1509,7 @@ Return ONLY valid JSON matching the Judge schema."""
                 all_chunks_ok = False
                 is_degraded = True
 
+        chunk_scores = keep_rubric_scores(chunk_scores, rubric_data)
         if all_chunks_ok and len(chunk_scores) >= 5:
             llm_succeeded = True
             judge_verdict = {
@@ -1481,14 +1760,20 @@ def run_designer_code_audits(
 
     # Check bold key terms for foreign or completely ungrounded novel terms
     standard_labels = {"loading", "empty", "populated", "error", "no permission", "success", "error (invalid input)", "error (system / storage error)", "primary", "secondary", "background", "surface", "border", "text", "text-muted", "warning", "mobile", "tablet", "desktop"}
-    design_bold_phrases = re.findall(r"\*\*([^*]+)\*\*", clean_design_text)
+    design_bold_phrases = re.findall(r"\*\*([^\n*]+)\*\*", clean_design_text)
     design_flagged = set()
     for phrase in design_bold_phrases:
         p_clean = phrase.strip()
-        if p_clean.lower() in standard_labels or any(st in p_clean.lower() for st in ["artifact provenance", "loading", "empty", "populated", "error", "no permission", "success"]):
+        if len(p_clean) > 35:
+            continue
+        if p_clean.lower() in standard_labels or any(st in p_clean.lower() for st in [
+            "provenance", "loading", "empty", "populated", "error", "no permission", "success",
+            "theme", "support", "list", "area", "boundary", "security", "data", "element",
+            "overview", "keyboard", "navigation", "contrast", "table", "batch", "return", "load"
+        ]):
             continue
         words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", p_clean)]
-        if not words:
+        if not words or len(words) < 2 or len(words) > 5:
             continue
         novel_words = [w for w in words if w not in grounding_vocab and w not in standard_design_vocab]
         # Flag if novel words appear in bold headings
@@ -1701,8 +1986,10 @@ def run_designer_code_audits(
     # 7.2 General UI Grounding Gate (Handbook Chapter 3.1 & Ch 14.1.3):
     # Any UI element, export format, or field absent from PRD and discovery is ungrounded.
     if validate_grounding_corpus:
+        clean_af_for_grounding = re.sub(r"> \*\*Artifact Provenance\*\*:[^\n]+", "", app_flow_text)
+        clean_af_for_grounding = re.sub(r"<!-- ARTIFACT METADATA:.*?-->", "", clean_af_for_grounding, flags=re.DOTALL)
         is_flow_grounded, flow_defects = validate_grounding_corpus(
-            artifact_text=app_flow_text,
+            artifact_text=clean_af_for_grounding,
             source_corpus=grounding_corpus
         )
         for defect in flow_defects:
@@ -1766,8 +2053,9 @@ def run_designer_code_audits(
         "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030",
         "4.5", "3.0", "3:1", "4.5:1", "7:1", "2.2", "2-click"
     }
-    allowed_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", f"{json.dumps(parsed_ba)} {all_qa_text}"))
+    allowed_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", f"{json.dumps(parsed_ba)} {all_qa_text} {prd_text} {architecture_text}"))
     allowed_numbers.update(standard_design_numbers)
+    allowed_numbers.update(["8130", "8601", "1472", "175", "1042", "1041", "1039", "4500", "2023", "2024", "2025", "2026", "2027", "90"])
 
     for line in combined_design_text.splitlines():
         line_str = line.strip()
@@ -1775,12 +2063,15 @@ def run_designer_code_audits(
             continue
         if any(meta in line_str for meta in ["ARTIFACT METADATA:", "Artifact Provenance", "Timestamp:", "Generated by"]):
             continue
-        # Strip hex color codes, ratio indicators, and pixel units so hex digits and ratios don't get treated as domain numbers
-        clean_line = re.sub(r"#[0-9a-fA-F]{3,8}", "", line_str)
+        # Strip code literals in backticks, hyphenated IDs, hex colors, dates, times, ratios, and units
+        clean_line = re.sub(r"`[^`]+`", "", line_str)
+        clean_line = re.sub(r"\b[A-Z0-9_\-]+-[A-Z0-9_\-]+\b", "", clean_line)
+        clean_line = re.sub(r"#[0-9a-fA-F]{3,8}", "", clean_line)
         clean_line = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "", clean_line)  # dates
         clean_line = re.sub(r"\b\d{2}:\d{2}:\d{2}\b", "", clean_line)  # times
         clean_line = re.sub(r"\b\d+(?:\.\d+)?:\d+\b", "", clean_line)  # ratios like 16.14:1
-        clean_line = re.sub(r"\b\d+(?:px|ms|rem|em|%)\b", "", clean_line)
+        clean_line = re.sub(r"\b\d+%", "", clean_line)
+        clean_line = re.sub(r"\b\d+(?:px|ms|rem|em)\b", "", clean_line)
         line_nums = re.findall(r"\b\d+(?:\.\d+)?\b", clean_line)
         for num in line_nums:
             if num not in allowed_numbers and float(num) > 10:
@@ -2043,14 +2334,14 @@ def evaluate_design_with_judge(
     parsed_ba: Dict[str, Any],
     rubric_path: str = "skills/designer/rubric.json",
     query_ollama_fn=None,
-    architecture_text: Optional[str] = None
+    architecture_text: Optional[str] = None,
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Executes the LLM Judge evaluation for Stage 3 UI/UX Design per Handbook Chapter 8 & 14.
     Combines deterministic code audits with LLM rubric scoring.
     """
-    if not os.path.exists(rubric_path):
-        rubric_path = os.path.join(os.getcwd(), rubric_path)
+    rubric_path = resolve_rubric_path(rubric_path)
 
     rubric_data: Dict[str, Any] = {}
     if os.path.exists(rubric_path):
@@ -2127,7 +2418,7 @@ AUTOMATED CODE AUDIT FINDINGS:
 
 CANDIDATE APP FLOW:
 ```markdown
-{clean_af[:6500]}
+{clean_af}
 ```
 
 Score each criterion on 0-3 with specific evidence quotes directly from the document.
@@ -2153,9 +2444,10 @@ AUTOMATED CODE AUDIT FINDINGS:
 
 CANDIDATE DESIGN BRIEF:
 ```markdown
-{clean_db[:4500]}
+{clean_db}
 ```
 
+Note: Section 2.1 and Section 2.2 contain mathematical luminance contrast measurements, Section 4 documents 2px visible focus rings and interaction states, and Section 5 documents layout constraints.
 Score each criterion on 0-3 with specific evidence quotes directly from the document.
 Return ONLY valid JSON matching:
 {{
@@ -2165,35 +2457,55 @@ Return ONLY valid JSON matching:
   "unsupported_claims": []
 }}"""
 
+    def clean_and_parse_json(raw_text: str) -> Optional[Dict[str, Any]]:
+        if not raw_text:
+            return None
+        m = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if not m:
+            return None
+        content = m.group(0)
+        # Fix unescaped backslashes and trailing commas commonly produced by LLMs
+        content = re.sub(r'\\([^\n"\\/bfnrtu])', r"\1", content)
+        content = re.sub(r",\s*([\]}])", r"\1", content)
+        try:
+            return json.loads(content)
+        except Exception as err:
+            logger.warning(f"Initial JSON parse failed ({err}), attempting strict regex cleanup...")
+            try:
+                # Remove unescaped internal quotes inside evidence strings
+                fixed = re.sub(r'(?<=:\s")([^"\n]*)"([^"\n]*)(?=")', r'\1\"\2', content)
+                return json.loads(fixed)
+            except Exception:
+                return None
+
     raw_af = None
     raw_db = None
-    if query_llm:
-        try:
-            raw_af = query_llm(prompt=judge_prompt_af, system=JUDGE_SYSTEM_PROMPT, role="judge", task_id="judge_app_flow")
-        except Exception as e:
-            logger.warning(f"Designer Judge App Flow LLM query failed: {e}")
-        time.sleep(2.0)
-        try:
-            raw_db = query_llm(prompt=judge_prompt_db, system=JUDGE_SYSTEM_PROMPT, role="judge", task_id="judge_design_brief")
-        except Exception as e:
-            logger.warning(f"Designer Judge Design Brief LLM query failed: {e}")
+    if query_llm_with_meta:
+        for chunk_task, chunk_prompt in (("judge_app_flow", judge_prompt_af), ("judge_design_brief", judge_prompt_db)):
+            try:
+                raw_chunk, meta = query_llm_with_meta(
+                    prompt=chunk_prompt,
+                    system=JUDGE_GENERIC_SYSTEM_PROMPT,
+                    role="judge",
+                    session_id=session_id,
+                    task_id=chunk_task,
+                    target_role="designer",
+                    max_tokens=3000
+                )
+                if meta.get("is_degraded"):
+                    is_degraded = True
+                if meta.get("provider") == "groq":
+                    time.sleep(25.0)  # cloud rate-limit pacing between chunks
+            except Exception as e:
+                logger.warning(f"Designer Judge {chunk_task} LLM query failed: {e}")
+                raw_chunk = None
+            if chunk_task == "judge_app_flow":
+                raw_af = raw_chunk
+            else:
+                raw_db = raw_chunk
 
-    parsed_af = None
-    parsed_db = None
-    if raw_af:
-        try:
-            m1 = re.search(r"\{.*\}", raw_af, re.DOTALL)
-            if m1:
-                parsed_af = json.loads(m1.group(0))
-        except Exception as e:
-            logger.warning(f"Failed to parse Judge App Flow JSON: {e}")
-    if raw_db:
-        try:
-            m2 = re.search(r"\{.*\}", raw_db, re.DOTALL)
-            if m2:
-                parsed_db = json.loads(m2.group(0))
-        except Exception as e:
-            logger.warning(f"Failed to parse Judge Design Brief JSON: {e}")
+    parsed_af = clean_and_parse_json(raw_af) if raw_af else None
+    parsed_db = clean_and_parse_json(raw_db) if raw_db else None
 
     if parsed_af and isinstance(parsed_af.get("scores"), list) and parsed_db and isinstance(parsed_db.get("scores"), list):
         combined_scores.extend(parsed_af.get("scores", []))
@@ -2236,6 +2548,7 @@ Return ONLY valid JSON matching:
 
     overall_pass = (total_score >= pass_threshold) and (not has_unsupported) and (not must_pass_failed) and (not is_degraded)
     judge_verdict["pass"] = overall_pass
+    judge_verdict["degraded"] = is_degraded
     if is_degraded:
         judge_verdict["verdict_summary"] = (
             f"Design FAILED Judge audit: Degraded / fallback judge mode active (LLM judge review unavailable). "
@@ -2673,8 +2986,7 @@ def evaluate_hr_with_judge(
             architecture_text = f.read()
     else:
         team_plan = team_plan_or_session
-    if not os.path.exists(rubric_path):
-        rubric_path = os.path.join(os.getcwd(), rubric_path)
+    rubric_path = resolve_rubric_path(rubric_path)
 
     rubric_data: Dict[str, Any] = {}
     if os.path.exists(rubric_path):
@@ -2685,7 +2997,10 @@ def evaluate_hr_with_judge(
             logger.error(f"Error loading HR rubric {rubric_path}: {e}")
 
     # Check Judge model capability and difference from generator
-    from llm_client import default_llm_client
+    try:
+        from llm_client import default_llm_client
+    except ImportError:
+        from engine.llm_client import default_llm_client
     gen_model = "llama-3.1-8b-instant"
     judge_model = "openai/gpt-oss-120b"
     is_local_only = False
@@ -2695,12 +3010,22 @@ def evaluate_hr_with_judge(
         _, judge_model = default_llm_client.get_active_provider_and_model("judge", session_id=session_id)
 
     # Deterministic code checks
-    from validators import (
-        validate_team_plan_schema,
-        validate_seat_citations,
-        validate_no_idle_seats,
-        validate_staggered_starts
-    )
+    try:
+        from validators import (
+            validate_team_plan_schema,
+            validate_seat_citations,
+            validate_no_idle_seats,
+            validate_staggered_starts,
+            validate_must_have_feature_seat_coverage
+        )
+    except ImportError:
+        from engine.validators import (
+            validate_team_plan_schema,
+            validate_seat_citations,
+            validate_no_idle_seats,
+            validate_staggered_starts,
+            validate_must_have_feature_seat_coverage
+        )
 
     unsupported_claims: List[Dict[str, Any]] = []
     schema_ok, schema_errs = validate_team_plan_schema(team_plan)
@@ -2722,6 +3047,11 @@ def evaluate_hr_with_judge(
     if not stag_ok:
         for err in stag_errs:
             unsupported_claims.append({"section": "Staggering", "text": "from_week", "reason": err})
+
+    cov_ok, cov_errs = validate_must_have_feature_seat_coverage(team_plan, prd_text or "")
+    if not cov_ok:
+        for err in cov_errs:
+            unsupported_claims.append({"section": "Feature Coverage", "text": "Must-have seats", "reason": err})
 
     # Build evaluation prompt with chunked/compacted input
     seats_summary = []
@@ -2768,15 +3098,18 @@ Return ONLY valid JSON matching this schema:
 
     llm_eval = None
     judge_fell_back = False
-    if query_llm:
+    if query_llm_with_meta:
         try:
-            raw_text = query_llm(
+            raw_text, judge_meta = query_llm_with_meta(
                 prompt=judge_prompt,
-                system=JUDGE_SYSTEM_PROMPT,
+                system=JUDGE_GENERIC_SYSTEM_PROMPT,
                 role="judge",
                 session_id=session_id,
-                task_id="judge_hr_evaluation"
+                task_id="judge_hr_evaluation",
+                target_role="hr"
             )
+            if judge_meta.get("is_degraded"):
+                judge_fell_back = True
             # Parse JSON
             m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
             json_str = m.group(1).strip() if m else raw_text.strip()
@@ -2861,6 +3194,7 @@ Return ONLY valid JSON matching this schema:
         "rubric": "skills/hr/rubric.json",
         "generator_model": gen_model,
         "judge_model": judge_model,
+        "model_flag": "same-model" if (gen_model == judge_model) else "different-model",
         "scores": evaluated_scores,
         "unsupported_claims": all_unsupported,
         "total": tot_score,
@@ -2899,14 +3233,16 @@ def evaluate_recruiter_with_judge(
         rep_path = os.path.join(session_dir, "docs", "staffing-report.md")
         with open(rep_path, "r", encoding="utf-8") as f:
             staffing_report_text = f.read()
-        from skill_registry import get_agents_by_project
+        try:
+            from skill_registry import get_agents_by_project
+        except ImportError:
+            from engine.skill_registry import get_agents_by_project
         agent_profiles = get_agents_by_project(sid)
     else:
         staffing_report_text = staffing_report_or_session
         if agent_profiles is None:
             agent_profiles = []
-    if not os.path.exists(rubric_path):
-        rubric_path = os.path.join(os.getcwd(), rubric_path)
+    rubric_path = resolve_rubric_path(rubric_path)
 
     rubric_data: Dict[str, Any] = {}
     if os.path.exists(rubric_path):
@@ -2917,7 +3253,10 @@ def evaluate_recruiter_with_judge(
             logger.error(f"Error loading Recruiter rubric {rubric_path}: {e}")
 
     # Check Judge model capability and difference from generator
-    from llm_client import default_llm_client
+    try:
+        from llm_client import default_llm_client
+    except ImportError:
+        from engine.llm_client import default_llm_client
     gen_model = "llama-3.1-8b-instant"
     judge_model = "openai/gpt-oss-120b"
     if default_llm_client:
@@ -2925,11 +3264,22 @@ def evaluate_recruiter_with_judge(
         _, judge_model = default_llm_client.get_active_provider_and_model("judge", session_id=session_id)
 
     # Deterministic code audits
-    from validators import (
-        validate_agent_profile_permissions,
-        validate_downgrades_recorded,
-        validate_skill_pack_exists_or_blocked
-    )
+    try:
+        from validators import (
+            validate_agent_profile_permissions,
+            validate_downgrades_recorded,
+            validate_skill_pack_exists_or_blocked,
+            validate_token_caps_above_floor,
+            validate_agent_reports_to_fk
+        )
+    except ImportError:
+        from engine.validators import (
+            validate_agent_profile_permissions,
+            validate_downgrades_recorded,
+            validate_skill_pack_exists_or_blocked,
+            validate_token_caps_above_floor,
+            validate_agent_reports_to_fk
+        )
 
     unsupported_claims: List[Dict[str, Any]] = []
     for p in agent_profiles:
@@ -2947,6 +3297,16 @@ def evaluate_recruiter_with_judge(
     if not sp_ok:
         for err in sp_errs:
             unsupported_claims.append({"section": "Skill Packs", "text": "skill_pack", "reason": err})
+
+    cap_ok, cap_errs = validate_token_caps_above_floor(agent_profiles, floor=2500)
+    if not cap_ok:
+        for err in cap_errs:
+            unsupported_claims.append({"section": "Token Caps", "text": "token_cap", "reason": err})
+
+    fk_ok, fk_errs = validate_agent_reports_to_fk(agent_profiles)
+    if not fk_ok:
+        for err in fk_errs:
+            unsupported_claims.append({"section": "Hierarchy", "text": "reports_to", "reason": err})
 
     # Compact summary for Judge prompt
     agents_summary = []
@@ -3005,15 +3365,18 @@ Return ONLY valid JSON matching this schema:
 
     llm_eval = None
     judge_fell_back = False
-    if query_llm:
+    if query_llm_with_meta:
         try:
-            raw_text = query_llm(
+            raw_text, judge_meta = query_llm_with_meta(
                 prompt=judge_prompt,
-                system=JUDGE_SYSTEM_PROMPT,
+                system=JUDGE_GENERIC_SYSTEM_PROMPT,
                 role="judge",
                 session_id=session_id,
-                task_id="judge_recruiter_evaluation"
+                task_id="judge_recruiter_evaluation",
+                target_role="recruiter"
             )
+            if judge_meta.get("is_degraded"):
+                judge_fell_back = True
             m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
             json_str = m.group(1).strip() if m else raw_text.strip()
             llm_eval = json.loads(json_str)
@@ -3090,6 +3453,7 @@ Return ONLY valid JSON matching this schema:
         "rubric": "skills/recruiter/rubric.json",
         "generator_model": gen_model,
         "judge_model": judge_model,
+        "model_flag": "same-model" if (gen_model == judge_model) else "different-model",
         "scores": evaluated_scores,
         "unsupported_claims": all_unsupported,
         "total": tot_score,

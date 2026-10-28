@@ -1,3 +1,4 @@
+import { authHeaders } from "./auth";
 export const ENGINE_BASE_URL = "http://127.0.0.1:8765";
 
 export interface EngineStatus {
@@ -280,8 +281,11 @@ export interface OfficeStatusResponse {
     designer?: OfficeAgentInfo & { is_unlocked?: boolean };
     hr?: OfficeAgentInfo & { is_unlocked?: boolean };
     recruiter?: OfficeAgentInfo & { is_unlocked?: boolean };
+    scrum?: OfficeAgentInfo & { is_unlocked?: boolean };
+    "tech-lead"?: OfficeAgentInfo & { is_unlocked?: boolean };
     engineer: OfficeAgentInfo & { is_unlocked?: boolean };
     qa: OfficeAgentInfo & { is_unlocked?: boolean };
+    [key: string]: (OfficeAgentInfo & { is_unlocked?: boolean }) | undefined;
   };
 }
 
@@ -374,6 +378,7 @@ export async function startBaSession(intake: IntakeFormData): Promise<BAStartRes
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
     },
     body: JSON.stringify(payload),
   });
@@ -446,6 +451,7 @@ export async function getBaRequirements(
 export async function getBaSessions(): Promise<BASessionSummary[]> {
   const res = await fetch(`${ENGINE_BASE_URL}/ba/sessions`, {
     method: "GET",
+    headers: authHeaders(),
   });
 
   if (!res.ok) {
@@ -466,6 +472,7 @@ export async function getBaSession(
 ): Promise<BASessionDetail> {
   const res = await fetch(`${ENGINE_BASE_URL}/ba/session/${sessionId}`, {
     method: "GET",
+    headers: authHeaders(),
   });
 
   if (!res.ok) {
@@ -672,18 +679,39 @@ export async function apiGetGate1Status(sessionId: string): Promise<{ gate1: Gat
 /**
  * Gate 1: Approve PRD, scope, non-goals, and assumptions
  */
-export async function apiApproveGate1(sessionId: string, clientNotes?: string): Promise<{ status: string; approved: boolean }> {
+/** Why the engine refused Gate 1: the Judge has not passed the PRD (or there is no PRD yet). */
+export class GateRefusedError extends Error {
+  summary: string;
+  unsupportedClaims: { section?: string; text?: string; reason?: string }[];
+  constructor(summary: string, unsupportedClaims: { section?: string; text?: string; reason?: string }[] = []) {
+    super(summary);
+    this.name = "GateRefusedError";
+    this.summary = summary;
+    this.unsupportedClaims = unsupportedClaims;
+  }
+}
+
+export async function apiApproveGate1(
+  sessionId: string,
+  clientNotes?: string,
+  acceptKnownIssues = false
+): Promise<{ status: string; approved: boolean }> {
   const res = await fetch(`${ENGINE_BASE_URL}/gate1/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       session_id: sessionId.trim(),
-      client_notes: clientNotes || "Approved at Gate 1."
+      client_notes: clientNotes || (acceptKnownIssues ? "Approved at Gate 1 with known issues accepted." : "Approved at Gate 1."),
+      accept_known_issues: acceptKnownIssues
     })
   });
   if (!res.ok) {
     const errData = await res.json().catch(() => null);
-    throw new Error(errData?.detail || `HTTP ${res.status}`);
+    const detail = errData?.detail;
+    if (detail && typeof detail === "object") {
+      throw new GateRefusedError(detail.summary || detail.error || "Gate 1 refused", detail.unsupported_claims || []);
+    }
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
   }
   return await res.json();
 }
@@ -1058,3 +1086,234 @@ export async function apiStartScrumStage(sessionId: string): Promise<any> {
   return res.json();
 }
 
+export interface StoryRef {
+  features?: string[];
+  ac?: string[];
+  api?: string[];
+  tables?: string[];
+}
+
+export interface BacklogStory {
+  id: string;
+  title: string;
+  role: string;
+  owner: string;
+  points: number;
+  refs: StoryRef;
+  depends_on: string[];
+  needs_perf: boolean;
+  definition_of_done: string[];
+}
+
+export interface BacklogData {
+  stories: BacklogStory[];
+}
+
+export interface CriticalPathInfo {
+  critical_path_story_ids: string[];
+  total_critical_points: number;
+  estimated_days: number;
+  story_schedules: Record<string, { start_day: number; finish_day: number; duration_days: number; is_critical: boolean }>;
+}
+
+export interface LoadBalanceInfo {
+  by_owner: Record<string, { owner: string; role: string; points: number; story_count: number; stories: string[] }>;
+  by_role: Record<string, { role: string; points: number; story_count: number }>;
+  total_points: number;
+  total_stories: number;
+}
+
+export interface GanttData {
+  tasks: Array<{
+    id: string;
+    title: string;
+    owner: string;
+    role: string;
+    start_day: number;
+    finish_day: number;
+    points: number;
+    is_critical: boolean;
+    depends_on: string[];
+  }>;
+  mermaid_diagram: string;
+  total_days: number;
+}
+
+export interface ReadinessState {
+  session_id: string;
+  status: "ready" | "not_ready" | "invalidated" | "not_conducted";
+  verdict: "ready" | "not_ready";
+  passed: boolean;
+  gaps?: string[];
+  contradictions?: string[];
+  invalidation_reasons?: string[];
+  traceability?: any;
+  reviewed_at?: string;
+  message?: string;
+}
+
+export async function apiGetScrumBacklog(sessionId: string): Promise<BacklogData> {
+  const res = await fetch(`${ENGINE_BASE_URL}/scrum/backlog/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch backlog: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiGetScrumPlan(
+  sessionId: string
+): Promise<{ session_id: string; content: string; critical_path: CriticalPathInfo; load_balance: LoadBalanceInfo }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/scrum/plan/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch implementation plan: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiGetScrumGantt(sessionId: string): Promise<{ session_id: string; gantt: GanttData }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/scrum/gantt/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Gantt chart: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiGetScrumDailyReport(
+  sessionId: string,
+  day: number = 1
+): Promise<{ session_id: string; day: number; content: string }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/scrum/daily-report/${sessionId}?day=${day}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch daily report: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function apiStartReadinessReview(sessionId: string): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/readiness/${sessionId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to execute Tech Lead readiness review");
+  }
+  return res.json();
+}
+
+export async function apiGetReadinessStatus(
+  sessionId: string
+): Promise<{ session_id: string; state: ReadinessState; content: string }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/readiness/${sessionId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch readiness status: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+
+
+// =========================================================================
+// Stages 6-9: build loop, Beta (Gate 3), Release (Gate 4), Delivery
+// =========================================================================
+
+export interface BuildStoryState {
+  id: string;
+  status: string;
+  stage?: string;
+  rounds?: number;
+  qa_rounds?: number;
+  builder?: string;
+  merged_sha?: string;
+  blocked_reason?: string;
+  escalation?: { to: string; reason: string; detail?: string; at: string };
+  perf?: { status: string; reason?: string };
+  story: { id: string; title: string; role: string; points: number; depends_on?: string[]; needs_perf?: boolean };
+}
+
+export interface BuildState {
+  session_id: string;
+  status: string;
+  message?: string;
+  thread_alive?: boolean;
+  stories: Record<string, BuildStoryState>;
+  bugs?: { id: string; story: string; ac?: string; severity?: string; evidence?: string }[];
+  escalations?: { story: string; to: string; reason: string; at: string }[];
+}
+
+export interface CommandAllowlist {
+  stack?: string;
+  stack_reason?: string;
+  commands: Record<string, string>;
+  approved: boolean;
+  network_allowed?: boolean;
+  problems?: string[];
+}
+
+export interface OfficeEvent {
+  seq: number;
+  at: string;
+  type: string;
+  actor?: string;
+  task_id?: string;
+  data: Record<string, any>;
+}
+
+export interface GateState {
+  gate: number;
+  status: string;
+  approved: boolean;
+  summary?: string;
+  details?: Record<string, any>;
+  note?: string;
+}
+
+async function engineJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${ENGINE_BASE_URL}${path}`, init);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const detail = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+    throw new Error(detail || `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+const postJson = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export const apiGetAllowlist = (sessionId: string) =>
+  engineJson<CommandAllowlist>(`/build/allowlist/${sessionId}`);
+
+export const apiApproveAllowlist = (sessionId: string) =>
+  engineJson<CommandAllowlist>(`/build/allowlist/approve`, postJson({ session_id: sessionId, network_allowed: false }));
+
+export const apiStartBuild = (sessionId: string) =>
+  engineJson<{ status: string }>(`/build/start/${sessionId}`, { method: "POST" });
+
+export const apiGetBuildStatus = (sessionId: string) =>
+  engineJson<BuildState>(`/build/status/${sessionId}`);
+
+export const apiGetEvents = (sessionId: string, after = 0) =>
+  engineJson<{ events: OfficeEvent[] }>(`/events/${sessionId}?after=${after}&limit=500`);
+
+export const apiStartBeta = (sessionId: string) =>
+  engineJson<GateState>(`/beta/start/${sessionId}`, { method: "POST" });
+
+export const apiGetGateState = (gate: 3 | 4, sessionId: string) =>
+  engineJson<GateState>(`/gate/${gate}/status/${sessionId}`);
+
+export const apiApproveGate3 = (sessionId: string, note = "") =>
+  engineJson<GateState>(`/gate3/approve`, postJson({ session_id: sessionId, note }));
+
+export const apiSendUatFeedback = (sessionId: string, feedback: string, kind: "bug" | "change") =>
+  engineJson<{ q_id: string; story?: { id: string } }>(`/gate3/feedback`, postJson({ session_id: sessionId, feedback, kind }));
+
+export const apiPrepareRelease = (sessionId: string) =>
+  engineJson<GateState>(`/release/prepare/${sessionId}`, { method: "POST" });
+
+export const apiApproveGate4 = (sessionId: string, note = "") =>
+  engineJson<GateState>(`/gate4/approve`, postJson({ session_id: sessionId, note }));
+
+export const apiDeliver = (sessionId: string) =>
+  engineJson<{ status: string; version: string; path: string; files: string[]; report: string }>(
+    `/deliver/${sessionId}`, { method: "POST" });
