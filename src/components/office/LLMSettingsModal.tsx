@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { useEscapeToClose } from "../../lib/utils";
+import { routeLabel, useModelRoutes } from "../../lib/modelRoutes";
 import { motion } from "framer-motion";
 import {
   X,
@@ -39,7 +41,10 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
   projectName = "Current Project",
   onSettingsChanged,
 }) => {
+  useEscapeToClose(isOpen, onClose);
+  const routes = useModelRoutes();
   const [settings, setSettings] = useState<LLMSettings | null>(null);
+  const localModel = settings?.local_default_model || "local model";
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -319,7 +324,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                   <span className="text-[10px] uppercase font-mono text-brand-body">Fallback Provider</span>
                   <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline">
                     <HardDrive className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Ollama (llama3.2:3b)</span>
+                    <span>Ollama ({localModel})</span>
                   </div>
                 </div>
               </div>
@@ -394,7 +399,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                             <span className="text-[10px] font-mono text-brand-body">Model</span>
                             {cfg.provider === "ollama" || isLocalOnly ? (
                               <div className="px-2.5 py-1.5 rounded-lg bg-brand-subtle/60 border border-brand-border text-xs text-brand-body font-mono">
-                                llama3.2:3b (local)
+                                {localModel} (local)
                               </div>
                             ) : (
                               <select
@@ -484,7 +489,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                   {settings?.local_only ? (
                     <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
                       <HardDrive className="w-3.5 h-3.5" />
-                      Strict Local Only (Ollama llama3.2:3b active)
+                      Strict Local Only (Ollama {localModel} active)
                     </span>
                   ) : (
                     <span className="font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
@@ -561,8 +566,9 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
         {/* Footer */}
         <div className="px-6 py-3.5 border-t border-brand-border flex items-center justify-between bg-brand-subtle/30">
           <span className="text-[11px] text-brand-body">
-            Default Generators: <strong className="text-brand-headline">openai/gpt-oss-120b</strong> • Judge:{" "}
-            <strong className="text-brand-headline">openai/gpt-oss-20b</strong>
+            In use now: PM <strong className="text-brand-headline">{routeLabel(routes?.roles["pm"])}</strong> • Architect{" "}
+            <strong className="text-brand-headline">{routeLabel(routes?.roles["architect"])}</strong> • Judge{" "}
+            <strong className="text-brand-headline">{routes?.roles["pm"]?.judgeModel?.split("/").pop() || "checking…"}</strong>
           </span>
           <button
             onClick={onClose}

@@ -1,3 +1,4 @@
+import { Header } from "../components/Header";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -11,27 +12,15 @@ import {
   Layers,
   Sparkles,
   Loader2,
-  ChevronLeft,
   ChevronRight,
   CheckCircle2,
   Briefcase,
 } from "lucide-react";
 import { useConversation } from "../context/ConversationContext";
-import { EngineStatus } from "../lib/engine";
-import { StatusBadge } from "../components/StatusBadge";
-import { ThemeToggle } from "../components/ThemeToggle";
-import { AccountUser } from "../lib/auth";
 
 interface ProjectSelectorProps {
   onSelectProject: (sessionId: string) => Promise<void>;
   onNewProject: () => void;
-  onBackToLanding: () => void;
-  status?: EngineStatus | null;
-  isCheckingStatus?: boolean;
-  onRefreshStatus?: () => void;
-  user?: AccountUser | null;
-  onOpenProfile?: () => void;
-  onSignIn?: () => void;
 }
 
 function formatSessionDate(isoString: string): string {
@@ -64,13 +53,6 @@ function formatSessionDate(isoString: string): string {
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   onSelectProject,
   onNewProject,
-  onBackToLanding,
-  status,
-  isCheckingStatus = false,
-  onRefreshStatus,
-  user,
-  onOpenProfile,
-  onSignIn,
 }) => {
   const { sessions, isLoadingSessions, refreshSessions } = useConversation();
 
@@ -114,65 +96,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
 
   return (
     <div className="min-h-screen bg-brand-bg text-brand-headline flex flex-col selection:bg-brand-accent selection:text-brand-accent-text transition-colors duration-200">
-      {/* Top Navigation */}
-      <header className="sticky top-0 z-40 bg-brand-bg/90 backdrop-blur-sm border-b border-brand-border px-6 py-4 transition-colors duration-200">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onBackToLanding}
-              className="p-1.5 -ml-1 text-brand-body hover:text-brand-headline rounded-lg hover:bg-brand-subtle transition-colors cursor-pointer flex items-center gap-1 text-xs font-medium"
-              title="Back to Landing Page"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Overview</span>
-            </button>
-
-            <div className="h-4 w-px bg-brand-border" />
-
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-brand-accent text-brand-accent-text flex items-center justify-center font-bold text-xs shadow-sm">
-                A
-              </div>
-              <span className="text-sm font-bold text-brand-headline tracking-tight">
-                Autonoma
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {status !== undefined && onRefreshStatus && (
-              <div className="hidden sm:block">
-                <StatusBadge
-                  status={status}
-                  isChecking={isCheckingStatus}
-                  onRefresh={onRefreshStatus}
-                />
-              </div>
-            )}
-            {user ? (
-              <button
-                type="button"
-                onClick={onOpenProfile}
-                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-brand-subtle cursor-pointer"
-                title="Profile"
-              >
-                <span className="w-6 h-6 rounded-full bg-brand-accent text-brand-accent-text flex items-center justify-center text-[10px] font-bold">
-                  {user.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
-                </span>
-                <span className="hidden sm:inline text-xs text-brand-body">Signed in as {user.name}</span>
-              </button>
-            ) : (
-              onSignIn && (
-                <button type="button" onClick={onSignIn} className="text-xs font-semibold text-brand-headline hover:underline cursor-pointer">
-                  Log in / Sign up
-                </button>
-              )
-            )}
-            <ThemeToggle />
-          </div>
-        </div>
-      </header>
+      <Header activeScreen="projects" />
 
       {/* Main Container: Harness Config Style Project Selector */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 py-10 sm:py-16">

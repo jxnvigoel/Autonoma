@@ -13,6 +13,10 @@ import { AccountUser, apiLogout, apiMe } from "./lib/auth";
 import { IntakeForm } from "./components/chat/IntakeForm";
 import { checkEngineStatus, EngineStatus } from "./lib/engine";
 import { useConversation } from "./context/ConversationContext";
+import { NavProvider, NavScreen } from "./context/NavContext";
+import { LLMSettingsModal } from "./components/office/LLMSettingsModal";
+import { SkillLibraryModal } from "./components/office/SkillLibraryModal";
+import { ChecklistDrawer } from "./components/office/CompanyChecklist";
 
 export type AppScreen =
   | "splash"
@@ -30,16 +34,21 @@ export const App: React.FC = () => {
   const [isChecking, setIsChecking] = useState<boolean>(true);
   const {
     sessionId,
+    intakeData,
     selectSession,
     newSession,
     startSession,
     isSending,
     error: contextError,
+    refreshOfficeStatus,
   } = useConversation();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSkillsOpen, setIsSkillsOpen] = useState(false);
+  const [isChecklistOpen, setIsChecklistOpen] = useState(false);
 
   // Signed-in account (local). Once any account exists, projects are per user.
   const [user, setUser] = useState<AccountUser | null>(null);
-  const [accountsExist, setAccountsExist] = useState(false);
+  const [, setAccountsExist] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
   useEffect(() => {
@@ -86,7 +95,41 @@ export const App: React.FC = () => {
     refreshStatus();
   }, [refreshStatus]);
 
+  const nav = {
+    go: (screen: NavScreen) => {
+      if (screen === "intake") newSession();
+      setCurrentScreen(screen);
+    },
+    hasProject: Boolean(sessionId),
+    status,
+    isChecking,
+    refreshStatus,
+    user,
+    openProfile: () => setShowProfile(true),
+    openSettings: () => setIsSettingsOpen(true),
+    openSkills: () => setIsSkillsOpen(true),
+    openChecklist: () => setIsChecklistOpen(true),
+    signIn: () => setCurrentScreen("auth"),
+  };
+
   return (
+    <NavProvider value={nav}>
+    <LLMSettingsModal
+      isOpen={isSettingsOpen}
+      onClose={() => setIsSettingsOpen(false)}
+      sessionId={sessionId || undefined}
+      projectName={intakeData?.projectName}
+      onSettingsChanged={() => window.dispatchEvent(new Event("autonoma:llm-settings-changed"))}
+    />
+    {isChecklistOpen && (
+      <ChecklistDrawer sessionId={sessionId} projectName={intakeData?.projectName} onClose={() => setIsChecklistOpen(false)} />
+    )}
+    <SkillLibraryModal
+      isOpen={isSkillsOpen}
+      onClose={() => setIsSkillsOpen(false)}
+      sessionId={sessionId || undefined}
+      onSkillAttached={() => sessionId && refreshOfficeStatus(sessionId)}
+    />
     <AnimatePresence mode="wait">
       {currentScreen === "splash" && (
         <motion.div
@@ -162,13 +205,6 @@ export const App: React.FC = () => {
               newSession();
               setCurrentScreen("intake");
             }}
-            onBackToLanding={() => setCurrentScreen("landing")}
-            status={status}
-            isCheckingStatus={isChecking}
-            onRefreshStatus={refreshStatus}
-            user={user}
-            onOpenProfile={() => setShowProfile(true)}
-            onSignIn={accountsExist || !user ? () => setCurrentScreen("auth") : undefined}
           />
         </motion.div>
       )}
@@ -285,6 +321,7 @@ export const App: React.FC = () => {
         </motion.div>
       )}
     </AnimatePresence>
+    </NavProvider>
   );
 };
 

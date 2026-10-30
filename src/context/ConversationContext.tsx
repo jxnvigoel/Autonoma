@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 import {
   ChatMessage,
@@ -42,6 +43,9 @@ import {
   apiApproveGate2,
   apiRequestGate2Changes,
   apiGetBudgetStatus,
+  apiStartScrumStage,
+  apiStartReadinessReview,
+  JobKind,
   clearConversation as apiClearConversation,
   sendChatMessage as apiSendChatMessage,
 } from "../lib/engine";
@@ -78,6 +82,7 @@ interface ConversationContextType {
   estimateData: PMEstimateData | null;
   pmStarted: boolean;
   isPmSending: boolean;
+  isPrdGenerating: boolean;
   pmError: string | null;
 
   // Architect Agent & Gate 1 State
@@ -105,6 +110,14 @@ interface ConversationContextType {
   isRecruiterGenerating: boolean;
   isGate2Approving: boolean;
 
+  // Stage 5 Scrum & Tech Lead readiness (run as engine jobs, like every long stage)
+  isFeasibilityRunning: boolean;
+  isScrumGenerating: boolean;
+  isReadinessGenerating: boolean;
+  stageDataVersion: number;
+  generateBacklog: (targetSessionId?: string) => Promise<void>;
+  runReadinessReview: (targetSessionId?: string) => Promise<void>;
+
   // Virtual Office State
   officeStatus: OfficeStatusResponse | null;
   activeOfficeAgent: AgentRoleKey | null;
@@ -131,7 +144,7 @@ interface ConversationContextType {
   approveGate1: (notes?: string, acceptKnownIssues?: boolean) => Promise<void>;
   gate1Refusal: { summary: string; unsupportedClaims: { section?: string; text?: string; reason?: string }[] } | null;
   requestGate1Changes: (feedback: string) => Promise<void>;
-  runFeasibility: () => Promise<void>;
+  runFeasibility: (targetSessionId?: string) => Promise<void>;
   fetchStage4Session: (targetSessionId?: string) => Promise<void>;
   generateHrPlan: (targetSessionId?: string) => Promise<void>;
   executeRecruiterHiring: (targetSessionId?: string) => Promise<void>;
@@ -202,6 +215,17 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [budgetGuard, setBudgetGuard] = useState<BudgetGuardStatus | null>(null);
   const [isHrGenerating, setIsHrGenerating] = useState<boolean>(false);
   const [isRecruiterGenerating, setIsRecruiterGenerating] = useState<boolean>(false);
+  const [isPrdGenerating, setIsPrdGenerating] = useState<boolean>(false);
+  const [isFeasibilityRunning, setIsFeasibilityRunning] = useState<boolean>(false);
+  const [isScrumGenerating, setIsScrumGenerating] = useState<boolean>(false);
+  const [isReadinessGenerating, setIsReadinessGenerating] = useState<boolean>(false);
+  // Bumped when a stage finishes, so screens that load their own data (backlog, readiness) reload it.
+  const [stageDataVersion, setStageDataVersion] = useState<number>(0);
+
+  // A stage started for one project must not write its result into another project's view.
+  const currentSessionRef = useRef<string | null>(null);
+  currentSessionRef.current = sessionId;
+  const isCurrent = (target: string) => currentSessionRef.current === target;
   const [isGate2Approving, setIsGate2Approving] = useState<boolean>(false);
 
   // Virtual Office State
@@ -326,6 +350,18 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId]
   );
 
+  const resetStageFlags = () => {
+    setIsPmSending(false);
+    setIsPrdGenerating(false);
+    setIsFeasibilityRunning(false);
+    setIsArchitectGenerating(false);
+    setIsDesignerGenerating(false);
+    setIsHrGenerating(false);
+    setIsRecruiterGenerating(false);
+    setIsScrumGenerating(false);
+    setIsReadinessGenerating(false);
+  };
+
   const selectSession = useCallback(
 
     async (targetSessionId: string) => {
@@ -348,9 +384,11 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       setHiredAgents([]);
       setGate2State(null);
       setBudgetGuard(null);
+      resetStageFlags();
 
       try {
         const data = await getBaSession(targetSessionId);
+        currentSessionRef.current = data.session_id;
         setSessionId(data.session_id);
         setIntakeData({
           projectName: data.intake.project_name || "Project",
@@ -536,6 +574,8 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
             meta: {
               duration: data.duration,
               token_count: data.token_count,
+              model: data.model,
+              provider: data.provider,
             },
           };
           setMessages((prev) => [...prev, assistantMsg]);
@@ -552,17 +592,19 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const startPm = useCallback(
-    async (targetSessionId?: string) => {
+    async (targetSessionId?: string, attach = false) => {
       const target = targetSessionId || sessionId;
       if (!target) {
         throw new Error("No active session to start PM");
       }
 
       setIsPmSending(true);
+      setIsPrdGenerating(true);
       setPmError(null);
 
       try {
-        const res = await startPmSession(target);
+        const res = await startPmSession(target, attach);
+        if (!isCurrent(target)) return;
         setPmStarted(true);
         setPrdContent(res.prd_content);
         if (res.estimate) {
@@ -581,11 +623,15 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshOfficeStatus(target);
         refreshSessions();
       } catch (err: unknown) {
+        if (!isCurrent(target)) return;
         const msg = err instanceof Error ? err.message : String(err);
         setPmError(msg);
         throw err;
       } finally {
-        setIsPmSending(false);
+        if (isCurrent(target)) {
+          setIsPmSending(false);
+          setIsPrdGenerating(false);
+        }
       }
     },
     [sessionId, refreshOfficeStatus, refreshSessions]
@@ -614,6 +660,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
           role: "assistant",
           content: res.message,
           timestamp: new Date().toISOString(),
+          meta: { model: res.model, provider: res.provider },
         };
         setPmMessages((prev) => [...prev, assistantMsg]);
         if (res.prd_content) {
@@ -635,40 +682,44 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const generateArchitectArtifacts = useCallback(
-    async (targetSessionId?: string) => {
+    async (targetSessionId?: string, attach = false) => {
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsArchitectGenerating(true);
       try {
-        const data = await apiGenerateArchitectArtifacts(target);
+        const data = await apiGenerateArchitectArtifacts(target, attach);
+        if (!isCurrent(target)) return;
         setArchitectState(data);
         await fetchArchitectSession(target);
         await refreshOfficeStatus(target);
       } catch (err: unknown) {
+        if (!isCurrent(target)) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
       } finally {
-        setIsArchitectGenerating(false);
+        if (isCurrent(target)) setIsArchitectGenerating(false);
       }
     },
     [sessionId, fetchArchitectSession, refreshOfficeStatus]
   );
 
   const generateDesignerArtifacts = useCallback(
-    async (targetSessionId?: string) => {
+    async (targetSessionId?: string, attach = false) => {
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsDesignerGenerating(true);
       try {
-        const data = await apiGenerateDesignerArtifacts(target);
+        const data = await apiGenerateDesignerArtifacts(target, attach);
+        if (!isCurrent(target)) return;
         setDesignerState(data);
         await fetchDesignerSession(target);
         await refreshOfficeStatus(target);
       } catch (err: unknown) {
+        if (!isCurrent(target)) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
       } finally {
-        setIsDesignerGenerating(false);
+        if (isCurrent(target)) setIsDesignerGenerating(false);
       }
     },
     [sessionId, fetchDesignerSession, refreshOfficeStatus]
@@ -706,68 +757,83 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!sessionId) return;
       try {
         await apiRequestGate1Changes(sessionId, feedback);
+        // The engine archived the reviewed PRD and started the PM rewrite; follow it.
+        setPrdContent(null);
+        setEstimateData(null);
+        setGate1Refusal(null);
         await refreshOfficeStatus(sessionId);
-        await selectSession(sessionId);
+        startPm(sessionId, true).catch(() => undefined); // errors are shown by startPm
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
       }
     },
-    [sessionId, refreshOfficeStatus, selectSession]
+    [sessionId, refreshOfficeStatus, startPm]
   );
 
   const runFeasibility = useCallback(
-    async () => {
-      if (!sessionId) return;
+    async (targetSessionId?: string, attach = false) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsFeasibilityRunning(true);
       try {
-        await apiRunFeasibility(sessionId);
-        await refreshOfficeStatus(sessionId);
+        await apiRunFeasibility(target, attach);
+        if (!isCurrent(target)) return;
+        await refreshOfficeStatus(target);
+        await fetchArchitectSession(target);
       } catch (err: unknown) {
+        if (!isCurrent(target)) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
+      } finally {
+        if (isCurrent(target)) setIsFeasibilityRunning(false);
       }
     },
-    [sessionId, refreshOfficeStatus]
+    [sessionId, refreshOfficeStatus, fetchArchitectSession]
   );
 
   const generateHrPlan = useCallback(
-    async (targetSessionId?: string) => {
+    async (targetSessionId?: string, attach = false) => {
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsHrGenerating(true);
       setError(null);
       try {
-        const plan = await apiRunHrPlan(target);
+        const plan = await apiRunHrPlan(target, attach);
+        if (!isCurrent(target)) return;
         setTeamPlanData(plan);
         await refreshOfficeStatus(target);
         await fetchStage4Session(target);
       } catch (err: unknown) {
+        if (!isCurrent(target)) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
         throw err;
       } finally {
-        setIsHrGenerating(false);
+        if (isCurrent(target)) setIsHrGenerating(false);
       }
     },
     [sessionId, refreshOfficeStatus, fetchStage4Session]
   );
 
   const executeRecruiterHiring = useCallback(
-    async (targetSessionId?: string) => {
+    async (targetSessionId?: string, attach = false) => {
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsRecruiterGenerating(true);
       setError(null);
       try {
-        await apiRunRecruiterHire(target);
+        await apiRunRecruiterHire(target, attach);
+        if (!isCurrent(target)) return;
         await refreshOfficeStatus(target);
         await fetchStage4Session(target);
       } catch (err: unknown) {
+        if (!isCurrent(target)) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
         throw err;
       } finally {
-        setIsRecruiterGenerating(false);
+        if (isCurrent(target)) setIsRecruiterGenerating(false);
       }
     },
     [sessionId, refreshOfficeStatus, fetchStage4Session]
@@ -809,6 +875,82 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     [sessionId, refreshOfficeStatus, fetchStage4Session]
   );
 
+  const generateBacklog = useCallback(
+    async (targetSessionId?: string, attach = false) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsScrumGenerating(true);
+      try {
+        await apiStartScrumStage(target, attach);
+        if (!isCurrent(target)) return;
+        setStageDataVersion((v) => v + 1);
+        await refreshOfficeStatus(target);
+      } catch (err: unknown) {
+        if (!isCurrent(target)) return;
+        throw err;
+      } finally {
+        if (isCurrent(target)) setIsScrumGenerating(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus]
+  );
+
+  const runReadinessReview = useCallback(
+    async (targetSessionId?: string, attach = false) => {
+      const target = targetSessionId || sessionId;
+      if (!target) return;
+      setIsReadinessGenerating(true);
+      try {
+        await apiStartReadinessReview(target, attach);
+        if (!isCurrent(target)) return;
+        setStageDataVersion((v) => v + 1);
+        await refreshOfficeStatus(target);
+      } catch (err: unknown) {
+        if (!isCurrent(target)) return;
+        throw err;
+      } finally {
+        if (isCurrent(target)) setIsReadinessGenerating(false);
+      }
+    },
+    [sessionId, refreshOfficeStatus]
+  );
+
+  // Re-attach to stages still running on the engine (after coming back to a project, closing a
+  // panel, or a stage started from another window). The office status lists running jobs; any
+  // stage this screen is not already waiting on is attached to without starting anything.
+  const stageBusy: Record<JobKind, boolean> = {
+    pm: isPrdGenerating,
+    feasibility: isFeasibilityRunning,
+    architect: isArchitectGenerating,
+    designer: isDesignerGenerating,
+    hr: isHrGenerating,
+    recruiter: isRecruiterGenerating,
+    scrum: isScrumGenerating,
+    readiness: isReadinessGenerating,
+  };
+  useEffect(() => {
+    const target = officeStatus?.session_id;
+    const running = (officeStatus?.running_jobs || []) as JobKind[];
+    if (!target || !isCurrent(target) || running.length === 0) return;
+    const attach: Record<JobKind, () => Promise<void>> = {
+      pm: () => startPm(target, true),
+      feasibility: () => runFeasibility(target, true),
+      architect: () => generateArchitectArtifacts(target, true),
+      designer: () => generateDesignerArtifacts(target, true),
+      hr: () => generateHrPlan(target, true),
+      recruiter: () => executeRecruiterHiring(target, true),
+      scrum: () => generateBacklog(target, true),
+      readiness: () => runReadinessReview(target, true),
+    };
+    for (const kind of running) {
+      if (attach[kind] && !stageBusy[kind]) {
+        attach[kind]().catch(() => undefined); // each handler shows its own error
+      }
+    }
+    // Runs when a new office status arrives; stageBusy is read from that same render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [officeStatus]);
+
   const newSession = useCallback(() => {
     setSessionId(null);
     setIntakeData(null);
@@ -837,6 +979,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     setActiveOfficeAgent(null);
     setError(null);
     setPmError(null);
+    resetStageFlags();
     refreshSessions();
   }, [refreshSessions]);
 
@@ -878,6 +1021,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         estimateData,
         pmStarted,
         isPmSending,
+        isPrdGenerating,
         pmError,
         architectureContent,
         schemaContent,
@@ -898,6 +1042,12 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
         isHrGenerating,
         isRecruiterGenerating,
         isGate2Approving,
+        isFeasibilityRunning,
+        isScrumGenerating,
+        isReadinessGenerating,
+        stageDataVersion,
+        generateBacklog,
+        runReadinessReview,
         officeStatus,
         activeOfficeAgent,
         setActiveOfficeAgent,

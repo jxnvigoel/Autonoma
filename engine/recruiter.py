@@ -124,12 +124,13 @@ def resolve_model_tier(
     }
 
 
-def get_measured_story_token_floor(db_path: str = DEFAULT_DB_PATH) -> int:
+def get_measured_story_token_floor(db_path: Optional[str] = None) -> int:
     """
     Handbook 26.4 & Gate 2 blocker fix A3:
     Measures per-story token minimum from the ledger (llm_calls table).
     Floors at baseline 2,500 tokens per story/agent.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     if os.path.exists(db_path):
         try:
             conn = sqlite3.connect(db_path)
@@ -152,13 +153,14 @@ def calculate_token_cap_for_role(
     role: str,
     estimate_data: Dict[str, Any],
     seat_count: int = 1,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Tuple[int, Optional[str]]:
     """
     Derives token_cap per agent from estimate.json for that role (+ 20% rework buffer from Handbook 5.1.6).
     Floors cap at measured per-story minimum from ledger.
     Missing role in estimate -> return (0, "NO ESTIMATE").
     """
+    db_path = db_path or DEFAULT_DB_PATH
     role_norm = role.strip().lower()
     stages = estimate_data.get("stages", [])
 
@@ -232,8 +234,8 @@ def determine_reports_to(role: str, session_id: str = "") -> Optional[str]:
 
 def execute_recruiter_hiring(
     session_id: str,
-    data_projects_dir: str = DATA_PROJECTS_DIR,
-    db_path: str = DEFAULT_DB_PATH
+    data_projects_dir: Optional[str] = None,
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Executes the Recruiter hiring loop per Handbook Chapter 6.3:
@@ -245,6 +247,8 @@ def execute_recruiter_hiring(
     6. Persists agent profiles into data/office.db 'agents' table.
     7. Synthesizes docs/staffing-report.md and registers Gate 2 approval.
     """
+    db_path = db_path or DEFAULT_DB_PATH
+    data_projects_dir = data_projects_dir or DATA_PROJECTS_DIR
     session_dir = os.path.join(data_projects_dir, session_id)
     docs_dir = os.path.join(session_dir, "docs")
     team_plan_path = os.path.join(docs_dir, "team-plan.json")

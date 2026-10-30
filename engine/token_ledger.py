@@ -104,10 +104,11 @@ SEED_DEFAULT_RATES: List[Dict[str, Any]] = [
 ]
 
 
-def init_token_ledger_db(db_path: str = DEFAULT_DB_PATH):
+def init_token_ledger_db(db_path: Optional[str] = None):
     """
     Initializes SQLite tables for the token ledger and rates, seeding default rates if absent.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
@@ -134,8 +135,13 @@ def init_token_ledger_db(db_path: str = DEFAULT_DB_PATH):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_project ON llm_calls(project_id, agent_id);")
         # Migration: latency_ms is model request time only; rate-limit/backoff waiting is wait_ms.
         cols = {row[1] for row in cur.execute("PRAGMA table_info(llm_calls);").fetchall()}
-        if "wait_ms" not in cols:
-            cur.execute("ALTER TABLE llm_calls ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0;")
+        for col, ddl in (("wait_ms", "INTEGER NOT NULL DEFAULT 0"), ("stop", "TEXT")):
+            if col not in cols:
+                try:
+                    cur.execute(f"ALTER TABLE llm_calls ADD COLUMN {col} {ddl};")
+                except sqlite3.OperationalError as e:  # added by a parallel call at the same moment
+                    if "duplicate column" not in str(e).lower():
+                        raise
 
         # Table 2: token_rates (historical averages & seed defaults)
         cur.execute("""
@@ -170,12 +176,13 @@ def init_token_ledger_db(db_path: str = DEFAULT_DB_PATH):
         conn.close()
 
 
-def get_rate_for_item(role: str, item_type: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def get_rate_for_item(role: str, item_type: str, db_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Retrieves the historical average tokens for a given role and item_type.
     If real calls exist in llm_calls for this role, computes real historical average.
     Otherwise returns seed default rate marked as 'seed_default'.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     init_token_ledger_db(db_path)
     conn = sqlite3.connect(db_path)
     try:
@@ -245,7 +252,7 @@ def record_llm_call(
     cost_usd: float = 0.0,
     latency_ms: Optional[int] = None,
     task_id: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH,
+    db_path: Optional[str] = None,
     wait_ms: int = 0,
     stop: Optional[str] = None
 ):
@@ -253,6 +260,7 @@ def record_llm_call(
     Appends an entry to the llm_calls token ledger table.
     One row per model request; never write aggregate rows (they double-count the budget).
     """
+    db_path = db_path or DEFAULT_DB_PATH
     try:
         init_token_ledger_db(db_path)
         conn = sqlite3.connect(db_path)
@@ -319,7 +327,7 @@ def calculate_project_estimate(
     features: List[Dict[str, Any]],
     model_name: Optional[str] = None,
     provider: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Calculates the token and cost estimate strictly following Handbook Section 5.1.6:
@@ -329,6 +337,7 @@ def calculate_project_estimate(
     cost_usd = Σ over roles: tokens(role) × price(model of that role) (local models: $0)
     """
     # If model_name or provider not provided, use the router's live route for the PM role.
+    db_path = db_path or DEFAULT_DB_PATH
     active_provider = provider or "ollama"
     active_model = model_name or ""
     if not model_name:

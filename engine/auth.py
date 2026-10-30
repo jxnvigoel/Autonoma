@@ -77,7 +77,12 @@ def init_auth_db(db_path: Optional[str] = None) -> None:
         for col, ddl in (("title", "TEXT NOT NULL DEFAULT ''"), ("organization", "TEXT NOT NULL DEFAULT ''"),
                          ("google_sub", "TEXT"), ("auth_method", "TEXT NOT NULL DEFAULT 'password'")):
             if col not in cols:
-                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+                try:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+                except sqlite3.OperationalError as e:
+                    # Another request added it at the same moment (first start on a fresh database).
+                    if "duplicate column" not in str(e).lower():
+                        raise
         conn.commit()
     finally:
         conn.close()

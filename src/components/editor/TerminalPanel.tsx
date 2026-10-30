@@ -149,20 +149,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         }
       };
     } else {
-      // Browser fallback demo
-      term.write("\x1b[32mAutonoma Web Terminal Emulator (Connect to Electron for full shell)\x1b[0m\r\n");
-      term.write(`\x1b[34mWorkspace: ${cwd || "/workspace"}\x1b[0m\r\n$ `);
-      const onDataDisposable = term.onData((e) => {
-        if (e === "\r") {
-          term.write("\r\n$ ");
-        } else if (e === "\u007F") {
-          term.write("\b \b");
-        } else {
-          term.write(e);
-        }
-      });
+      // In a browser there is no shell to run commands in; say so instead of echoing keystrokes.
+      term.write("\x1b[33mThe terminal runs commands only in the Autonoma desktop app.\x1b[0m\r\n");
+      term.write("In the browser, the agents' build and test output is in the Office (Build tab).\r\n");
       return () => {
-        onDataDisposable.dispose();
         term.dispose();
         terminalInstanceRef.current = null;
       };

@@ -279,6 +279,7 @@ class LLMClient:
         self._overrides: Dict[str, Dict[str, Any]] = {}
         self._fake_responder: Optional[Callable[..., str]] = None
         self._call_listeners: List[Callable[[Dict[str, Any]], None]] = []
+        self._current = threading.local()  # the call this thread is making, for "waiting" notices
         self.budget_guard_enabled: bool = True
         self.ledger_db_path: Optional[str] = None  # tests point this at a temporary database
         self.rates = RateTracker()
@@ -446,8 +447,14 @@ class LLMClient:
 
         groq_ids = {m["id"] for m in self.fetch_groq_models()} if cloud_ok else set()
         start = TIER_ORDER.index(target_tier) if target_tier in TIER_ORDER else 1
+        # Roles listed in local_first_roles try installed local models before Groq inside the same tier
+        # (no downgrade: same tier, it just spares the cloud quota). Without Ollama they use Groq as before.
+        local_first = role_key in set(router.get("local_first_roles", []))
         for tier in TIER_ORDER[start:]:
-            for cand in router.get("tiers", {}).get(tier, []):
+            cands = router.get("tiers", {}).get(tier, [])
+            if local_first:
+                cands = sorted(cands, key=lambda c: c.get("provider") != "ollama")
+            for cand in cands:
                 prov, model = cand.get("provider"), cand.get("model", "")
                 if model in exclude:
                     continue
@@ -541,6 +548,7 @@ class LLMClient:
         fallbacks = self.get_fallbacks()
         return {
             "cloud_enabled": self.cloud_enabled(),
+            "local_default_model": OLLAMA_DEFAULT_MODEL,
             "groq_configured": self.is_groq_configured(),
             "masked_api_key": self.get_masked_api_key(),
             "available_models": self.fetch_groq_models(),
@@ -560,6 +568,18 @@ class LLMClient:
     def add_call_listener(self, fn: Callable[[Dict[str, Any]], None]) -> None:
         if fn not in self._call_listeners:
             self._call_listeners.append(fn)
+
+    def _notify(self, phase: str, **call: Any) -> None:
+        """Tells listeners a call started, is waiting (rate limit / network), or finished ("done")."""
+        if phase == "start":
+            self._current.call = call
+        elif phase == "waiting":
+            call = {**getattr(self._current, "call", {}), **call}
+        for listener in list(self._call_listeners):
+            try:
+                listener({"phase": phase, **call})
+            except Exception as e:
+                logger.debug(f"LLM call listener failed: {e}")
 
     def log_fallback(self, session_id: Optional[str], role: str, original_model: str, error: str,
                      duration_ms: int, fallback_model: str = "") -> None:
@@ -662,6 +682,7 @@ class LLMClient:
         if provider == "none" or not model:
             raise NoLocalModelError(route.get("downgrade_note") or "No local model installed.")
 
+        self._notify("start", session_id=session_id, role=role_key, task_id=task_id, provider=provider, model=model)
         fallback_triggered = False
         result: Dict[str, Any]
         if provider == "fake":
@@ -675,6 +696,8 @@ class LLMClient:
             while provider == "groq":
                 model, planned_wait = self._plan_cloud_model(role_key, session_id, model, tier, est_in, max_tok, failed)
                 if planned_wait > 0:
+                    self._notify("waiting", session_id=session_id, role=role_key, task_id=task_id, provider=provider,
+                                 model=model, wait_s=round(planned_wait), reason="Groq rate limit")
                     time.sleep(planned_wait)
                 try:
                     result = self._execute_groq_call(prompt, system, model, temp, self.rates.max_output(model, max_tok),
@@ -696,6 +719,8 @@ class LLMClient:
                         logger.warning(f"{e}; no other model of the tier has quota, waiting "
                                        f"{(e.retry_s or max_wait):.0f}s (tier downgrade {'allowed' if allow_down else 'not allowed'})")
                         if not allow_down and quota_hits > 6:
+                            self._notify("waiting", reason="Groq daily quota used up",
+                                         wait_s=round(min(e.retry_s or max_wait, max_wait)))
                             time.sleep(min(e.retry_s or max_wait, max_wait))
                         continue  # the planner sleeps until the block expires
                     failed.append(model)
@@ -751,13 +776,8 @@ class LLMClient:
             cost_usd=result.get("cost_usd", 0.0), latency_ms=result.get("request_ms", 0),
             wait_ms=result.get("wait_ms", 0), stop=result.get("stop"),
         )
-        for listener in list(self._call_listeners):
-            try:
-                listener({"session_id": session_id, "role": role_key, "task_id": task_id, "provider": provider,
-                          "model": model, "usage": result["usage"], "latency_ms": result.get("request_ms", 0),
-                          "is_degraded": result["is_degraded"]})
-            except Exception as e:
-                logger.debug(f"LLM call listener failed: {e}")
+        self._notify("done", session_id=session_id, role=role_key, task_id=task_id, provider=provider, model=model,
+                     usage=result["usage"], latency_ms=result.get("request_ms", 0), is_degraded=result["is_degraded"])
         return result
 
     def _plan_cloud_model(self, role: str, session_id: Optional[str], model: str, tier: Optional[str],
@@ -850,6 +870,7 @@ class LLMClient:
                         wait = max(float(m_msg.group(1)) + 0.5, wait)
                     if wait > 45.0 or attempt >= max_retries:
                         raise LLMRateLimitExhaustedError(f"Groq HTTP 429: {res.text}")
+                    self._notify("waiting", reason="Groq rate limit (429)", wait_s=round(wait))
                     time.sleep(wait)
                     wait_s += wait
                     continue
@@ -894,6 +915,7 @@ class LLMClient:
                 if isinstance(e, requests.exceptions.ConnectionError) and not network_available("api.groq.com"):
                     # The machine is offline (asleep, Wi-Fi dropped): wait for the network instead of handing
                     # the work to a much weaker local model.
+                    self._notify("waiting", reason="network is down; waiting for it to come back", wait_s=None)
                     waited = wait_for_network("api.groq.com", float(self.router.get("max_network_wait_s", 900)))
                     wait_s += waited
                     if network_available("api.groq.com"):

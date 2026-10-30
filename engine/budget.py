@@ -43,7 +43,7 @@ def load_pricing_rates() -> Dict[str, Any]:
     return {}
 
 
-def recompute_budget_step16(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def recompute_budget_step16(session_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Step 16 of Stage 4 Staffing (Handbook 2.7.5 & 5.1.6):
     Budget recomputed from real token counts so far plus estimates:
@@ -52,6 +52,7 @@ def recompute_budget_step16(session_id: str, db_path: str = DEFAULT_DB_PATH) -> 
     - cost: via config/model_pricing.json (local models: $0).
     Inputs (historical rates, real calls, pricing) shown next to result (Handbook 5.1.6).
     """
+    db_path = db_path or DEFAULT_DB_PATH
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     estimate_file = os.path.join(session_dir, "docs", "estimate.json")
     if not os.path.exists(estimate_file):
@@ -331,8 +332,9 @@ def raise_budget(
 # GATE 2 STATE & APPROVAL MANAGEMENT
 # ==============================================================================
 
-def get_gate2_state(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def get_gate2_state(session_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves current Gate 2 state from JSON file and SQLite approvals table."""
+    db_path = db_path or DEFAULT_DB_PATH
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     gate2_file = os.path.join(session_dir, "gate2_state.json")
     team_plan_file = os.path.join(session_dir, "docs", "team-plan.json")
@@ -429,11 +431,12 @@ def get_gate2_state(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str
 def save_gate2_approval_record(
     session_id: str,
     summary_markdown: str,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> str:
     """
     Stores Gate 2 approval requisition row in the approvals table (Handbook 24.1).
     """
+    db_path = db_path or DEFAULT_DB_PATH
     try:
         from skill_registry import init_approvals_db
     except ImportError:
@@ -478,12 +481,13 @@ def approve_gate2(
     session_id: str,
     client_notes: Optional[str] = None,
     note: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Records Gate 2 client approval in the approvals table and session state.
     Captures snapshot of team-plan.json SHA256 for post-approval invalidation tracking.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     client_notes = note or client_notes
     try:
         from skill_registry import init_approvals_db
@@ -542,7 +546,7 @@ def approve_gate2(
 def request_changes_gate2(
     session_id: str,
     feedback: str,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Handbook 2.7.5 & 2.5: Changes requested at Gate 2:
@@ -550,6 +554,7 @@ def request_changes_gate2(
     - Reopens HR / Recruiter
     - Records feedback as new Q- in qa_log.json routed through BA
     """
+    db_path = db_path or DEFAULT_DB_PATH
     try:
         from skill_registry import init_approvals_db
     except ImportError:
@@ -620,12 +625,13 @@ def request_changes_gate2(
     }
 
 
-def enforce_gate2_server_side(session_id: str, db_path: str = DEFAULT_DB_PATH) -> None:
+def enforce_gate2_server_side(session_id: str, db_path: Optional[str] = None) -> None:
     """
     Server-side 403 enforcement per Handbook 2.7.5:
     Any later stage (Scrum Master, build) returns 403 until Gate 2 is approved.
     A changed team plan or estimate after approval invalidates approval and returns 403.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     state = get_gate2_state(session_id, db_path=db_path)
     if not state.get("approved", False):
         status = state.get("status", "open")

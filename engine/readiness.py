@@ -45,7 +45,7 @@ def get_file_sha256(filepath: str) -> str:
     return hasher.hexdigest()
 
 
-def init_reviews_db(db_path: str = DEFAULT_DB_PATH) -> None:
+def init_reviews_db(db_path: Optional[str] = None) -> None:
     """
     Initializes SQLite reviews table per Handbook Chapter 24.1:
     CREATE TABLE reviews (
@@ -61,6 +61,7 @@ def init_reviews_db(db_path: str = DEFAULT_DB_PATH) -> None:
       at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """
+    db_path = db_path or DEFAULT_DB_PATH
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -263,13 +264,14 @@ def run_readiness_review(
     session_id: str,
     force_provider: Optional[str] = None,
     force_model: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Executes Tech Lead readiness review (Stage 5 Step 19b).
     Orchestrator calculates traceability matrix; high-tier LLM reviews and writes docs/readiness.md.
     Stores verdict in SQLite reviews table.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     docs_dir = os.path.join(session_dir, "docs")
     os.makedirs(docs_dir, exist_ok=True)
@@ -431,11 +433,12 @@ Follow the seven handbook sections. Be thorough, cite specific IDs, and render y
     }
 
 
-def get_readiness_state(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def get_readiness_state(session_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Queries current readiness state and validates whether it was invalidated
     by modifications to backlog.json, architecture.md, or prd.md.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     docs_dir = os.path.join(session_dir, "docs")
     state_file = os.path.join(session_dir, "readiness_state.json")
@@ -519,12 +522,13 @@ def get_readiness_state(session_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict
     }
 
 
-def enforce_readiness_server_side(session_id: str, db_path: str = DEFAULT_DB_PATH) -> None:
+def enforce_readiness_server_side(session_id: str, db_path: Optional[str] = None) -> None:
     """
     Server-side gate per Handbook Chapter 10.1.4 & 2.7.6 step 19b:
     No code is written until the verdict is ready.
     Returns HTTP 403 Forbidden with detailed reasons if not ready or invalidated.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     state = get_readiness_state(session_id, db_path)
     if not state.get("passed", False):
         status_name = state.get("status", "not_ready")

@@ -97,6 +97,8 @@ def llm_call_listener(db_path: Optional[str] = None):
     Paths resolve at call time, and only calls for an existing project are recorded.
     """
     def _listener(call: Dict[str, Any]) -> None:
+        if call.get("phase", "done") != "done":
+            return  # starts and waits are live progress (jobs.py), not ledger events
         sid = call.get("session_id")
         if not sid or sid == "global" or not os.path.isdir(os.path.join(DATA_PROJECTS_DIR, sid)):
             return

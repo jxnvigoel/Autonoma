@@ -1,3 +1,5 @@
+import { ArchitectureVisuals } from "./ArchitectureVisuals";
+import { ChecklistBody } from "./CompanyChecklist";
 import React, { useState } from "react";
 import {
   Layers,
@@ -49,6 +51,7 @@ interface ArchitectOutputViewerProps {
   isGenerating?: boolean;
   onGenerate?: () => void;
   canStart?: boolean;
+  sessionId?: string | null;
 }
 
 export const ArchitectOutputViewer: React.FC<ArchitectOutputViewerProps> = ({
@@ -61,15 +64,16 @@ export const ArchitectOutputViewer: React.FC<ArchitectOutputViewerProps> = ({
   isGenerating = false,
   onGenerate,
   canStart = false,
+  sessionId = null,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    "trd" | "openapi" | "schema" | "validators" | "judge"
-  >("trd");
+    "visual" | "checklist" | "trd" | "openapi" | "schema" | "validators" | "judge"
+  >("visual");
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
     let text = "";
-    if (activeTab === "trd") text = architectureContent;
+    if (activeTab === "trd" || activeTab === "visual" || activeTab === "checklist") text = architectureContent;
     else if (activeTab === "openapi") text = openapiContent;
     else if (activeTab === "schema") text = schemaContent;
     else if (activeTab === "validators")
@@ -170,6 +174,28 @@ export const ArchitectOutputViewer: React.FC<ArchitectOutputViewerProps> = ({
           <div className="flex items-center bg-brand-subtle rounded-lg p-0.5 border border-brand-border text-xs">
             <button
               type="button"
+              onClick={() => setActiveTab("visual")}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
+                activeTab === "visual"
+                  ? "bg-brand-card text-brand-headline shadow-2xs font-semibold"
+                  : "text-brand-body hover:text-brand-headline"
+              }`}
+            >
+              Visual
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("checklist")}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
+                activeTab === "checklist"
+                  ? "bg-brand-card text-brand-headline shadow-2xs font-semibold"
+                  : "text-brand-body hover:text-brand-headline"
+              }`}
+            >
+              Checklist
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab("trd")}
               className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
                 activeTab === "trd"
@@ -254,6 +280,10 @@ export const ArchitectOutputViewer: React.FC<ArchitectOutputViewerProps> = ({
 
       {/* Main Tab Content */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        {activeTab === "visual" && (
+          <ArchitectureVisuals sessionId={sessionId} refreshKey={String(architectureContent.length) + schemaContent.length + openapiContent.length} />
+        )}
+        {activeTab === "checklist" && <ChecklistBody sessionId={sessionId} initialTab="features" />}
         {activeTab === "trd" && (
           <div className="space-y-4 text-xs leading-relaxed text-brand-body">
             <pre className="font-mono text-xs whitespace-pre-wrap text-brand-headline bg-brand-bg/60 p-4 rounded-xl border border-brand-border select-text">
@@ -302,9 +332,26 @@ export const ArchitectOutputViewer: React.FC<ArchitectOutputViewerProps> = ({
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   <span>Stage 3 Step 12 Code-Level Validators (Zero LLM Tokens)</span>
                 </h4>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30">
-                  {validationResults?.passed_count || 3} / 3 Checks Passed
-                </span>
+                {(() => {
+                  // Counted from the validators' own results; nothing is shown as passed before they ran.
+                  if (!validationResults) {
+                    return (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-brand-subtle text-brand-body font-bold border border-brand-border">
+                        Not run yet
+                      </span>
+                    );
+                  }
+                  const checks = [validationResults.openapi_valid, validationResults.schema_valid, validationResults.traceability_valid];
+                  const passed = checks.filter(Boolean).length;
+                  const ok = passed === checks.length;
+                  return (
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${ok
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                      : "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30"}`}>
+                      {passed} / {checks.length} Checks Passed
+                    </span>
+                  );
+                })()}
               </div>
 
               <div className="space-y-2.5">
@@ -364,7 +411,9 @@ export const ArchitectOutputViewer: React.FC<ArchitectOutputViewerProps> = ({
                 </h4>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold font-mono text-brand-headline">
-                    Score: {judgeVerdict?.total || 24} / {judgeVerdict?.max || 24}
+                    {judgeVerdict && judgeVerdict.total != null
+                      ? `Score: ${judgeVerdict.total} / ${judgeVerdict.max ?? "?"}`
+                      : "Not reviewed yet"}
                   </span>
                   <span
                     className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${

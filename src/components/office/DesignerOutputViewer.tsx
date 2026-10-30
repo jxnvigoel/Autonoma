@@ -106,7 +106,7 @@ export const DesignerOutputViewer: React.FC<DesignerOutputViewerProps> = ({
   const providerStamp = extractProviderStamp(appFlowContent) || extractProviderStamp(designBriefContent);
   const judgePassed = Boolean(judgeVerdict?.pass);
   const judgeScore = judgeVerdict?.total ?? 0;
-  const judgeMax = judgeVerdict?.max ?? 24;
+  const judgeMax = judgeVerdict?.max ?? null;
   const validatorsPassed = Boolean(validationResults?.all_passed);
 
   return (
@@ -150,7 +150,7 @@ export const DesignerOutputViewer: React.FC<DesignerOutputViewerProps> = ({
             }`}
           >
             <Scale className="w-3.5 h-3.5" />
-            <span>Judge: {judgeScore}/{judgeMax}</span>
+            <span>Judge: {judgeMax != null ? `${judgeScore}/${judgeMax}` : "not reviewed"}</span>
           </div>
 
           {/* Copy Button */}
@@ -211,7 +211,9 @@ export const DesignerOutputViewer: React.FC<DesignerOutputViewerProps> = ({
                 : "bg-rose-500/20 text-rose-700 dark:text-rose-300"
             }`}
           >
-            {validationResults?.passed_count ?? 4}/{validationResults?.checks_count ?? 4}
+            {validationResults?.checks_count != null
+              ? `${validationResults.passed_count ?? 0}/${validationResults.checks_count}`
+              : "not run"}
           </span>
         </button>
 
@@ -398,7 +400,7 @@ export const DesignerOutputViewer: React.FC<DesignerOutputViewerProps> = ({
                 </div>
                 <div className="text-right">
                   <span className="text-base font-bold font-mono text-brand-headline">
-                    {judgeScore} / {judgeMax}
+                    {judgeMax != null ? `${judgeScore} / ${judgeMax}` : "Not reviewed yet"}
                   </span>
                   <p
                     className={`text-[10px] font-bold uppercase tracking-wider ${

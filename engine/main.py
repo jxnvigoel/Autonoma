@@ -26,13 +26,13 @@ except ImportError:
 
 # Import Unified LLM Client (Groq default, Ollama fallback)
 try:
-    from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
+    from llm_client import default_llm_client, query_llm, query_llm_with_meta, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
 except ImportError:
     try:
-        from engine.llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
+        from engine.llm_client import default_llm_client, query_llm, query_llm_with_meta, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
     except ImportError:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from llm_client import default_llm_client, query_llm, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
+        from llm_client import default_llm_client, query_llm, query_llm_with_meta, GroqKeyMissingError, load_pricing_config, OLLAMA_DEFAULT_MODEL
 
 # Import Specialist Skill Registry
 try:
@@ -369,6 +369,8 @@ class ChatResponse(BaseModel):
     response: str
     duration: float
     token_count: int
+    model: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class StatusResponse(BaseModel):
@@ -454,9 +456,10 @@ def get_status():
         msg = (f"Running locally on {gen_route['model']}. Some roles are below their target tier; "
                f"install a larger local model for better quality.")
     else:
-        status_val, msg = "ready", f"Running locally (Generator: {gen_route['model']}, Judge: {judge_route['model']})"
+        where = "on Groq" if gen_route["provider"] == "groq" else "locally"
+        status_val, msg = "ready", f"Running {where} (Generator: {gen_route['model']}, Judge: {judge_route['model']})"
     if cloud_on:
-        msg += f" Cloud enabled (Groq {'online' if groq_online else 'unreachable'})."
+        msg += f" Cloud enabled (Groq {'online' if groq_online else 'unreachable'}); Ollama is the fallback."
 
     return StatusResponse(
         status=status_val,
@@ -481,12 +484,13 @@ def get_models_endpoint():
     """
     agent_validations = {}
     all_valid = True
-    for role in ["ba", "pm", "architect", "designer", "hr", "recruiter", "scrum", "tech-lead", "backend", "frontend", "qa", "devops"]:
+    for role in ["general", "ba", "pm", "architect", "designer", "hr", "recruiter", "scrum", "tech-lead", "backend", "frontend", "qa", "devops"]:
         gen = default_llm_client.resolve_route(role)
         judge = default_llm_client.resolve_judge_route(role)
         valid = not judge["weaker_than_author"]
         all_valid = all_valid and valid
         agent_validations[role] = {
+            "generator_provider": gen["provider"],
             "generator_model": gen["model"],
             "generator_capability_score": gen["capability"],
             "judge_model": judge["model"],
@@ -498,6 +502,7 @@ def get_models_endpoint():
     return {
         "status": "success",
         "cloud_enabled": default_llm_client.cloud_enabled(),
+        "local_default_model": OLLAMA_DEFAULT_MODEL,
         "models": default_llm_client.fetch_groq_models(),
         "local_models": default_llm_client.list_ollama_models(),
         "role_configs": default_llm_client.role_configs,
@@ -591,13 +596,13 @@ def chat(req: ChatRequest):
 
     start_t = time.time()
     try:
-        response_text = query_llm(
+        response_text, meta = query_llm_with_meta(
             prompt=prompt,
             role="general",
             force_model=req.model if req.model else None
         )
         duration = time.time() - start_t
-        token_count = len(response_text.split()) * 2
+        token_count = int((meta.get("usage") or {}).get("completion_tokens") or 0)
 
         assistant_msg = {
             "id": str(uuid.uuid4()),
@@ -607,6 +612,8 @@ def chat(req: ChatRequest):
             "meta": {
                 "duration": duration,
                 "token_count": token_count,
+                "model": meta.get("model"),
+                "provider": meta.get("provider"),
             },
         }
         conversation_store.append(assistant_msg)
@@ -616,6 +623,8 @@ def chat(req: ChatRequest):
             response=response_text,
             duration=duration,
             token_count=token_count,
+            model=meta.get("model"),
+            provider=meta.get("provider"),
         )
     except GroqKeyMissingError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -1050,8 +1059,93 @@ def get_ba_session(session_id: str, authorization: Optional[str] = Header(None))
     }
 
 
+# Which desk a running stage job belongs to, so the office shows that agent as working.
+_JOB_AGENT = {"pm": "pm", "feasibility": "architect", "architect": "architect", "designer": "designer",
+              "hr": "hr", "recruiter": "recruiter", "scrum": "scrum", "readiness": "tech-lead"}
+
+
 @app.get("/office/status/{session_id}")
 def get_office_status(session_id: str):
+    result = _office_status_from_files(session_id)
+    agents = result.setdefault("agents", {})
+    agents.update(_delivery_desks(session_id, bool(result.get("gate2", {}).get("approved"))))
+    running = [j["kind"] for j in office_jobs.all_status(session_id) if j.get("status") == "running"]
+    for kind in running:
+        agent = agents.get(_JOB_AGENT.get(kind, ""))
+        if agent is not None:
+            agent["status"] = "working"
+            agent["running_job"] = kind
+    result["running_jobs"] = running
+    return result
+
+
+def _delivery_desks(session_id: str, gate2_approved: bool) -> Dict[str, Any]:
+    """Scrum, Tech Lead, Engineer and QA desks, from the backlog, the readiness review and the live build."""
+    session_dir = get_session_dir(session_id)
+    backlog = load_json(os.path.join(session_dir, "docs", "backlog.json"), default={}) or {}
+    stories = backlog.get("stories", []) if isinstance(backlog, dict) else []
+    readiness = load_json(os.path.join(session_dir, "readiness_state.json"), default={}) or {}
+    build = get_build_state(session_id)
+    by_status: Dict[str, int] = {}
+    for st in (build.get("stories") or {}).values():
+        by_status[st.get("status", "todo")] = by_status.get(st.get("status", "todo"), 0) + 1
+    building = build.get("thread_alive", False)
+    finished = build.get("status") == "complete"
+    coded = sum(by_status.get(k, 0) for k in ("merged", "qa", "done", "done_perf_not_run"))
+    tested = sum(by_status.get(k, 0) for k in ("done", "done_perf_not_run"))
+
+    def desk(id_, role, abbr, status_, has_output, output_name, unlocked, **extra):
+        return {"id": id_, "role": role, "abbr": abbr, "status": status_, "has_output": has_output,
+                "output_name": output_name, "can_start": unlocked, **extra}
+
+    return {
+        "scrum": desk("scrum", "Scrum Master", "SCRUM",
+                      "done" if stories else "waiting-on-you" if gate2_approved else "idle",
+                      bool(stories), "docs/backlog.json", gate2_approved, story_count=len(stories)),
+        "tech-lead": desk("tech-lead", "Tech Lead", "TL",
+                          "done" if readiness else "waiting-on-you" if stories else "idle",
+                          bool(readiness), "docs/readiness.md", bool(stories), verdict=readiness.get("verdict")),
+        "engineer": desk("engineer", "Software Engineer", "ENG",
+                         "working" if building and by_status.get("building", 0) + by_status.get("fixing", 0)
+                         else "done" if finished else "idle",
+                         coded > 0, "repo/", build.get("status") != "not_started",
+                         stories_coded=coded, stories_total=len(build.get("stories") or {})),
+        "qa": desk("qa", "Quality Assurance", "QA",
+                   "working" if building and by_status.get("qa", 0) else "done" if finished else "idle",
+                   tested > 0, "test results", build.get("status") != "not_started", stories_tested=tested),
+    }
+
+
+def get_gate1_state(session_id: str) -> Dict[str, Any]:
+    """
+    Gate 1 as recorded by /gate1/approve and /gate1/request-changes (session_state.json): the one place
+    every stage reads it from.
+    """
+    session_dir = get_session_dir(session_id)
+    state = load_json(os.path.join(session_dir, "session_state.json"), default={}) or {}
+    has_prd = os.path.exists(os.path.join(session_dir, "docs", "prd.md"))
+    approved = bool(state.get("gate1_approved"))
+    if approved:
+        status_ = "approved"
+    elif state.get("gate1_feedback") and state.get("gate1_status") == "changes_requested":
+        status_ = "changes_requested"
+    else:
+        status_ = "pending" if has_prd else "waiting_for_prd"
+    return {"approved": approved, "status": status_, "approved_at": state.get("gate1_approval_timestamp"),
+            "feedback": state.get("gate1_feedback") if status_ == "changes_requested" else None,
+            "known_issues_accepted": bool(state.get("gate1_known_issues_accepted")),
+            "judge": state.get("gate1_judge_verdict"), "has_prd": has_prd}
+
+
+@app.get("/gate1/status/{session_id}")
+def get_gate1_status_endpoint(session_id: str):
+    _require_project(session_id)
+    gate1 = get_gate1_state(session_id)
+    return {"session_id": session_id, "gate1": gate1, "has_prd": gate1["has_prd"],
+            "has_feasibility": os.path.exists(os.path.join(get_session_dir(session_id), "docs", "feasibility.md"))}
+
+
+def _office_status_from_files(session_id: str):
     session_dir = get_session_dir(session_id)
     intake_data = load_json(os.path.join(session_dir, "intake.json"), default={})
     ba_state = load_json(os.path.join(session_dir, "ba_state.json"), default={})
@@ -1082,8 +1176,8 @@ def get_office_status(session_id: str):
         pm_status = "idle"
 
     # Gate 1, Architect & Designer status
-    gate1_state = load_json(os.path.join(session_dir, "gate1_state.json"), default={})
-    gate1_approved = gate1_state.get("approved", False)
+    gate1_state = get_gate1_state(session_id)
+    gate1_approved = gate1_state["approved"]
     arch_state = load_json(os.path.join(session_dir, "architect_state.json"), default={})
     arch_path = os.path.join(session_dir, "docs", "architecture.md")
     has_arch = os.path.exists(arch_path)
@@ -1113,8 +1207,7 @@ def get_office_status(session_id: str):
         designer_status = "idle"
 
     # Stage 4 Staffing (HR & Recruiter) & Gate 2 status
-    team_plan_path = os.path.join(session_dir, "docs", "team-plan.json")
-    has_team_plan = os.path.exists(team_plan_path)
+    has_team_plan = office_checklist.hr_planned(os.path.join(session_dir, "docs"))  # HR's plan, not the Architect's draft
     staffing_report_path = os.path.join(session_dir, "docs", "staffing-report.md")
     has_staffing_report = os.path.exists(staffing_report_path)
 
@@ -1146,9 +1239,10 @@ def get_office_status(session_id: str):
         "timeline": intake_data.get("timeline", ""),
         "budget": intake_data.get("budget", ""),
         "gate1": {
-            "status": gate1_state.get("status", "pending" if has_prd else "waiting_for_prd"),
+            "status": gate1_state["status"],
             "approved": gate1_approved,
-            "approved_at": gate1_state.get("approved_at"),
+            "approved_at": gate1_state["approved_at"],
+            "feedback": gate1_state["feedback"],
             "has_feasibility": has_feasibility,
             "has_prd": has_prd,
         },
@@ -1554,9 +1648,14 @@ def get_hr_team_plan(session_id: str):
     """Retrieves docs/team-plan.json for a project."""
     session_dir = get_session_dir(session_id)
     plan_path = os.path.join(session_dir, "docs", "team-plan.json")
-    if not os.path.exists(plan_path):
-        raise HTTPException(status_code=404, detail="Team plan not generated yet")
-    return load_json(plan_path)
+    if not office_checklist.hr_planned(os.path.join(session_dir, "docs")):
+        # The Architect's draft seats are input for HR, not HR's plan.
+        raise HTTPException(status_code=404, detail="HR has not planned the team yet")
+    try:
+        from hr import team_plan_view
+    except ImportError:
+        from engine.hr import team_plan_view
+    return team_plan_view(load_json(plan_path), os.path.join(session_dir, "docs"), session_id)
 
 
 @app.post("/recruiter/hire/{session_id}")
@@ -1571,6 +1670,8 @@ def run_recruiter_hiring(session_id: str):
     6. Persists hired agents into SQLite 'agents' table.
     7. Synthesizes docs/staffing-report.md and registers Gate 2 approval.
     """
+    if not office_checklist.hr_planned(os.path.join(get_session_dir(session_id), "docs")):
+        raise HTTPException(status_code=409, detail="HR has not planned the team yet; the Recruiter hires from HR's plan.")
     try:
         result = execute_recruiter_hiring(session_id, data_projects_dir=DATA_PROJECTS_DIR)
         return result
@@ -1616,6 +1717,9 @@ def approve_gate2_endpoint(req: Gate2ApprovalRequest):
     Approves Gate 2 staffing and budget plan (Handbook 2.7.5 Step 17).
     Records approval in SQLite 'approvals' table and unlocks Stage 5 (Scrum Master).
     """
+    docs = os.path.join(get_session_dir(req.session_id), "docs")
+    if not office_checklist.hr_planned(docs) or not os.path.exists(os.path.join(docs, "staffing-report.md")):
+        raise HTTPException(status_code=409, detail="Gate 2 needs HR's team plan and the Recruiter's staffing report first.")
     return approve_gate2(session_id=req.session_id, client_notes=req.client_notes)
 
 
@@ -1685,7 +1789,7 @@ def start_scrum_stage(session_id: str):
 @app.get("/scrum/backlog/{session_id}")
 def get_scrum_backlog(session_id: str):
     """Returns current project backlog from docs/backlog.json."""
-    session_dir = os.path.join("data", "projects", session_id)
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     backlog_file = os.path.join(session_dir, "docs", "backlog.json")
     if os.path.exists(backlog_file):
         try:
@@ -1699,7 +1803,7 @@ def get_scrum_backlog(session_id: str):
 @app.get("/scrum/plan/{session_id}")
 def get_scrum_implementation_plan(session_id: str):
     """Returns docs/implementation-plan.md and scheduling metrics."""
-    session_dir = os.path.join("data", "projects", session_id)
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     plan_file = os.path.join(session_dir, "docs", "implementation-plan.md")
     content = ""
     if os.path.exists(plan_file):
@@ -1729,7 +1833,7 @@ def get_scrum_implementation_plan(session_id: str):
 @app.get("/scrum/gantt/{session_id}")
 def get_scrum_gantt(session_id: str):
     """Returns Gantt chart data and Mermaid diagram for the backlog."""
-    session_dir = os.path.join("data", "projects", session_id)
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     backlog_file = os.path.join(session_dir, "docs", "backlog.json")
     stories = []
     if os.path.exists(backlog_file):
@@ -1750,7 +1854,7 @@ def get_scrum_gantt(session_id: str):
 @app.get("/scrum/daily-report/{session_id}")
 def get_scrum_daily_report(session_id: str, day: int = 1):
     """Returns the daily report (reports/day-NN.md)."""
-    session_dir = os.path.join("data", "projects", session_id)
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     report_file = os.path.join(session_dir, "reports", f"day-{day:02d}.md")
     if os.path.exists(report_file):
         with open(report_file, "r", encoding="utf-8") as f:
@@ -1786,7 +1890,7 @@ def get_readiness_status_endpoint(session_id: str):
     Handbook 10.1.4: Changes to backlog, architecture, or PRD invalidate the verdict.
     """
     state = get_readiness_state(session_id)
-    session_dir = os.path.join("data", "projects", session_id)
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     readiness_file = os.path.join(session_dir, "docs", "readiness.md")
     content = ""
     if os.path.exists(readiness_file):
@@ -2048,6 +2152,73 @@ def deliver_endpoint(session_id: str):
     """Delivery: local repo bundle, docs, runbook and final report. Nothing is pushed or uploaded."""
     _require_project(session_id)
     return office_release.deliver(session_id)
+
+
+try:
+    import checklist as office_checklist
+except ImportError:
+    from engine import checklist as office_checklist
+
+
+@app.get("/checklist/{session_id}")
+def get_checklist(session_id: str):
+    """The company checklist: stages, features and acceptance tests, each with its owner, read live."""
+    _require_project(session_id)
+    running = [j["kind"] for j in office_jobs.all_status(session_id) if j.get("status") == "running"]
+    return office_checklist.build_checklist(session_id, DATA_PROJECTS_DIR, running_jobs=running)
+
+
+try:
+    import project_files as office_project_files
+except ImportError:
+    from engine import project_files as office_project_files
+app.include_router(office_project_files.router)
+
+# =========================================================================
+# Background jobs for long agent stages: survive leaving the screen, no duplicates
+# =========================================================================
+
+try:
+    import jobs as office_jobs
+except ImportError:
+    from engine import jobs as office_jobs
+
+default_llm_client.add_call_listener(office_jobs.on_llm_call)  # live "what is the agent doing" feed
+
+_STAGE_ROUTES = {
+    "pm": "/pm/start",
+    "feasibility": "/feasibility/start",
+    "architect": "/architect/start",
+    "designer": "/designer/generate/{session_id}",
+    "hr": "/hr/plan/{session_id}",
+    "recruiter": "/recruiter/hire/{session_id}",
+    "scrum": "/scrum/start/{session_id}",
+    "readiness": "/readiness/{session_id}",
+}
+office_jobs.register_from_routes(app, _STAGE_ROUTES)
+# Every stage router is attached above; say loudly if one is missing instead of failing on a click.
+if office_jobs.missing_routes(app, _STAGE_ROUTES):
+    logger.error(f"Stage jobs without a route (their buttons will fail): "
+                 f"{office_jobs.missing_routes(app, _STAGE_ROUTES)}")
+
+
+@app.post("/jobs/{kind}/{session_id}")
+def start_job_endpoint(kind: str, session_id: str):
+    """Starts a stage in the background (or returns the one already running) and answers at once."""
+    validate_session_id(session_id)
+    return office_jobs.start(session_id, kind)
+
+
+@app.get("/jobs/{session_id}")
+def list_jobs_endpoint(session_id: str):
+    validate_session_id(session_id)
+    return {"session_id": session_id, "jobs": office_jobs.all_status(session_id)}
+
+
+@app.get("/jobs/{kind}/{session_id}")
+def get_job_endpoint(kind: str, session_id: str):
+    validate_session_id(session_id)
+    return office_jobs.status(session_id, kind)
 
 
 if __name__ == "__main__":

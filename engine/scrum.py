@@ -44,7 +44,7 @@ DATA_PROJECTS_DIR = os.path.join(PROJECT_ROOT, "data", "projects")
 DAILY_REPORT_TEMPLATE = os.path.join(PROJECT_ROOT, "templates", "daily-report.md")
 
 
-def init_tasks_db(db_path: str = DEFAULT_DB_PATH) -> None:
+def init_tasks_db(db_path: Optional[str] = None) -> None:
     """
     Initializes the tasks table in SQLite per Handbook Chapter 24.1:
     CREATE TABLE tasks (
@@ -68,6 +68,7 @@ def init_tasks_db(db_path: str = DEFAULT_DB_PATH) -> None:
       PRIMARY KEY (project_id, id)
     );
     """
+    db_path = db_path or DEFAULT_DB_PATH
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -379,13 +380,14 @@ def render_implementation_plan(
 def sync_stories_to_tasks(
     session_id: str,
     stories: List[Dict[str, Any]],
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> None:
     """
     Syncs backlog stories into SQLite tasks table.
     Handbook Chapter 24.1:
     One row per story in tasks table.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     init_tasks_db(db_path)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -425,7 +427,7 @@ def sync_stories_to_tasks(
 def generate_daily_report(
     session_id: str,
     day: int = 1,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> str:
     """
     Assembles daily report (reports/day-NN.md) from task records and token ledger.
@@ -433,6 +435,7 @@ def generate_daily_report(
     The daily report states facts from task records, lists blockers first, and ends with what needs the client.
     Every report number matches the task records.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     init_tasks_db(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -692,13 +695,14 @@ def generate_backlog_and_plan(
     session_id: str,
     force_provider: Optional[str] = None,
     force_model: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Stage 5 Planning: Generates docs/backlog.json, runs deterministic checks,
     creates docs/implementation-plan.md, syncs tasks table, and writes initial daily report.
     Handbook 2.7.6 steps 18-19.
     """
+    db_path = db_path or DEFAULT_DB_PATH
     session_dir = os.path.join(DATA_PROJECTS_DIR, session_id)
     docs_dir = os.path.join(session_dir, "docs")
     reports_dir = os.path.join(session_dir, "reports")

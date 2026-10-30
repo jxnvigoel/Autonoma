@@ -1042,20 +1042,37 @@ def run_architecture_code_audits(
         'section', 'notes', 'overview', 'summary', 'description', 'payload', 'body', 'data',
         # standard engineering acronyms the agents' own templates use
         'rbac', 'crud', 'uuid', 'utc', 'jwt', 'sql', 'ddl', 'csv', 'ui', 'ux', 'mvp', 'sla', 'slo', 'sli',
-        'tls', 'ssl', 'rest', 'yaml', 'stdlib', 'wsgi', 'asgi', 'orm', 'crypto', 'bcrypt', 'argon2id', 'pbkdf2'
+        'tls', 'ssl', 'rest', 'yaml', 'stdlib', 'wsgi', 'asgi', 'orm', 'crypto', 'bcrypt', 'argon2id', 'pbkdf2',
+        # Choosing technology is the architecture's job, so ordinary stack and tooling words are expected here.
+        # (The check is for foreign domain terms, e.g. an aircraft registry showing up in a to-do app.)
+        'frontend', 'backend', 'fullstack', 'framework', 'frameworks', 'library', 'libraries', 'templating',
+        'template', 'templates', 'static', 'asset', 'assets', 'stylesheet', 'css', 'html', 'javascript', 'automation',
+        'pipeline', 'pipelines', 'continuous', 'integration', 'delivery', 'lint', 'linter', 'formatter', 'testing',
+        'tests', 'testsuite', 'unit', 'e2e', 'fixture', 'fixtures', 'mock', 'coverage', 'pytest', 'unittest',
+        'jest', 'vitest', 'playwright', 'flask', 'django', 'bottle', 'starlette', 'uvicorn', 'gunicorn', 'jinja',
+        'jinja2', 'mako', 'pydantic', 'sqlalchemy', 'alembic', 'pyjwt', 'passlib', 'nginx', 'github', 'actions',
+        'makefile', 'make', 'bootstrap', 'bulma', 'tailwind', 'vite', 'webpack', 'npm', 'pip', 'venv', 'wheel',
+        'wheels', 'monolith', 'monolithic', 'layer', 'layers', 'module', 'modules', 'adapter', 'repository',
+        'process', 'thread', 'worker', 'workers', 'queue', 'scheduler', 'cron', 'websocket', 'polling', 'webhook',
+        'nfr', 'scalability', 'availability', 'maintainability', 'usability', 'accessibility', 'portability'
     }
 
     arch_bold_phrases = re.findall(r"\*\*([^*]+)\*\*", arch_text)
     arch_flagged = set()
     for phrase in arch_bold_phrases:
         p_clean = phrase.strip()
-        words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", p_clean)]
+        # Code names (`hashlib.pbkdf2_hmac`) are technical identifiers the architecture chooses, not domain terms.
+        prose = re.sub(r"`[^`]*`", " ", p_clean)
+        tokens = re.findall(r"\b[a-zA-Z]{3,}\b", prose)
+        words = [w.lower() for w in tokens]
         if not words:
             continue
         novel_words = [w for w in words if not _known_word(w, grounding_vocab, standard_arch_vocab)]
-        # A bold name is a term the document asserts; any word foreign to both this project's documents and
-        # the handbook marks it as contamination (for example an aircraft registry named in a to-do app).
-        if novel_words and p_clean.lower() not in arch_flagged:
+        # Contamination is a foreign *named thing* (an "Airframe Registry" in a to-do app): a name of two or more
+        # capitalised words, at least half of them foreign to this project's documents and the handbook.
+        # A bold label such as "Data durability", "Frequency:" or "200 bytes" is ordinary architecture prose.
+        is_name = len(tokens) >= 2 and all(t[0].isupper() for t in tokens)
+        if is_name and len(novel_words) * 2 >= len(words) and p_clean.lower() not in arch_flagged:
             arch_flagged.add(p_clean.lower())
             unsupported_claims.append({
                 "section": "Architecture Specification",
@@ -1065,10 +1082,13 @@ def run_architecture_code_audits(
 
     # Pairs of unknown words count only when they look like a named thing (Title Case in the text);
     # ordinary prose made of uncommon words is not contamination.
-    all_arch_tokens = re.findall(r"\b[a-zA-Z]{3,}\b", arch_text)
+    token_matches = list(re.finditer(r"\b[a-zA-Z]{3,}\b", arch_text))
+    all_arch_tokens = [m.group(0) for m in token_matches]
     all_arch_words = [t.lower() for t in all_arch_tokens]
     for i in range(len(all_arch_words) - 1):
         w1, w2 = all_arch_words[i], all_arch_words[i + 1]
+        if arch_text[token_matches[i].end():token_matches[i + 1].start()] != " ":
+            continue  # a comma, bracket, table border or line break: separate items, not one name
         named = all_arch_tokens[i][0].isupper() and all_arch_tokens[i + 1][0].isupper()
         if named and (not _known_word(w1, grounding_vocab, standard_arch_vocab) and
                       not _known_word(w2, grounding_vocab, standard_arch_vocab)):
@@ -1103,11 +1123,14 @@ def run_architecture_code_audits(
     # 4. Schema Structural Check (Item A.2 & D.11)
     if schema_text is None:
         session_id = parsed_ba.get("session_id")
-        candidate_paths = [
-            os.path.join("data", "projects", str(session_id), "docs", "schema.md") if session_id else None,
-            os.path.join(os.getcwd(), "docs", "schema.md"),
-            "docs/schema.md"
-        ]
+        # Only this project's own schema: never a file that happens to sit in the current folder.
+        projects_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "projects")
+        try:
+            import main as _main
+            projects_dir = _main.DATA_PROJECTS_DIR
+        except Exception:
+            pass
+        candidate_paths = [os.path.join(projects_dir, str(session_id), "docs", "schema.md") if session_id else None]
         for cp in candidate_paths:
             if cp and os.path.exists(cp):
                 try:
@@ -1190,6 +1213,21 @@ def run_architecture_code_audits(
                 "section": "6. API / 7. Data model",
                 "text": f"Feature {f} unmapped",
                 "reason": f"Quality Bar 7.2.5 violation: Feature [{f}] from PRD is not mapped in architecture.md"
+            })
+
+    # 8b. Cited requirement ids must exist upstream: an invented [NFR-07] is a hallucination, whatever words follow it.
+    known_ids = set(re.findall(r"\b(?:F|FR|NFR)-\d+\b", prd_text))
+    for n in parsed_ba.get("non_functional_reqs", []) or []:
+        known_ids.add(str(n.get("id", "")))
+    for r_ in parsed_ba.get("functional_reqs", []) or parsed_ba.get("functional_requirements", []) or []:
+        if isinstance(r_, dict):
+            known_ids.add(str(r_.get("id", "")))
+    if known_ids:
+        for cited in sorted(set(re.findall(r"\b(?:F|FR|NFR)-\d+\b", arch_text)) - known_ids):
+            unsupported_claims.append({
+                "section": "Source Grounding",
+                "text": f"[{cited}]",
+                "reason": f"Cited requirement {cited} does not exist in this project's PRD or requirements (invented id)"
             })
 
     # 9. Check Semantic Support for Cited Sources (Item D.11)
@@ -1374,6 +1412,20 @@ def score_architecture_deterministically(
     }
 
 
+def adr_context_for_judge(docs_dir: str, per_adr_chars: int = 1400) -> str:
+    """The ADR files as the Judge should read them: each decision's text, without the generation metadata."""
+    out = ""
+    adr_dir = os.path.join(docs_dir, "adr")
+    if not os.path.isdir(adr_dir):
+        return out
+    for fn in sorted(os.listdir(adr_dir)):
+        with open(os.path.join(adr_dir, fn), "r", encoding="utf-8", errors="ignore") as f:
+            body = re.sub(r"<!--.*?-->", "", f.read(), flags=re.S)
+        body = re.sub(r"^> \*\*Artifact Provenance\*\*[^\n]*$", "", body, flags=re.M).strip()
+        out += f"\n--- {fn} ---\n{body[:per_adr_chars]}\n"
+    return out
+
+
 def evaluate_architecture_with_judge(
     arch_text: str,
     prd_text: str,
@@ -1452,6 +1504,31 @@ Return ONLY valid JSON matching the Judge schema."""
     llm_succeeded = False
 
     if query_llm_with_meta:
+        # Each chunk also sees the documents its criteria are about: the ADR files for the trade-off criterion,
+        # the schema and API list for traceability. Without them the Judge scores what it cannot see.
+        sid_for_docs = session_id or (parsed_ba or {}).get("session_id")
+        docs_dir = None
+        if sid_for_docs:
+            try:
+                import main as _main
+                docs_dir = os.path.join(_main.DATA_PROJECTS_DIR, str(sid_for_docs), "docs")
+            except Exception:
+                docs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "projects",
+                                        str(sid_for_docs), "docs")
+        adr_context = adr_context_for_judge(docs_dir) if docs_dir else ""
+        api_context = ""
+        if docs_dir and os.path.exists(os.path.join(docs_dir, "openapi.yaml")):
+            with open(os.path.join(docs_dir, "openapi.yaml"), "r", encoding="utf-8", errors="ignore") as f:
+                api_context = "\n".join(l.strip() for l in f if re.search(r"summary:|^\s{2}/", l))[:1500]
+        adr_index = "; ".join(f"{m.group(1)}: {m.group(2).strip()}" for m in re.finditer(r"--- (ADR-\d+)\.md ---\n#\s*ADR-\d+:?\s*([^\n]*)", adr_context))
+        adr_line = f"\nADRS THAT EXIST (docs/adr/): {adr_index}\n" if adr_index else ""
+        extra_by_chunk = {
+            "chunk_1_stack_adrs": f"\nADR DOCUMENTS (docs/adr/):{adr_context or ' none written yet'}\n" if adr_context or docs_dir else "",
+            "chunk_2_api_schema": (f"\nSCHEMA (docs/schema.md, defines the TBL- ids):\n{(schema_text or '')[:2500]}\n"
+                                   f"\nAPI ENDPOINTS (docs/openapi.yaml):\n{api_context}\n{adr_line}"),
+            "chunk_3_stride_ops": adr_line,
+        }
+
         all_chunks_ok = True
         for chunk_id, chunk_content, target_criteria in chunks:
             chunk_rubric = [c for c in rubric_data.get("criteria", []) if c.get("id") in target_criteria]
@@ -1470,7 +1547,7 @@ CANDIDATE ARCHITECTURE SECTION CHUNK:
 ```markdown
 {chunk_content}
 ```
-
+{extra_by_chunk.get(chunk_id, "")}
 Score the target criteria on 0-3 with specific evidence quotes and concrete fixes.
 List any unsupported claims or over-engineering in `unsupported_claims`.
 Return ONLY valid JSON matching the Judge schema."""

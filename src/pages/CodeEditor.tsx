@@ -18,7 +18,15 @@ import { Header } from "../components/Header";
 import { AgentPanel } from "../components/editor/AgentPanel";
 import { TerminalPanel } from "../components/editor/TerminalPanel";
 import { FileTree } from "../components/editor/FileTree";
-import { EngineStatus } from "../lib/engine";
+import {
+  EngineStatus,
+  apiGetBuildStatus,
+  apiGetProjectFile,
+  apiGetProjectTree,
+  apiSaveProjectFile,
+} from "../lib/engine";
+import { useConversation } from "../context/ConversationContext";
+import { GitHistory } from "../components/editor/GitHistory";
 import { TreeNode } from "../types/electron";
 import {
   openFolderDialog,
@@ -45,6 +53,8 @@ interface OpenTab {
   language: string;
   content: string;
   isDirty?: boolean;
+  readOnly?: boolean;
+  mtime?: number;
 }
 
 function detectLanguage(filePath: string): string {
@@ -67,6 +77,8 @@ function detectLanguage(filePath: string): string {
       return "html";
     case "md":
       return "markdown";
+    case "diff":
+      return "diff";
     default:
       return "plaintext";
   }
@@ -81,6 +93,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   onOpenOffice,
   onOpenChat,
 }) => {
+  const { sessionId, intakeData } = useConversation();
+  // "project": the open project's repo/ and docs/ through the engine (works in a browser too).
+  // "folder": any folder chosen with Open Folder (Electron only).
+  const [source, setSource] = useState<"project" | "folder" | "none">(sessionId ? "project" : "none");
   const [rootFolderPath, setRootFolderPath] = useState<string>("");
   const [rootFolderName, setRootFolderName] = useState<string>("");
   const [fileTree, setFileTree] = useState<TreeNode[]>([]);
@@ -90,6 +106,21 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [isExplorerOpen, setIsExplorerOpen] = useState<boolean>(true);
   const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(true);
   const [savedStatus, setSavedStatus] = useState<boolean>(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  const [buildRunning, setBuildRunning] = useState<boolean>(false);
+  const [projectRepoPath, setProjectRepoPath] = useState<string>("");
+  const [sidePanel, setSidePanel] = useState<"files" | "history">("files");
+
+  // A commit's changes open as a read-only tab next to the files.
+  const openDiffTab = (title: string, diff: string) => {
+    const id = `diff:${title}`;
+    setOpenTabs((prev) =>
+      prev.some((t) => t.id === id)
+        ? prev
+        : [...prev, { id, path: `history/${title}`, name: title, language: "diff", content: diff, readOnly: true }]
+    );
+    setActiveTabId(id);
+  };
 
   // Load directory tree
   const loadDirectory = useCallback(async (dirPath: string) => {
@@ -98,42 +129,81 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       setRootFolderPath(result.rootPath);
       setRootFolderName(result.rootName);
       setFileTree(result.tree);
+      setSource("folder");
     } catch (err) {
-      console.warn("Could not read directory tree:", err);
+      setEditorError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
-  // On mount: try to load initial folder
-  useEffect(() => {
-    // If in Electron, we can try to read current directory
-    if (window.electronAPI?.readDirectory) {
-      // Default initial load
-      loadDirectory(".");
-    } else {
-      // Browser fallback initial files
-      const defaultTab: OpenTab = {
-        id: "app-tsx",
-        path: "src/App.tsx",
-        name: "App.tsx",
-        language: "typescript",
-        content: `import React from "react";
-import { Header } from "./components/Header";
-import { CodeEditor } from "./pages/CodeEditor";
-
-export const App: React.FC = () => {
-  return (
-    <div className="min-h-screen bg-brand-bg text-brand-headline">
-      <CodeEditor />
-    </div>
-  );
-};
-
-export default App;`,
-      };
-      setOpenTabs([defaultTab]);
-      setActiveTabId("app-tsx");
+  const loadProjectTree = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const result = await apiGetProjectTree(sessionId);
+      setRootFolderPath("");
+      setRootFolderName(intakeData?.projectName || "Project");
+      setFileTree(result.tree as TreeNode[]);
+      setProjectRepoPath(result.repo_path || "");
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : String(err));
     }
-  }, [loadDirectory]);
+  }, [sessionId, intakeData?.projectName]);
+
+  // Open the current project's files; switching projects switches the editor with it.
+  useEffect(() => {
+    setOpenTabs([]);
+    setActiveTabId("");
+    setEditorError(null);
+    if (sessionId) {
+      setSource("project");
+      loadProjectTree();
+    } else {
+      setSource("none");
+      setFileTree([]);
+      setRootFolderName("");
+    }
+  }, [sessionId, loadProjectTree]);
+
+  // While the build is running, follow what the agents write: refresh the tree and reload open
+  // files that changed on disk (files with unsaved edits are left alone).
+  useEffect(() => {
+    if (source !== "project" || !sessionId) return;
+    let alive = true;
+    const tick = async () => {
+      const build = await apiGetBuildStatus(sessionId).catch(() => null);
+      if (!alive) return;
+      const running = Boolean(build?.thread_alive);
+      setBuildRunning(running);
+      if (!running) return;
+      await loadProjectTree();
+      setOpenTabs((tabs) => {
+        tabs
+          .filter((t) => !t.isDirty && !t.id.startsWith("diff:"))
+          .forEach((t) =>
+            apiGetProjectFile(sessionId, t.path)
+              .then((f) => {
+                if (!alive || f.mtime === t.mtime) return;
+                setOpenTabs((cur) =>
+                  cur.map((c) => (c.id === t.id && !c.isDirty ? { ...c, content: f.content, mtime: f.mtime } : c))
+                );
+              })
+              .catch(() => undefined)
+          );
+        return tabs;
+      });
+    };
+    tick();
+    const t = setInterval(tick, 4000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [source, sessionId, loadProjectTree]);
+
+  const handleCreateProjectFile = async (dirPath: string, name: string) => {
+    if (!sessionId) return;
+    await apiSaveProjectFile(sessionId, `${dirPath}/${name}`, "");
+    await loadProjectTree();
+  };
 
   const handleOpenFolder = async () => {
     try {
@@ -157,27 +227,38 @@ export default App;`,
     }
 
     // Read real file content
+    setEditorError(null);
     try {
-      let content = "";
-      if (window.electronAPI?.readFile) {
-        content = await readFileContent(node.path);
+      let newTab: OpenTab;
+      if (source === "project" && sessionId) {
+        const f = await apiGetProjectFile(sessionId, node.path);
+        newTab = {
+          id: node.path,
+          path: node.path,
+          name: node.name,
+          language: detectLanguage(node.name),
+          content: f.content,
+          readOnly: !f.editable,
+          mtime: f.mtime,
+        };
+      } else {
+        newTab = {
+          id: node.path,
+          path: node.path,
+          name: node.name,
+          language: detectLanguage(node.name),
+          content: await readFileContent(node.path),
+        };
       }
-      const newTab: OpenTab = {
-        id: node.path,
-        path: node.path,
-        name: node.name,
-        language: detectLanguage(node.name),
-        content,
-      };
-
       setOpenTabs((prev) => [...prev, newTab]);
       setActiveTabId(newTab.id);
     } catch (err) {
-      console.error(`Failed to read file ${node.path}:`, err);
+      setEditorError(`Could not open ${node.path}: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
   const handleContentChange = (newContent: string) => {
+    if (openTabs.find((t) => t.id === activeTabId)?.readOnly) return;
     setOpenTabs((prev) =>
       prev.map((tab) =>
         tab.id === activeTabId
@@ -189,21 +270,31 @@ export default App;`,
 
   const handleSave = async () => {
     const current = openTabs.find((t) => t.id === activeTabId);
-    if (!current) return;
+    if (!current || !current.isDirty) return;
+    if (current.readOnly) {
+      setEditorError(`${current.path} is read-only here (approved document).`);
+      return;
+    }
 
+    setEditorError(null);
     try {
-      if (window.electronAPI?.writeFile) {
+      let mtime: number | undefined;
+      if (source === "project" && sessionId) {
+        mtime = (await apiSaveProjectFile(sessionId, current.path, current.content)).mtime;
+      } else if (window.electronAPI?.writeFile) {
         await saveFileContent(current.path, current.content);
+      } else {
+        throw new Error("Saving needs the desktop app or an open project");
       }
       setOpenTabs((prev) =>
         prev.map((tab) =>
-          tab.id === activeTabId ? { ...tab, isDirty: false } : tab
+          tab.id === activeTabId ? { ...tab, isDirty: false, mtime: mtime ?? tab.mtime } : tab
         )
       );
       setSavedStatus(true);
       setTimeout(() => setSavedStatus(false), 2000);
     } catch (err) {
-      console.error("Save failed:", err);
+      setEditorError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -232,11 +323,17 @@ export default App;`,
     openTabs.find((t) => t.id === activeTabId) ||
     openTabs[0] || {
       id: "empty",
-      path: "untitled.txt",
-      name: "untitled.txt",
+      path: "",
+      name: "No file open",
       language: "plaintext",
-      content: "// No file open. Select a file from the explorer on the left or click 'Open Folder'.",
-    };
+      content:
+        source === "project"
+          ? "// Select a file on the left. repo/ is the code the agents build (editable); docs/ holds the approved documents (read-only)."
+          : source === "folder"
+          ? "// Select a file from the explorer on the left."
+          : "// No project open. Open a project from Projects, or use 'Open Folder' in the desktop app.",
+      readOnly: true,
+    } as OpenTab;
 
   const lines = activeTab.content.split("\n");
 
@@ -392,15 +489,31 @@ export default App;`,
         {/* Left Real File Tree Explorer */}
         {isExplorerOpen && (
           <aside className="w-64 border-r border-brand-border bg-brand-card/70 flex flex-col shrink-0 select-none transition-colors duration-200">
+            {source === "project" && sessionId && (
+              <div className="grid grid-cols-2 m-2 mb-0 p-0.5 rounded-lg bg-brand-subtle text-[11px] font-semibold shrink-0">
+                {(["files", "history"] as const).map((p) => (
+                  <button key={p} type="button" onClick={() => setSidePanel(p)}
+                    className={cn("py-1 rounded-md cursor-pointer capitalize", sidePanel === p ? "bg-brand-card shadow-xs text-brand-headline" : "text-brand-body")}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+            {source === "project" && sessionId && sidePanel === "history" ? (
+              <GitHistory sessionId={sessionId} onOpenDiff={openDiffTab} live={buildRunning} />
+            ) : (
             <FileTree
               tree={fileTree}
               rootPath={rootFolderPath}
               rootName={rootFolderName}
               activeFilePath={activeTab.path}
               onSelectFile={handleSelectFile}
-              onRefreshTree={() => loadDirectory(rootFolderPath || ".")}
+              onRefreshTree={() => (source === "project" ? loadProjectTree() : loadDirectory(rootFolderPath))}
               onOpenFolder={handleOpenFolder}
+              projectMode={source === "project"}
+              onCreateProjectFile={handleCreateProjectFile}
             />
+            )}
           </aside>
         )}
 
@@ -416,6 +529,9 @@ export default App;`,
                 <span className="text-[10px] text-amber-500 font-sans font-semibold">
                   (Modified)
                 </span>
+              )}
+              {activeTab.readOnly && activeTab.id !== "empty" && (
+                <span className="text-[10px] text-brand-muted font-sans font-semibold">(Read-only)</span>
               )}
             </div>
             <div className="flex items-center gap-3 text-[11px] text-brand-body shrink-0">
@@ -439,6 +555,7 @@ export default App;`,
             {/* Editable Code Buffer */}
             <textarea
               value={activeTab.content}
+              readOnly={activeTab.readOnly}
               onChange={(e) => handleContentChange(e.target.value)}
               spellCheck={false}
               className="flex-1 h-full p-3 bg-transparent text-brand-headline resize-none focus:outline-none leading-6 font-mono selection:bg-brand-accent selection:text-brand-accent-text overflow-y-auto whitespace-pre tab-size-2"
@@ -451,10 +568,22 @@ export default App;`,
           {/* Status Bar */}
           <div className="h-6 px-4 bg-brand-card border-t border-brand-border flex items-center justify-between text-[11px] text-brand-body font-mono shrink-0 select-none">
             <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1 text-emerald-500 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                Ready
-              </span>
+              {editorError ? (
+                <span className="flex items-center gap-1 text-rose-500 font-medium truncate max-w-[420px]" title={editorError}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block" />
+                  {editorError}
+                </span>
+              ) : buildRunning ? (
+                <span className="flex items-center gap-1 text-blue-500 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block animate-pulse" />
+                  Agents are building: files refresh live
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-emerald-500 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                  {source === "project" ? "Project files" : source === "folder" ? "Local folder" : "No project open"}
+                </span>
+              )}
               <span className="truncate max-w-[200px]">{activeTab.name}</span>
             </div>
             <div className="flex items-center gap-3">
@@ -468,7 +597,7 @@ export default App;`,
           <TerminalPanel
             isOpen={isTerminalOpen}
             onToggle={() => setIsTerminalOpen((prev) => !prev)}
-            cwd={rootFolderPath || undefined}
+            cwd={(source === "project" ? projectRepoPath : rootFolderPath) || undefined}
           />
         </div>
 

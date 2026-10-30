@@ -131,7 +131,8 @@ export function AnimatedAIChat({
   onNavigateToIntake,
 }: AnimatedAIChatProps = {}) {
   const [value, setValue] = useState("");
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [, setEngineStatus] = useState<EngineStatus | null>(null);
@@ -170,7 +171,7 @@ export function AnimatedAIChat({
     {
       icon: <Sparkles className="w-4 h-4" />,
       label: "Explain Concept",
-      description: "Ask Llama 3.2 3B to break down a topic",
+      description: "Ask the assistant to break down a topic",
       prefix: "/explain",
     },
     {
@@ -271,8 +272,20 @@ export function AnimatedAIChat({
     setValue("");
     adjustHeight(true);
 
+    // Attached files go with the message as context, then the tray clears.
+    const fileContext =
+      attachments.length === 0
+        ? undefined
+        : attachments.length === 1
+        ? { path: attachments[0].name, content: attachments[0].content }
+        : {
+            path: attachments.map((a) => a.name).join(", "),
+            content: attachments.map((a) => `--- ${a.name} ---\n${a.content}`).join("\n\n"),
+          };
+    setAttachments([]);
+
     try {
-      await sendMessage(textToSend);
+      await sendMessage(textToSend, fileContext);
     } catch {
       // Error handled in context
     }
@@ -316,9 +329,23 @@ export function AnimatedAIChat({
     textareaRef.current?.focus();
   };
 
-  const handleAttachFile = () => {
-    const mockFileName = `attachment-${Math.floor(Math.random() * 1000)}.json`;
-    setAttachments((prev) => [...prev, mockFileName]);
+  const MAX_ATTACHMENT_BYTES = 200_000;
+
+  const handleAttachFile = () => fileInputRef.current?.click();
+
+  const handleFilesChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    const read = await Promise.all(
+      files.map(async (f) =>
+        f.size > MAX_ATTACHMENT_BYTES
+          ? { name: f.name, content: "", tooBig: true }
+          : { name: f.name, content: await f.text(), tooBig: false }
+      )
+    );
+    const tooBig = read.filter((r) => r.tooBig).map((r) => r.name);
+    if (tooBig.length) alert(`Not attached (over 200 KB): ${tooBig.join(", ")}`);
+    setAttachments((prev) => [...prev, ...read.filter((r) => !r.tooBig).map(({ name, content }) => ({ name, content }))]);
   };
 
   const removeAttachment = (index: number) => {
@@ -658,7 +685,7 @@ export function AnimatedAIChat({
                           key={index}
                           className="flex items-center gap-2 text-xs bg-brand-subtle py-1.5 px-3 rounded-lg text-brand-headline border border-brand-border transition-colors duration-200"
                         >
-                          <span>{file}</span>
+                          <span>{file.name}</span>
                           <button
                             onClick={() => removeAttachment(index)}
                             className="text-brand-body hover:text-brand-headline transition-colors cursor-pointer"
@@ -682,6 +709,14 @@ export function AnimatedAIChat({
                     >
                       <Paperclip className="w-4 h-4" />
                     </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept=".txt,.md,.json,.yaml,.yml,.csv,.ts,.tsx,.js,.jsx,.py,.html,.css,.sql,.xml,.log"
+                      className="hidden"
+                      onChange={handleFilesChosen}
+                    />
 
                     <button
                       type="button"

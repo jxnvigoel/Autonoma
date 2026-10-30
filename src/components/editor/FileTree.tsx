@@ -37,6 +37,12 @@ interface FileTreeProps {
   onSelectFile: (node: TreeNode) => void;
   onRefreshTree: () => void;
   onOpenFolder: () => void;
+  /**
+   * Project mode shows the open project's files through the engine. New files are created there;
+   * renaming, deleting and uploading are left to the agents that own the repo.
+   */
+  projectMode?: boolean;
+  onCreateProjectFile?: (dirPath: string, name: string) => Promise<void>;
 }
 
 interface InlineCreationState {
@@ -57,6 +63,8 @@ export const FileTree: React.FC<FileTreeProps> = ({
   onSelectFile,
   onRefreshTree,
   onOpenFolder,
+  projectMode = false,
+  onCreateProjectFile,
 }) => {
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   const [creationState, setCreationState] = useState<InlineCreationState | null>(null);
@@ -107,7 +115,9 @@ export const FileTree: React.FC<FileTreeProps> = ({
     const fullTargetPath = `${creationState.targetDirPath}${separator}${creationName.trim()}`;
 
     try {
-      if (creationState.type === "file") {
+      if (projectMode) {
+        await onCreateProjectFile?.(creationState.targetDirPath, creationName.trim());
+      } else if (creationState.type === "file") {
         await createNewFile(fullTargetPath);
       } else {
         await createNewFolder(fullTargetPath);
@@ -284,6 +294,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                 >
                   <FilePlus className="w-3 h-3" />
                 </button>
+                {!projectMode && (<>
                 <button
                   type="button"
                   onClick={() => startCreation(node.path, "folder")}
@@ -312,6 +323,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                 >
                   <MoreVertical className="w-3 h-3" />
                 </button>
+                </>)}
               </div>
             )}
 
@@ -439,7 +451,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
         </div>
 
         {/* Hover Actions for File */}
-        {!isRenaming && (
+        {!isRenaming && !projectMode && (
           <div
             className="opacity-0 group-hover/item:opacity-100 flex items-center gap-0.5"
             onClick={(e) => e.stopPropagation()}
@@ -480,6 +492,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
         </div>
 
         <div className="flex items-center gap-0.5">
+          {!projectMode && (<>
           <button
             type="button"
             onClick={() => startCreation(rootPath, "file")}
@@ -504,6 +517,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
           >
             <Upload className="w-3.5 h-3.5" />
           </button>
+          </>)}
           <button
             type="button"
             onClick={handleRefresh}

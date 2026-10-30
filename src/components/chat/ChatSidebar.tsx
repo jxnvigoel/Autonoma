@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useConversation } from "@/context/ConversationContext";
 import { cn } from "@/lib/utils";
+import { routeLabel, useModelRoutes } from "@/lib/modelRoutes";
 
 interface ChatSidebarProps {
   isOpen: boolean;
@@ -58,6 +59,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     selectSession,
     newSession,
   } = useConversation();
+  const routes = useModelRoutes();
 
   return (
     <aside
@@ -219,10 +221,10 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       {isOpen && (
         <div className="p-3 border-t border-brand-border/70 text-[11px] text-brand-body flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Local Engine Active</span>
+            <span className={cn("w-2 h-2 rounded-full", routes ? "bg-emerald-500 animate-pulse" : "bg-brand-muted")} />
+            <span>{routes ? "Engine connected" : "Engine not reachable"}</span>
           </div>
-          <span className="text-[10px] font-mono text-brand-body/70">Llama 3.2</span>
+          <span className="text-[10px] font-mono text-brand-body/70">{routeLabel(routes?.roles[sessionId ? "ba" : "general"])}</span>
         </div>
       )}
     </aside>

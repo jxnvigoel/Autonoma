@@ -423,7 +423,9 @@ Walking skeleton: Initialize backend API, connect SQLite database, and run healt
         tmp_db = os.path.join(tempfile.mkdtemp(), "office.db")
         default_llm_client.ledger_db_path = tmp_db  # keep the mocked call out of the real ledger
         self.addCleanup(setattr, default_llm_client, "ledger_db_path", None)
-        with patch("requests.post") as mock_post:
+        # Hermetic: the model counts as installed whether or not Ollama runs on this machine.
+        with patch("requests.post") as mock_post, \
+                patch.object(default_llm_client, "_ollama_installed", side_effect=lambda m: m):
             mock_post.return_value.status_code = 200
             mock_post.return_value.json.return_value = {
                 "response": "{\"verdict\": \"ready\", \"gaps\": [], \"contradictions\": []}"
@@ -436,6 +438,7 @@ Walking skeleton: Initialize backend API, connect SQLite database, and run healt
             # Verifies that cloud groq endpoints were not called
             self.assertEqual(meta.get("provider"), "ollama")
             self.assertEqual(meta.get("cost_usd"), 0.0)
+            self.assertFalse(any("groq" in str(c.args[0]) for c in mock_post.call_args_list))
 
 
 if __name__ == "__main__":

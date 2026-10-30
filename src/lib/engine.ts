@@ -42,6 +42,8 @@ export interface LLMFallbackRecord {
 }
 
 export interface LLMSettings {
+  cloud_enabled?: boolean;
+  local_default_model?: string;
   groq_configured: boolean;
   masked_api_key: string;
   available_models: LLMModelInfo[];
@@ -53,8 +55,10 @@ export interface LLMSettings {
 
 export interface ChatResponse {
   response: string;
-  duration: number; // nanoseconds matching Ollama total_duration
-  token_count: number;
+  duration: number; // seconds
+  token_count: number; // completion tokens reported by the provider
+  model?: string;
+  provider?: string;
 }
 
 export interface ChatMessage {
@@ -66,6 +70,8 @@ export interface ChatMessage {
   meta?: {
     duration?: number;
     token_count?: number;
+    model?: string;
+    provider?: string;
   };
 }
 
@@ -153,6 +159,8 @@ export interface PMMessageResponse {
   prd_content: string;
   estimate?: PMEstimateData | null;
   round: number;
+  model?: string;
+  provider?: string;
 }
 
 export interface PMSessionDetail {
@@ -222,7 +230,10 @@ export interface TeamPlanData {
   generated_at: string;
   total_weeks: number;
   total_headcount_weeks: number;
-  headcount_budget_cap: number;
+  /** HR sizes by points and weeks; there is no headcount cap, so this stays null. */
+  headcount_budget_cap: number | null;
+  estimated_cost_usd?: number | null;
+  budget_limit_usd?: number | null;
   headcount_over_budget: boolean;
   points_per_agent_per_week: number;
   features_covered: string[];
@@ -265,6 +276,8 @@ export interface BudgetGuardStatus {
 
 export interface OfficeStatusResponse {
   session_id: string;
+  /** Stage jobs running on the engine right now (their desks show as working). */
+  running_jobs?: JobKind[];
   project_name: string;
   description: string;
   target_users: string;
@@ -561,29 +574,90 @@ export async function sendChatMessage(prompt: string, model?: string): Promise<C
 }
 
 /**
+ * Long agent stages run as engine jobs, so leaving a screen or switching projects does not
+ * stop or reset them. Starting a job that is already running attaches to it instead.
+ * Each stage function takes `attach`: true only waits for a job already running and never
+ * starts one, so re-attaching after the job just finished cannot launch a second run.
+ */
+export type JobKind = "pm" | "feasibility" | "architect" | "designer" | "hr" | "recruiter" | "scrum" | "readiness";
+
+export interface JobActivity {
+  at: string;
+  phase: "start" | "waiting" | "done";
+  role?: string;
+  task_id?: string;
+  label: string;
+  model?: string;
+  provider?: string;
+  tokens?: number;
+  ms?: number;
+  reason?: string;
+  wait_s?: number | null;
+}
+
+export interface JobStatus {
+  kind: JobKind;
+  session_id: string;
+  status: "not_started" | "running" | "done" | "failed" | "interrupted";
+  started_at?: string;
+  finished_at?: string | null;
+  error?: unknown;
+  http_status?: number;
+  result?: any;
+  /** The model call in flight right now (or the wait it is in), and the recent steps. */
+  current?: JobActivity | null;
+  activity?: JobActivity[];
+  stats?: { calls: number; tokens: number };
+}
+
+export class JobFailedError extends Error {
+  constructor(public job: JobStatus) {
+    const e = job.error;
+    super(typeof e === "string" ? e : e ? JSON.stringify(e) : `${job.kind} ${job.status}`);
+  }
+}
+
+export async function apiGetJobs(sessionId: string): Promise<JobStatus[]> {
+  const res = await fetch(`${ENGINE_BASE_URL}/jobs/${sessionId.trim()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return (await res.json()).jobs;
+}
+
+export async function apiGetJob(kind: JobKind, sessionId: string): Promise<JobStatus> {
+  const res = await fetch(`${ENGINE_BASE_URL}/jobs/${kind}/${sessionId.trim()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
+/** Waits for a job that is already running (e.g. after coming back to a screen). */
+export async function waitForJob(kind: JobKind, sessionId: string, intervalMs = 2000): Promise<any> {
+  for (;;) {
+    const job = await apiGetJob(kind, sessionId);
+    if (job.status === "done") return job.result;
+    if (job.status !== "running") throw new JobFailedError(job);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+/** Starts (or attaches to) a job and waits for its result. */
+export async function runJob(kind: JobKind, sessionId: string): Promise<any> {
+  const res = await fetch(`${ENGINE_BASE_URL}/jobs/${kind}/${sessionId.trim()}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    const detail = err?.detail;
+    throw new Error(typeof detail === "string" ? detail : detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
+  }
+  return waitForJob(kind, sessionId);
+}
+
+/**
  * Starts a new PM session for a completed BA session
  */
-export async function startPmSession(sessionId: string): Promise<PMStartResponse> {
+export async function startPmSession(sessionId: string, attach = false): Promise<PMStartResponse> {
   if (!sessionId) {
     throw new Error("sessionId is required to start PM session");
   }
-
-  const res = await fetch(`${ENGINE_BASE_URL}/pm/start`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ session_id: sessionId.trim() }),
-  });
-
-  if (!res.ok) {
-    const errData = await res.json().catch(() => null);
-    const detail = errData?.detail || `HTTP ${res.status}: ${res.statusText}`;
-    throw new Error(detail);
-  }
-
-  const data: PMStartResponse = await res.json();
-  return data;
+  return attach ? waitForJob("pm", sessionId) : runJob("pm", sessionId);
 }
 
 /**
@@ -738,29 +812,15 @@ export async function apiRequestGate1Changes(sessionId: string, feedback: string
 /**
  * Run Stage 2 Step 8 Feasibility check
  */
-export async function apiRunFeasibility(sessionId: string): Promise<{ status: string; verdict: string; path: string; content: string }> {
-  const res = await fetch(`${ENGINE_BASE_URL}/architect/feasibility/${sessionId.trim()}`, {
-    method: "POST"
-  });
-  if (!res.ok) {
-    const errData = await res.json().catch(() => null);
-    throw new Error(errData?.detail || `HTTP ${res.status}`);
-  }
-  return await res.json();
+export async function apiRunFeasibility(sessionId: string, attach = false): Promise<{ status: string; verdict: string; path: string; content: string }> {
+  return attach ? waitForJob("feasibility", sessionId) : runJob("feasibility", sessionId);
 }
 
 /**
  * Run Stage 3 Architect generation
  */
-export async function apiGenerateArchitectArtifacts(sessionId: string): Promise<any> {
-  const res = await fetch(`${ENGINE_BASE_URL}/architect/generate/${sessionId.trim()}`, {
-    method: "POST"
-  });
-  if (!res.ok) {
-    const errData = await res.json().catch(() => null);
-    throw new Error(errData?.detail || `HTTP ${res.status}`);
-  }
-  return await res.json();
+export async function apiGenerateArchitectArtifacts(sessionId: string, attach = false): Promise<any> {
+  return attach ? waitForJob("architect", sessionId) : runJob("architect", sessionId);
 }
 
 /**
@@ -784,15 +844,8 @@ export async function apiGetArchitectSession(sessionId: string): Promise<{
 /**
  * Run Stage 3 Designer generation
  */
-export async function apiGenerateDesignerArtifacts(sessionId: string): Promise<any> {
-  const res = await fetch(`${ENGINE_BASE_URL}/designer/generate/${sessionId.trim()}`, {
-    method: "POST"
-  });
-  if (!res.ok) {
-    const errData = await res.json().catch(() => null);
-    throw new Error(errData?.detail || `HTTP ${res.status}`);
-  }
-  return await res.json();
+export async function apiGenerateDesignerArtifacts(sessionId: string, attach = false): Promise<any> {
+  return attach ? waitForJob("designer", sessionId) : runJob("designer", sessionId);
 }
 
 /**
@@ -987,13 +1040,8 @@ export async function detachSkillPack(
 /**
  * Stage 4 Staffing (HR & Recruiter), Gate 2, & Budget API Functions
  */
-export async function apiRunHrPlan(sessionId: string): Promise<TeamPlanData> {
-  const res = await fetch(`${ENGINE_BASE_URL}/hr/plan/${sessionId}`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to generate HR staffing plan");
-  }
-  return res.json();
+export async function apiRunHrPlan(sessionId: string, attach = false): Promise<TeamPlanData> {
+  return attach ? waitForJob("hr", sessionId) : runJob("hr", sessionId);
 }
 
 export async function apiGetHrTeamPlan(sessionId: string): Promise<TeamPlanData> {
@@ -1004,13 +1052,8 @@ export async function apiGetHrTeamPlan(sessionId: string): Promise<TeamPlanData>
   return res.json();
 }
 
-export async function apiRunRecruiterHire(sessionId: string): Promise<any> {
-  const res = await fetch(`${ENGINE_BASE_URL}/recruiter/hire/${sessionId}`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to execute Recruiter hiring");
-  }
-  return res.json();
+export async function apiRunRecruiterHire(sessionId: string, attach = false): Promise<any> {
+  return attach ? waitForJob("recruiter", sessionId) : runJob("recruiter", sessionId);
 }
 
 export async function apiGetRecruiterAgents(
@@ -1077,13 +1120,8 @@ export async function apiGetBudgetStatus(
   return res.json();
 }
 
-export async function apiStartScrumStage(sessionId: string): Promise<any> {
-  const res = await fetch(`${ENGINE_BASE_URL}/scrum/start/${sessionId}`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to start Scrum stage");
-  }
-  return res.json();
+export async function apiStartScrumStage(sessionId: string, attach = false): Promise<any> {
+  return attach ? waitForJob("scrum", sessionId) : runJob("scrum", sessionId);
 }
 
 export interface StoryRef {
@@ -1189,13 +1227,8 @@ export async function apiGetScrumDailyReport(
   return res.json();
 }
 
-export async function apiStartReadinessReview(sessionId: string): Promise<any> {
-  const res = await fetch(`${ENGINE_BASE_URL}/readiness/${sessionId}`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to execute Tech Lead readiness review");
-  }
-  return res.json();
+export async function apiStartReadinessReview(sessionId: string, attach = false): Promise<any> {
+  return attach ? waitForJob("readiness", sessionId) : runJob("readiness", sessionId);
 }
 
 export async function apiGetReadinessStatus(
@@ -1317,3 +1350,119 @@ export const apiApproveGate4 = (sessionId: string, note = "") =>
 export const apiDeliver = (sessionId: string) =>
   engineJson<{ status: string; version: string; path: string; files: string[]; report: string }>(
     `/deliver/${sessionId}`, { method: "POST" });
+
+/**
+ * Project files for the code editor (engine/project_files.py): repo/ is the code the agents
+ * build and can be edited; docs/ holds the approved documents and is read-only.
+ */
+export interface ProjectTreeNode {
+  name: string;
+  path: string;
+  relativePath: string;
+  isDirectory: boolean;
+  children?: ProjectTreeNode[];
+  size?: number;
+  editable?: boolean;
+}
+
+export const apiGetProjectTree = (sessionId: string) =>
+  engineJson<{ session_id: string; tree: ProjectTreeNode[]; truncated: boolean; repo_path: string | null }>(
+    `/project-files/tree/${sessionId}`
+  );
+
+export const apiGetProjectFile = (sessionId: string, path: string) =>
+  engineJson<{ path: string; content: string; editable: boolean; mtime: number }>(
+    `/project-files/file/${sessionId}?path=${encodeURIComponent(path)}`
+  );
+
+export const apiSaveProjectFile = (sessionId: string, path: string, content: string) =>
+  engineJson<{ path: string; saved: boolean; mtime: number }>(`/project-files/file/${sessionId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+
+/** The architecture as structured data (engine/architecture_model.py), for the Architect's diagrams. */
+export interface ArchitectureModel {
+  has_architecture: boolean;
+  pattern: string | null;
+  system: {
+    direction: string;
+    nodes: { id: string; label: string; kind: "service" | "database" | "decision"; group: string | null }[];
+    groups: { id: string; label: string; parent: string | null }[];
+    edges: { from: string; to: string; label: string }[];
+  };
+  stack: { layer: string; choice: string; refs: string[] }[];
+  tables: {
+    name: string;
+    id: string | null;
+    columns: { name: string; type: string; pk: boolean; fk: boolean; nullable: boolean; unique: boolean }[];
+    foreign_keys: { column: string; table: string; ref_column: string }[];
+  }[];
+  endpoints: { method: string; path: string; summary: string; features: string[]; api_id: string | null; auth: boolean }[];
+  features: { id: string; name: string; priority: string }[];
+  endpoints_per_feature: { feature: string; count: number }[];
+  uncovered_features: string[];
+  adrs: { id: string; title: string; status: string | null; decision: string | null; driven_by: string[] }[];
+  build_slices: { title: string; items: string[]; refs: string[] }[];
+  team: { seat: string; role: string; count: string; refs: string[] }[];
+}
+
+export const apiGetArchitectureModel = (sessionId: string) =>
+  engineJson<ArchitectureModel & { session_id: string }>(`/architect/model/${sessionId}`);
+
+/** Company checklist (engine/checklist.py): every stage, feature and acceptance test, with its owner, live. */
+export type ChecklistStatus = "done" | "in_progress" | "todo" | "blocked" | "needs_attention";
+
+export interface ChecklistItem {
+  id: string;
+  title: string;
+  status: ChecklistStatus;
+  owner_role: string;
+  owner_agent: { id: string; name: string | null; role: string | null } | null;
+  detail: string;
+  refs: string[];
+}
+
+export interface CompanyChecklist {
+  session_id: string;
+  progress: { done: number; total: number; percent: number; needs_attention: number };
+  stages: ChecklistItem[];
+  features: {
+    id: string;
+    name: string;
+    priority: string;
+    status: ChecklistStatus;
+    owners: { id: string; name: string | null; role: string | null }[];
+    items: ChecklistItem[];
+    acceptance_tests: { id: string; text: string; status: ChecklistStatus; detail: string; tester: string | null }[];
+  }[];
+  agents: {
+    id: string;
+    name: string | null;
+    role: string | null;
+    done: number;
+    stories: { id: string; title: string; status: string; features: string[] }[];
+  }[];
+}
+
+export const apiGetChecklist = (sessionId: string) => engineJson<CompanyChecklist>(`/checklist/${sessionId}`);
+
+export interface ProjectCommit {
+  sha: string;
+  author: string;
+  subject: string;
+  at: string;
+  refs: string[];
+  files: number;
+  insertions: number;
+  deletions: number;
+}
+
+export const apiGetProjectGit = (sessionId: string) =>
+  engineJson<{ session_id: string; branch: string; commits: ProjectCommit[]; uncommitted: string[] }>(
+    `/project-files/git/${sessionId}`
+  );
+
+export const apiGetProjectCommit = (sessionId: string, sha: string) =>
+  engineJson<{ sha: string; diff: string; truncated: boolean }>(`/project-files/commit/${sessionId}/${sha}`);

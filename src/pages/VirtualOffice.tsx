@@ -4,10 +4,10 @@ import { PixelOfficeFloor } from "../components/office/PixelOfficeFloor";
 import { AgentRoster, RosterAgentItem } from "../components/office/AgentRoster";
 import { CommandCenter } from "../components/office/CommandCenter";
 import { AgentRoleKey } from "../components/office/AgentAvatars";
-import { LLMSettingsModal } from "../components/office/LLMSettingsModal";
-import { SkillLibraryModal } from "../components/office/SkillLibraryModal";
+import { useNav } from "../context/NavContext";
 import { useConversation } from "../context/ConversationContext";
 import { EngineStatus, LLMSettings, apiGetLLMSettings } from "../lib/engine";
+import { useModelRoutes } from "../lib/modelRoutes";
 import { AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 
@@ -52,11 +52,19 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
     fetchPmSession,
     fetchArchitectSession,
     fetchDesignerSession,
+    isPrdGenerating,
+    isFeasibilityRunning,
+    isArchitectGenerating,
+    isDesignerGenerating,
+    isHrGenerating,
+    isRecruiterGenerating,
+    isScrumGenerating,
+    isReadinessGenerating,
   } = useConversation();
+  const modelRoutes = useModelRoutes();
 
   const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isSkillLibraryOpen, setIsSkillLibraryOpen] = useState(false);
+  const nav = useNav();
 
   const loadLLMSettings = async () => {
     try {
@@ -66,6 +74,13 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       console.warn("Could not load LLM settings:", err);
     }
   };
+
+  // Settings live in the shared navigation now; reload when they change.
+  useEffect(() => {
+    const onChange = () => loadLLMSettings();
+    window.addEventListener("autonoma:llm-settings-changed", onChange);
+    return () => window.removeEventListener("autonoma:llm-settings-changed", onChange);
+  });
 
   // Poll office status periodically for real live updates
   useEffect(() => {
@@ -92,14 +107,14 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       ? "waiting-on-you"
       : "idle");
 
-  const pmStatus =
+  const pmStatus = isPrdGenerating ? "working" :
     officeStatus?.agents?.pm?.status ||
     (pmStarted
       ? "waiting-on-you"
       : "idle");
 
   const gate1Approved = officeStatus?.gate1?.approved || gate1State?.approved;
-  const archStatus =
+  const archStatus = isArchitectGenerating || isFeasibilityRunning ? "working" :
     officeStatus?.agents?.architect?.status ||
     (architectureContent
       ? "done"
@@ -108,7 +123,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       : "idle");
   const isArchUnlocked = Boolean(gate1Approved || architectureContent);
 
-  const desStatus =
+  const desStatus = isDesignerGenerating ? "working" :
     officeStatus?.agents?.designer?.status ||
     (appFlowContent
       ? "done"
@@ -117,38 +132,36 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       : "idle");
   const isDesUnlocked = Boolean(gate1Approved || appFlowContent);
 
-  const hrStatus =
+  const hrStatus = isHrGenerating ? "working" :
     officeStatus?.agents?.hr?.status ||
     (teamPlanData ? "done" : architectureContent ? "waiting-on-you" : "idle");
   const isHrUnlocked = Boolean(architectureContent);
 
-  const recStatus =
+  const recStatus = isRecruiterGenerating ? "working" :
     officeStatus?.agents?.recruiter?.status ||
     (staffingReportContent ? "done" : teamPlanData ? "waiting-on-you" : "idle");
   const isRecUnlocked = Boolean(teamPlanData);
 
   const gate2Approved = Boolean(gate2State?.approved);
-  const scrumStatus =
+  const scrumStatus = isScrumGenerating ? "working" :
     officeStatus?.agents?.scrum?.status ||
     (gate2Approved ? "waiting-on-you" : "idle");
   const isScrumUnlocked = Boolean(gate2Approved);
 
-  const tlStatus =
+  const tlStatus = isReadinessGenerating ? "working" :
     officeStatus?.agents?.["tech-lead"]?.status ||
     (gate2Approved ? "waiting-on-you" : "idle");
   const isTlUnlocked = Boolean(gate2Approved);
 
   const isLocal = Boolean(llmSettings?.local_only);
 
+  // What the engine's router actually resolves for each role right now (Groq first, Ollama fallback).
   const getRoleModelAndProvider = (role: string) => {
     if (isLocal) {
-      return { provider: "ollama", model: "llama3.2:3b" };
+      return { provider: "ollama", model: modelRoutes?.localDefaultModel || llmSettings?.local_default_model || "local model" };
     }
-    const cfg = llmSettings?.role_configs?.[role];
-    return {
-      provider: cfg?.provider || "groq",
-      model: cfg?.model || "openai/gpt-oss-120b",
-    };
+    const route = modelRoutes?.roles[role];
+    return { provider: route?.provider || "unknown", model: route?.model || "checking…" };
   };
 
   const desksData = [
@@ -229,7 +242,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       roleName: "Scrum Master",
       roleAbbr: "SCRUM",
       status: scrumStatus,
-      hasOutput: false,
+      hasOutput: Boolean(officeStatus?.agents?.scrum?.has_output),
       outputName: "backlog.json",
       messageCount: 0,
       isUnlocked: isScrumUnlocked,
@@ -241,7 +254,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       roleName: "Tech Lead",
       roleAbbr: "TL",
       status: tlStatus,
-      hasOutput: false,
+      hasOutput: Boolean(officeStatus?.agents?.["tech-lead"]?.has_output),
       outputName: "readiness.md",
       messageCount: 0,
       isUnlocked: isTlUnlocked,
@@ -252,23 +265,24 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
       roleKey: "engineer" as AgentRoleKey,
       roleName: "Software Engineer",
       roleAbbr: "ENG",
-      status: "idle" as const,
-      hasOutput: false,
-      outputName: "source_code",
+      // Engineers and QA work during the build (Stage 6-7); their desks follow the live build state.
+      status: officeStatus?.agents?.engineer?.status || ("idle" as const),
+      hasOutput: Boolean(officeStatus?.agents?.engineer?.has_output),
+      outputName: "repo/",
       messageCount: 0,
-      isUnlocked: false,
-      provider: getRoleModelAndProvider("engineer").provider,
-      model: getRoleModelAndProvider("engineer").model,
+      isUnlocked: Boolean(officeStatus?.agents?.engineer?.can_start),
+      provider: getRoleModelAndProvider("backend").provider,
+      model: getRoleModelAndProvider("backend").model,
     },
     {
       roleKey: "qa" as AgentRoleKey,
       roleName: "Quality Assurance",
       roleAbbr: "QA",
-      status: "idle" as const,
-      hasOutput: false,
-      outputName: "test_plan.md",
+      status: officeStatus?.agents?.qa?.status || ("idle" as const),
+      hasOutput: Boolean(officeStatus?.agents?.qa?.has_output),
+      outputName: "test results",
       messageCount: 0,
-      isUnlocked: false,
+      isUnlocked: Boolean(officeStatus?.agents?.qa?.can_start),
       provider: getRoleModelAndProvider("qa").provider,
       model: getRoleModelAndProvider("qa").model,
     },
@@ -309,8 +323,6 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
         onOpenProjects={onOpenProjects}
         onOpenChat={onOpenChat}
         onOpenEditor={onOpenEditor}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenSkillLibrary={() => setIsSkillLibraryOpen(true)}
       />
 
       {/* Prominent Missing Key Warning Banner (Never silent) */}
@@ -327,7 +339,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => setIsSettingsOpen(true)}
+            onClick={() => nav?.openSettings()}
             className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs transition-colors shrink-0 cursor-pointer shadow-xs"
           >
             Configure LLM & Routing
@@ -342,7 +354,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
           selectedAgentId={activeOfficeAgent}
           onSelectAgent={handleSelectAgent}
           projectName={intakeData?.projectName || "Current Project"}
-          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenSettings={() => nav?.openSettings()}
           isLocalOnly={isLocal}
           isCloudActive={!isLocal && Boolean(llmSettings?.groq_configured ?? status?.groq_configured)}
           groqConfigured={Boolean(llmSettings?.groq_configured ?? status?.groq_configured)}
@@ -367,21 +379,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
         </AnimatePresence>
 
         {/* LLM Settings Modal */}
-        <LLMSettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          sessionId={sessionId || undefined}
-          projectName={intakeData?.projectName}
-          onSettingsChanged={loadLLMSettings}
-        />
 
-        {/* Specialist Skill Library Modal */}
-        <SkillLibraryModal
-          isOpen={isSkillLibraryOpen}
-          onClose={() => setIsSkillLibraryOpen(false)}
-          sessionId={sessionId || undefined}
-          onSkillAttached={() => sessionId && refreshOfficeStatus(sessionId)}
-        />
       </main>
     </div>
   );

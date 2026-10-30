@@ -927,6 +927,74 @@ def get_pm_state(session_id: str):
     }
 
 
+PM_CHAT_SYSTEM = (
+    "You are the Product Manager on this project. The client is asking about the PRD you wrote. Answer from the "
+    "PRD and the verified requirements below only; cite IDs (F-, FR-, NFR-, AC-, Q-) where they apply. If the "
+    "answer is not in them, say so plainly instead of guessing. If the client asks to change, add or remove "
+    "something, restate the change in one sentence and tell them to send it with 'Request changes' at Gate 1: "
+    "that records it as a discovery answer and rewrites the PRD with the Judge's review. Do not claim you have "
+    "changed the PRD. Keep answers short."
+)
+
+
+@pm_router.get("/session/{session_id}")
+def get_pm_session(session_id: str):
+    """What the PM workstation shows: chat, PRD, estimate, and whether the PRD can be generated yet."""
+    from main import DATA_PROJECTS_DIR, validate_session_id, load_json
+
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
+    if not os.path.isdir(session_dir):
+        raise HTTPException(status_code=404, detail=f"Project {session_id} not found")
+    state = get_pm_state(session_id)
+    intake = load_json(os.path.join(session_dir, "intake.json"), {})
+    has_req = os.path.exists(os.path.join(session_dir, "docs", "requirements.md"))
+    has_prd = bool(state["prd_content"])
+    return {**state, "project_name": intake.get("project_name", "Project"),
+            "started": state["started"] or has_prd,
+            "status": "done" if has_prd else "waiting-on-you" if has_req else "idle",
+            "can_start": has_req and not has_prd}
+
+
+@pm_router.post("/message")
+def pm_message(req: PMMessageRequest):
+    """Client chat with the PM about the drafted PRD (answers only; changes go through Gate 1)."""
+    from main import get_session_dir, load_json, save_json
+
+    text = (req.message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    session_dir = get_session_dir(req.session_id)
+    pm_state_file = os.path.join(session_dir, "pm_state.json")
+    prd_file = os.path.join(session_dir, "docs", "prd.md")
+    pm_state = load_json(pm_state_file, {})
+    if not pm_state or not os.path.exists(prd_file):
+        raise HTTPException(status_code=409, detail="The PM has not drafted the PRD yet. Generate the PRD first.")
+    with open(prd_file, "r", encoding="utf-8") as f:
+        prd = f.read()
+    req_file = os.path.join(session_dir, "docs", "requirements.md")
+    requirements = open(req_file, "r", encoding="utf-8").read() if os.path.exists(req_file) else ""
+
+    history = pm_state.get("messages", [])[-8:]
+    convo = "\n".join(f"{'Client' if m.get('role') == 'user' else 'PM'}: {m.get('content', '')}" for m in history)
+    prompt = (f"PRD:\n{prd[:14000]}\n\nVERIFIED REQUIREMENTS:\n{requirements[:6000]}\n\n"
+              f"CONVERSATION SO FAR:\n{convo}\n\nClient: {text}\nPM:")
+    answer, meta = _raw_query_llm_with_meta(prompt=prompt, system=PM_CHAT_SYSTEM, role="pm",
+                                            session_id=req.session_id, task_id="pm_chat", max_tokens=1200)
+    answer = (answer or "").strip() or "I could not produce an answer just now; please ask again."
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    pm_state.setdefault("messages", []).extend([
+        {"id": str(uuid.uuid4()), "role": "user", "content": text, "timestamp": now_iso},
+        {"id": str(uuid.uuid4()), "role": "assistant", "content": answer, "timestamp": now_iso,
+         "meta": {"model": meta.get("model"), "provider": meta.get("provider")}},
+    ])
+    pm_state["updated_at"] = now_iso
+    save_json(pm_state_file, pm_state)
+    estimate = load_json(os.path.join(session_dir, "docs", "estimate.json"), None)
+    return {"session_id": req.session_id, "message": answer, "prd_content": prd, "estimate": estimate,
+            "round": pm_state.get("round", 1), "model": meta.get("model"), "provider": meta.get("provider")}
+
+
 def register_pm_router(main_app):
     main_app.include_router(pm_router)
     logger.info("PM real LLM agent router registered successfully.")

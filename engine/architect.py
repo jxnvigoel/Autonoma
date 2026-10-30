@@ -706,6 +706,15 @@ Return ONLY the markdown document."""
             facts.append(f"- seat {seat.get('id')}: {seat.get('role')} x{seat.get('count')} ({seat.get('why', '')[:100]})")
     except (OSError, ValueError):
         pass
+    # The only requirement ids that exist. Citing any other id is an invented requirement (the Judge fails it).
+    nfr_ids = [f"{n.get('id')} {n.get('nfr') or n.get('category') or ''}".strip()
+               for n in parsed_ba.get("non_functional_reqs", []) or [] if isinstance(n, dict) and n.get("id")]
+    feat_ids = [f"{f.get('id')} {f.get('title') or f.get('name') or ''}".strip()
+                for f in prd_data.get("features", []) or [] if isinstance(f, dict) and f.get("id")]
+    if nfr_ids:
+        facts.append("- the ONLY non-functional requirements (cite exactly these, invent no other NFR-): " + "; ".join(nfr_ids))
+    if feat_ids:
+        facts.append("- the ONLY features (cite exactly these): " + "; ".join(feat_ids))
     facts_block = "\n".join(facts) or "- (none)"
 
     # The client's own words are the source of truth for hard constraints (hosting, installs, users).
@@ -831,6 +840,7 @@ def approve_gate1_endpoint(req: Gate1ApprovalRequest):
     state["gate1_known_issues_accepted"] = bool(req.accept_known_issues and not verdict.get("pass"))
     state["gate1_judge_verdict"] = {k: verdict.get(k) for k in ("pass", "total", "max", "verdict_summary")}
     state["gate1_approved"] = True
+    state["gate1_status"] = "approved"
     state["gate1_approval_timestamp"] = now_iso
     state["gate1_client_notes"] = req.client_notes
     state["current_stage"] = "Stage 3: Design (Architect)"
@@ -846,26 +856,70 @@ def approve_gate1_endpoint(req: Gate1ApprovalRequest):
 
 @architect_router.post("/gate1/request-changes")
 def request_changes_gate1_endpoint(req: Gate1ChangeRequest):
-    """Stage 2 Step 10: Client requests modifications before Gate 1 approval."""
+    """
+    Stage 2 Step 10: the client sends the PRD back before approving Gate 1.
+
+    The feedback is recorded as a new discovery answer (a Q- entry the PRD can cite), the current PRD is
+    kept as a numbered version, and the PM rebuilds the PRD from the updated discovery as a background
+    job; the Judge reviews the new version as usual.
+    """
     session_id = req.session_id
     from main import get_session_dir, load_json, save_json
+    try:
+        import jobs as office_jobs
+    except ImportError:
+        from engine import jobs as office_jobs
 
+    feedback = (req.feedback or "").strip()
+    if not feedback:
+        raise HTTPException(status_code=400, detail="Say what should change in the PRD.")
     session_dir = get_session_dir(session_id)
+    docs_dir = os.path.join(session_dir, "docs")
     state_file = os.path.join(session_dir, "session_state.json")
     state = load_json(state_file, {})
+    if state.get("gate1_approved"):
+        raise HTTPException(status_code=409, detail="Gate 1 is already approved; the PRD is locked for this release.")
+    if office_jobs.status(session_id, "pm", include_result=False).get("status") == "running":
+        raise HTTPException(status_code=409, detail="The PM is already writing the PRD; wait for it to finish.")
 
     now_iso = datetime.now(timezone.utc).isoformat()
+    qa_file = os.path.join(session_dir, "qa_log.json")
+    qa_log = load_json(qa_file, [])
+    nums = [int(m.group(1)) for q in qa_log for m in [re.match(r"Q-(\d+)$", str(q.get("id", "")))] if m]
+    qid = f"Q-{(max(nums) if nums else 0) + 1:03d}"
+    qa_log.append({"id": qid, "question": "Gate 1 review: what should change in the PRD?", "answer": feedback,
+                   "round": max([int(q.get("round") or 0) for q in qa_log] + [0]) + 1,
+                   "timestamp": now_iso, "source": "gate1"})
+    save_json(qa_file, qa_log)
+
+    # Keep the version the client reviewed, then let the PM rebuild from the updated discovery.
+    version = 1
+    while os.path.exists(os.path.join(docs_dir, f"prd.v{version}.md")):
+        version += 1
+    for name, folder in (("prd.md", docs_dir), ("estimate.json", docs_dir), ("pm_state.json", session_dir)):
+        src = os.path.join(folder, name)
+        if os.path.exists(src):
+            stem, ext = os.path.splitext(name)
+            os.replace(src, os.path.join(folder, f"{stem}.v{version}{ext}"))
+
     state["gate1_approved"] = False
-    state["gate1_feedback"] = req.feedback
+    state["gate1_status"] = "changes_requested"
+    state["gate1_feedback"] = feedback
     state["gate1_feedback_timestamp"] = now_iso
+    state["gate1_feedback_qid"] = qid
     save_json(state_file, state)
 
+    job = office_jobs.start(session_id, "pm")
     return {
         "session_id": session_id,
         "status": "changes_requested",
-        "message": "Feedback recorded. PM will revise PRD accordingly.",
-        "feedback": req.feedback,
-        "timestamp": now_iso
+        "routed_qid": qid,
+        "previous_version": f"docs/prd.v{version}.md",
+        "message": f"Recorded as {qid}. The PM is rewriting the PRD from the updated discovery; "
+                   f"the previous version is kept as docs/prd.v{version}.md.",
+        "feedback": feedback,
+        "job": job,
+        "timestamp": now_iso,
     }
 
 
@@ -962,6 +1016,48 @@ def start_architect_endpoint(req: ArchitectSessionRequest):
         "artifacts": architect_state["artifacts"],
         "judge_verdict": judge_verdict
     }
+
+
+@architect_router.get("/architect/model/{session_id}")
+def get_architecture_model_endpoint(session_id: str):
+    """The architecture as structured data for the diagrams, parsed by code from the Architect's documents."""
+    from main import DATA_PROJECTS_DIR, validate_session_id
+    try:
+        from architecture_model import build_model
+    except ImportError:
+        from engine.architecture_model import build_model
+
+    project_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
+    if not os.path.isdir(project_dir):
+        raise HTTPException(status_code=404, detail=f"Project {session_id} not found")
+    return {"session_id": session_id, **build_model(project_dir)}
+
+
+@architect_router.get("/architect/session/{session_id}")
+def get_architect_session_endpoint(session_id: str):
+    """Architect workstation state and documents (what the Architect screen shows)."""
+    from main import DATA_PROJECTS_DIR, validate_session_id, load_json
+
+    session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
+    if not os.path.isdir(session_dir):
+        raise HTTPException(status_code=404, detail=f"Project {session_id} not found")
+    docs_dir = os.path.join(session_dir, "docs")
+
+    def read(name: str) -> str:
+        path = os.path.join(docs_dir, name)
+        return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else ""
+
+    state = load_json(os.path.join(session_dir, "architect_state.json"), {})
+    adrs = {}
+    adr_dir = os.path.join(docs_dir, "adr")
+    if os.path.isdir(adr_dir):
+        for fn in sorted(os.listdir(adr_dir)):
+            adrs[fn] = open(os.path.join(adr_dir, fn), "r", encoding="utf-8").read()
+    architecture = read("architecture.md")
+    return {"session_id": session_id, "has_output": bool(architecture), "state": state,
+            "architecture_content": architecture, "schema_content": read("schema.md"),
+            "openapi_content": read("openapi.yaml"), "feasibility_content": read("feasibility.md"),
+            "adrs": adrs}
 
 
 @architect_router.post("/architect/rejudge")

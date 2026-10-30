@@ -265,7 +265,9 @@ export const PRDViewer: React.FC<PRDViewerProps> = ({
               ${estimateData.estimated_cost_usd.toFixed(2)} USD
             </div>
             <p className="text-[10px] text-emerald-700 dark:text-emerald-300 mt-1 font-medium">
-              100% Free local execution (Ollama • {estimateData.model})
+              {estimateData.estimated_cost_usd > 0
+                ? `At ${estimateData.model} list prices`
+                : `No API charge (${estimateData.model})`}
             </p>
           </div>
 

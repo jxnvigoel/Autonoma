@@ -3,10 +3,13 @@ import { motion } from "framer-motion";
 import { Copy, Check, FileCode, Clock } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { ChatMessage } from "../../lib/engine";
+import { routeLabel, useModelRoutes } from "../../lib/modelRoutes";
 
 interface MessageBubbleProps {
   message: ChatMessage;
   compact?: boolean;
+  /** Router role that produced this reply, used when the message does not record its model. */
+  role?: string;
 }
 
 export const TypingDots: React.FC = () => {
@@ -36,7 +39,12 @@ export const TypingDots: React.FC = () => {
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
   compact = false,
+  role = "general",
 }) => {
+  const routes = useModelRoutes();
+  const modelLabel = message.meta?.model
+    ? routeLabel({ provider: message.meta.provider || "", model: message.meta.model })
+    : routeLabel(routes?.roles[role]);
   const [copied, setCopied] = useState(false);
   const [showFullContext, setShowFullContext] = useState(false);
 
@@ -117,7 +125,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         >
           <div className="flex items-center justify-between pb-1 text-[11px] font-semibold text-brand-accent border-b border-brand-border/40">
             <span className="flex items-center gap-1">
-              <span>llama3.2:3b</span>
+              <span>{modelLabel}</span>
             </span>
             <button
               onClick={handleCopy}
@@ -141,7 +149,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             <div className="text-[10px] text-brand-body font-mono pt-1.5 border-t border-brand-border/60 flex items-center justify-between gap-2 transition-colors duration-200">
               <span className="flex items-center gap-1">
                 <Clock className="w-2.5 h-2.5" />
-                {(message.meta.duration / 1e9).toFixed(2)}s
+                {message.meta.duration.toFixed(2)}s
               </span>
               <span>Tokens: {message.meta.token_count ?? "N/A"}</span>
             </div>

@@ -1,6 +1,6 @@
 {
   "cloud_enabled": true,
-  "local_default_model": "gemma3:1b",
+  "local_default_model": "qwen2.5-coder:7b",
   "tiers": {
     "high": [
       {
@@ -39,6 +39,10 @@
       },
       {
         "provider": "ollama",
+        "model": "qwen2.5-coder:7b"
+      },
+      {
+        "provider": "ollama",
         "model": "qwen2.5:7b"
       },
       {
@@ -58,6 +62,10 @@
       {
         "provider": "groq",
         "model": "openai/gpt-oss-20b"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:7b"
       },
       {
         "provider": "ollama",
@@ -114,5 +122,11 @@
   "parallel_calls": 3,
   "build_parallelism_cloud": 2,
   "max_network_wait_s": 900,
-  "allow_tier_downgrade": false
+  "allow_tier_downgrade": false,
+  "local_first_roles": [
+    "hr",
+    "recruiter",
+    "scrum"
+  ],
+  "local_first_note": "Short structured tasks (team plan, hiring, backlog) run on the local model first so they do not use the Groq free-tier quota; code and the Judge check every result. Groq is the fallback."
 }

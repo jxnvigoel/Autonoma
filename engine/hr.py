@@ -53,6 +53,41 @@ def load_staffing_assumptions() -> Dict[str, Any]:
         return data.get("configurations") or data.get("assumptions", {})
 
 
+def team_plan_view(plan: Dict[str, Any], docs_dir: str, project_id: str) -> Dict[str, Any]:
+    """
+    HR's saved plan (seats, from_week/to_week, timeline_weeks) in the shape the HR screen shows, with the
+    numbers computed from the plan itself. Nothing is estimated here: unknown values stay None.
+    """
+    seats = plan.get("seats") or []
+    reqs = [{"role": s.get("role"), "seat_id": s.get("id"), "count": s.get("count", 0),
+             "start_week": s.get("from_week"), "end_week": s.get("to_week"), "why": s.get("why", ""),
+             "refs": s.get("refs", []), "replaces_roles": s.get("replaces_roles", [])} for s in seats]
+    covered = sorted({r for s in seats for r in (s.get("refs") or []) if re.fullmatch(r"F-\d{2,4}", str(r))})
+    prd_path = os.path.join(docs_dir, "prd.md")
+    prd = open(prd_path, encoding="utf-8").read() if os.path.exists(prd_path) else ""
+    try:  # the shared PRD reader (summary table first), so priorities match what the PRD says
+        from checklist import parse_prd_features
+    except ImportError:
+        from engine.checklist import parse_prd_features
+    must = [f["id"] for f in parse_prd_features(prd) if "must" in str(f.get("priority", "")).lower()]
+    est_path = os.path.join(docs_dir, "estimate.json")
+    est = json.load(open(est_path, encoding="utf-8")) if os.path.exists(est_path) else {}
+    cost, limit = est.get("estimated_cost_usd"), est.get("budget_limit_usd")
+    try:
+        ppw = (load_staffing_assumptions().get("CFG-01") or {}).get("value")
+    except RuntimeError:
+        ppw = None
+    return {**plan, "project_id": project_id, "generated_at": plan.get("generated_at"),
+            "total_weeks": plan.get("timeline_weeks"),
+            "total_headcount_weeks": sum((s.get("count") or 0) * ((s.get("to_week") or 0) - (s.get("from_week") or 0) + 1)
+                                         for s in seats),
+            "headcount_budget_cap": None,  # HR sizes by points and weeks; the budget is in dollars (below)
+            "estimated_cost_usd": cost, "budget_limit_usd": limit,
+            "headcount_over_budget": bool(cost is not None and limit is not None and cost > limit),
+            "points_per_agent_per_week": ppw, "features_covered": covered, "requisitions": reqs,
+            "unstaffed_must_haves": [f for f in must if f not in covered]}
+
+
 def parse_prd_features_for_hr(prd_text: str) -> List[Dict[str, Any]]:
     """Extracts features, priorities, user stories, and acceptance criteria count from PRD."""
     features: List[Dict[str, Any]] = []
@@ -69,7 +104,9 @@ def parse_prd_features_for_hr(prd_text: str) -> List[Dict[str, Any]]:
 
             # Extract priority / MoSCoW
             prio_match = re.search(r"\*\*(?:Priority|MoSCoW)\*\*:\s*([^\n\r]+)", content, re.IGNORECASE)
-            prio = prio_match.group(1).strip() if prio_match else "Must-have"
+            # No priority line: use the PRD's summary table before assuming Must-have.
+            table_prio = re.search(rf"^\|\s*{re.escape(fid)}\s*\|[^|]*\|[^|]*\|\s*([^|]+?)\s*\|", prd_text, re.M)
+            prio = prio_match.group(1).strip() if prio_match else (table_prio.group(1).strip() if table_prio else "Must-have")
 
             # Extract user story
             story_match = re.search(r"\*\*(?:User\s+story|Story)\*\*:\s*([^\n\r]+)", content, re.IGNORECASE)
@@ -398,8 +435,8 @@ def calculate_staffing_arithmetic(
 
 def generate_hr_team_plan(
     session_id: str,
-    data_projects_dir: str = DATA_PROJECTS_DIR,
-    db_path: str = DEFAULT_DB_PATH
+    data_projects_dir: Optional[str] = None,
+    db_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Executes HR Staffing Planner per Handbook Chapter 6:
@@ -409,6 +446,8 @@ def generate_hr_team_plan(
     4. Code validates LLM output against calculated arithmetic and retries with errors fed back (max 3).
     5. Writes docs/team-plan.json and records to llm_calls table.
     """
+    db_path = db_path or DEFAULT_DB_PATH
+    data_projects_dir = data_projects_dir or DATA_PROJECTS_DIR
     session_dir = os.path.join(data_projects_dir, session_id)
     docs_dir = os.path.join(session_dir, "docs")
     os.makedirs(docs_dir, exist_ok=True)
@@ -671,7 +710,8 @@ def generate_hr_team_plan(
             f"HR FAILED LOUDLY: Validation failed after {max_retries} retries with errors:\n" + "\n".join(last_errors)
         )
 
-    # Save to docs/team-plan.json
+    # Save to docs/team-plan.json (the Architect's draft has the same file; this stamp marks HR's plan)
+    team_plan_result["planned_by"] = "hr"
     out_file = os.path.join(docs_dir, "team-plan.json")
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(team_plan_result, f, indent=2)

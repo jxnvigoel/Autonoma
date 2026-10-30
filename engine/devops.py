@@ -62,7 +62,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _project_dir(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> str:
+def _project_dir(session_id: str, projects_dir: Optional[str] = None) -> str:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     return os.path.join(projects_dir, session_id)
 
 
@@ -93,11 +94,13 @@ def detect_stack(architecture_text: str) -> Dict[str, str]:
     return {"stack": "python", "reason": "no stack named in architecture; ASM: Python standard library (builds offline)"}
 
 
-def allowlist_path(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> str:
+def allowlist_path(session_id: str, projects_dir: Optional[str] = None) -> str:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     return os.path.join(_project_dir(session_id, projects_dir), "command_allowlist.json")
 
 
-def propose_allowlist(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def propose_allowlist(session_id: str, projects_dir: Optional[str] = None) -> Dict[str, Any]:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     pdir = _project_dir(session_id, projects_dir)
     arch = ""
     arch_path = os.path.join(pdir, "docs", "architecture.md")
@@ -125,7 +128,8 @@ def propose_allowlist(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) ->
 
 
 def approve_allowlist(session_id: str, commands: Optional[Dict[str, str]] = None, network_allowed: bool = False,
-                      projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+                      projects_dir: Optional[str] = None) -> Dict[str, Any]:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     record = _load(allowlist_path(session_id, projects_dir), None) or propose_allowlist(session_id, projects_dir)
     if commands is not None:
         record["commands"] = commands
@@ -139,7 +143,8 @@ def approve_allowlist(session_id: str, commands: Optional[Dict[str, str]] = None
     return record
 
 
-def get_allowlist(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def get_allowlist(session_id: str, projects_dir: Optional[str] = None) -> Dict[str, Any]:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     return _load(allowlist_path(session_id, projects_dir), {"approved": False, "commands": {}})
 
 
@@ -214,9 +219,10 @@ def health_check(url: str, paths: Optional[List[str]] = None, timeout_s: float =
     return {"ok": False, "detail": last or "no response"}
 
 
-def start_preview(session_id: str, cwd: Optional[str] = None, projects_dir: str = DATA_PROJECTS_DIR,
+def start_preview(session_id: str, cwd: Optional[str] = None, projects_dir: Optional[str] = None,
                   label: str = "preview") -> Dict[str, Any]:
     """Brings up the app from the main repo (or `cwd`) on 127.0.0.1 with seed data."""
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     stop_preview(session_id, projects_dir)
     allow = get_allowlist(session_id, projects_dir)
     if not allow.get("approved"):
@@ -260,7 +266,8 @@ def start_preview(session_id: str, cwd: Optional[str] = None, projects_dir: str 
     return state
 
 
-def stop_preview(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> None:
+def stop_preview(session_id: str, projects_dir: Optional[str] = None) -> None:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     state = _load(_preview_state_path(session_id, projects_dir), None)
     if not state or not state.get("pid"):
         return
@@ -273,7 +280,8 @@ def stop_preview(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> None
     _save(_preview_state_path(session_id, projects_dir), state)
 
 
-def get_preview_state(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def get_preview_state(session_id: str, projects_dir: Optional[str] = None) -> Dict[str, Any]:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     state = _load(_preview_state_path(session_id, projects_dir), {"running": False})
     if state.get("log_path"):
         state["runtime_errors"] = capture_runtime_errors(state["log_path"])
@@ -296,8 +304,9 @@ def _run_recorded(cmd_id: str, allow: Dict[str, Any], cwd: str, env_extra: Optio
 
 
 def rollback_drill(session_id: str, release_tag: str, previous_ref: str,
-                   projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+                   projects_dir: Optional[str] = None) -> Dict[str, Any]:
     """Rolls back once in preview: the previous release must still pass tests and start healthy."""
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     repo = workspace.repo_path(session_id, projects_dir)
     allow = get_allowlist(session_id, projects_dir)
     pdir = _project_dir(session_id, projects_dir)
@@ -318,8 +327,9 @@ def rollback_drill(session_id: str, release_tag: str, previous_ref: str,
     return record
 
 
-def backup_restore_drill(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def backup_restore_drill(session_id: str, projects_dir: Optional[str] = None) -> Dict[str, Any]:
     """A backup that has never been restored is not a backup (18.7): run both, then health-check."""
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     allow = get_allowlist(session_id, projects_dir)
     if "backup" not in allow.get("commands", {}) or "restore" not in allow.get("commands", {}):
         return {"ok": False, "not_run": True, "reason": "allowlist has no 'backup' and 'restore' commands"}
@@ -356,8 +366,9 @@ def check_dockerfile(text: str) -> List[str]:
     return problems
 
 
-def build_image(session_id: str, tag: str, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def build_image(session_id: str, tag: str, projects_dir: Optional[str] = None) -> Dict[str, Any]:
     """Builds the release image only from locally present base images (never pulls)."""
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     repo = workspace.repo_path(session_id, projects_dir)
     dockerfile = os.path.join(repo, "Dockerfile")
     if not os.path.exists(dockerfile):
@@ -383,8 +394,9 @@ def build_image(session_id: str, tag: str, projects_dir: str = DATA_PROJECTS_DIR
 
 def render_runbook(session_id: str, ci: Optional[Dict[str, Any]], preview: Dict[str, Any],
                    rollback: Optional[Dict[str, Any]], restore: Optional[Dict[str, Any]],
-                   image: Optional[Dict[str, Any]], projects_dir: str = DATA_PROJECTS_DIR) -> str:
+                   image: Optional[Dict[str, Any]], projects_dir: Optional[str] = None) -> str:
     """Runbook built only from commands that were actually run, with their recorded results."""
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     allow = get_allowlist(session_id, projects_dir)
     lines = ["# Runbook", "", f"Generated by code at {_now()} from recorded runs. Every command below was run.", "",
              f"Stack: {allow.get('stack', 'unknown')} ({allow.get('stack_reason', '')})", "",

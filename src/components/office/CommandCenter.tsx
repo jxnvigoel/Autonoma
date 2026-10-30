@@ -36,16 +36,17 @@ import { ReadinessViewer } from "./ReadinessViewer";
 import { BuildViewer } from "./BuildViewer";
 
 import { useConversation } from "../../context/ConversationContext";
+import { routeLabel, useModelRoutes } from "../../lib/modelRoutes";
+import { LiveActivity } from "./LiveActivity";
+import { JobKind } from "../../lib/engine";
 import {
   AgentLiveStatus,
   BacklogData,
   GanttData,
   ReadinessState,
   apiGetScrumBacklog,
-  apiStartScrumStage,
   apiGetScrumPlan,
   apiGetScrumGantt,
-  apiStartReadinessReview,
   apiGetReadinessStatus,
 } from "../../lib/engine";
 
@@ -74,6 +75,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     estimateData,
     pmStarted,
     isPmSending,
+    isPrdGenerating,
     pmError,
     architectureContent,
     schemaContent,
@@ -106,10 +108,25 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     approveGate2,
     requestGate2Changes,
     officeStatus,
+    isScrumGenerating,
+    isReadinessGenerating,
+    stageDataVersion,
+    generateBacklog,
+    runReadinessReview,
+    isFeasibilityRunning,
   } = useConversation();
 
+  const modelRoutes = useModelRoutes();
   const [inputMessage, setInputMessage] = useState("");
-  const [isHandoffRunning, setIsHandoffRunning] = useState(false);
+  // PRD generation runs on the engine; closing this panel or leaving the screen does not stop it.
+  const isHandoffRunning = isPrdGenerating;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -129,9 +146,20 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   const [ganttData, setGanttData] = useState<GanttData | null>(null);
   const [readinessState, setReadinessState] = useState<ReadinessState | null>(null);
   const [readinessContent, setReadinessContent] = useState<string>("");
-  const [isScrumGenerating, setIsScrumGenerating] = useState(false);
-  const [isReadinessGenerating, setIsReadinessGenerating] = useState(false);
   const [scrumViewTab, setScrumViewTab] = useState<"backlog" | "plan" | "readiness" | "build">("backlog");
+
+  // Story owners are hired agents' ids (full "<project>_be-1" or short "be-1"); show their names.
+  const agentNames: Record<string, string> = {};
+  for (const a of hiredAgents) {
+    agentNames[a.id] = a.name;
+    if (sessionId && a.id.startsWith(`${sessionId}_`)) agentNames[a.id.slice(sessionId.length + 1)] = a.name;
+  }
+
+  // Each planning agent opens on its own work: Scrum on the backlog, the Tech Lead on readiness.
+  useEffect(() => {
+    if (activeAgent === "tech-lead") setScrumViewTab("readiness");
+    else if (activeAgent === "scrum") setScrumViewTab("backlog");
+  }, [activeAgent]);
 
   const loadScrumAndReadiness = async () => {
     if (!sessionId) return;
@@ -160,33 +188,23 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 
   useEffect(() => {
     loadScrumAndReadiness();
-  }, [sessionId, activeAgent]);
+  }, [sessionId, activeAgent, stageDataVersion]);
 
   const handleGenerateBacklog = async () => {
-    if (!sessionId) return;
-    setIsScrumGenerating(true);
     try {
-      await apiStartScrumStage(sessionId);
-      await loadScrumAndReadiness();
+      await generateBacklog();
     } catch (err: any) {
       console.error("Failed to generate backlog:", err);
-      alert(err.message || "Failed to generate backlog. Check Gate 2 approval.");
-    } finally {
-      setIsScrumGenerating(false);
+      if (mountedRef.current) alert(err.message || "Failed to generate backlog. Check Gate 2 approval.");
     }
   };
 
   const handleRunReadinessReview = async () => {
-    if (!sessionId) return;
-    setIsReadinessGenerating(true);
     try {
-      await apiStartReadinessReview(sessionId);
-      await loadScrumAndReadiness();
+      await runReadinessReview();
     } catch (err: any) {
       console.error("Failed to run readiness review:", err);
-      alert(err.message || "Failed to run readiness review.");
-    } finally {
-      setIsReadinessGenerating(false);
+      if (mountedRef.current) alert(err.message || "Failed to run readiness review.");
     }
   };
 
@@ -262,14 +280,14 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     engineer: {
       role: "Software Engineer",
       abbr: "ENG",
-      status: "idle" as AgentLiveStatus,
+      status: (officeStatus?.agents?.engineer?.status || "idle") as AgentLiveStatus,
       description: "Code generation, implementation, and module assembly",
       outputTitle: "Source Code",
     },
     qa: {
       role: "Quality Assurance",
       abbr: "QA",
-      status: "idle" as AgentLiveStatus,
+      status: (officeStatus?.agents?.qa?.status || "idle") as AgentLiveStatus,
       description: "Acceptance criteria validation, test suites, and regression checks",
       outputTitle: "Test Plan & Results",
     },
@@ -296,14 +314,13 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   };
 
   const handleSendToPM = async () => {
-    setIsHandoffRunning(true);
+    // Hand over at once: the PM desk shows the PRD being written live and the result when it is done.
+    const running = startPm();
+    if (mountedRef.current) onSwitchAgent("pm");
     try {
-      await startPm();
-      onSwitchAgent("pm");
+      await running;
     } catch {
-      // Error handled in context
-    } finally {
-      setIsHandoffRunning(false);
+      // Error handled in context (shown on the PM desk)
     }
   };
 
@@ -522,9 +539,29 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               </span>
             </span>
             <span className="text-[10px] font-mono text-brand-body/70">
-              Llama 3.2 3B • Local
+              {routeLabel(modelRoutes?.roles[activeAgent])}
             </span>
           </div>
+
+          {/* Live view of the stage this desk is running (survives leaving the screen). */}
+          {(() => {
+            const live: Record<string, { kinds: JobKind[]; active: boolean; title: string }> = {
+              ba: { kinds: ["pm"], active: isPrdGenerating, title: "Handed to the PM: drafting the PRD" },
+              pm: { kinds: ["pm"], active: isPrdGenerating, title: "PM is drafting the PRD" },
+              architect: {
+                kinds: ["architect", "feasibility"],
+                active: isArchitectGenerating || isFeasibilityRunning,
+                title: isFeasibilityRunning ? "Architect is checking feasibility" : "Architect is designing the system",
+              },
+              designer: { kinds: ["designer"], active: isDesignerGenerating, title: "Designer is designing the screens" },
+              hr: { kinds: ["hr"], active: isHrGenerating, title: "HR is planning the team" },
+              recruiter: { kinds: ["recruiter"], active: isRecruiterGenerating, title: "Recruiter is hiring the agents" },
+              scrum: { kinds: ["scrum"], active: isScrumGenerating, title: "Scrum Master is writing the backlog" },
+              "tech-lead": { kinds: ["readiness"], active: isReadinessGenerating, title: "Tech Lead is reviewing readiness" },
+            };
+            const cfg = live[activeAgent];
+            return cfg ? <LiveActivity sessionId={sessionId} kinds={cfg.kinds} active={cfg.active} title={cfg.title} /> : null;
+          })()}
 
           {/* PM Not Started Banner in PM view */}
           {isPM && !pmStarted && (
@@ -904,7 +941,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               </div>
             ) : (
               currentMessages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
+                <MessageBubble key={msg.id} message={msg} role={isBA ? "ba" : "pm"} />
               ))
             )}
 
@@ -1015,6 +1052,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               isGenerating={isArchitectGenerating}
               onGenerate={() => generateArchitectArtifacts()}
               canStart={gate1Approved && !architectureContent}
+              sessionId={sessionId}
             />
           ) : isDesigner ? (
             <DesignerOutputViewer
@@ -1090,6 +1128,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               <div className="flex-1 min-h-0">
                 {scrumViewTab === "backlog" && (
                   <BacklogViewer
+                    agentNames={agentNames}
                     backlog={backlogData}
                     projectName={intakeData?.projectName}
                     isGenerating={isScrumGenerating}
@@ -1192,6 +1231,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                 )}
                 {scrumViewTab === "backlog" && (
                   <BacklogViewer
+                    agentNames={agentNames}
                     backlog={backlogData}
                     projectName={intakeData?.projectName}
                     isGenerating={isScrumGenerating}
@@ -1211,6 +1251,12 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                 )}
               </div>
             </div>
+          ) : activeAgent === "engineer" || activeAgent === "qa" ? (
+            // Engineers and QA work inside the build loop; their workstation is the live build board.
+            <BuildViewer
+              sessionId={sessionId}
+              canBuild={Boolean(gate2State?.approved) && readinessState?.verdict === "ready"}
+            />
           ) : (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-brand-card rounded-2xl border border-brand-border">
               <Layers className="w-8 h-8 text-brand-body/40 mb-2" />
@@ -1218,7 +1264,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                 {agentMeta.outputTitle}
               </h3>
               <p className="text-xs text-brand-body mt-1 max-w-sm">
-                This agent workstation will unlock in the next pipeline phase once the architecture is verified.
+                This workstation opens when its stage is reached.
               </p>
             </div>
           )}

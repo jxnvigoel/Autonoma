@@ -131,6 +131,9 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
       whileHover={{ scale: isUnlocked ? 1.02 : 1, y: isUnlocked ? -2 : 0 }}
       whileTap={{ scale: isUnlocked ? 0.98 : 1 }}
       onClick={isUnlocked ? onClick : undefined}
+      data-desk={roleKey}
+      data-unlocked={isUnlocked ? "true" : "false"}
+      data-status={status}
       className={`group relative flex flex-col items-center justify-between p-4 rounded-2xl border-2 transition-all duration-200 select-none ${
         isSelected
           ? "border-brand-accent bg-brand-card shadow-lg ring-2 ring-brand-accent/20"
@@ -172,7 +175,7 @@ export const AgentDesk: React.FC<AgentDeskProps> = ({
             ) : (
               <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
             )}
-            <span className="font-semibold text-brand-headline">{provider === "groq" ? "Groq" : "Ollama"}</span>
+            <span className="font-semibold text-brand-headline">{provider === "groq" ? "Groq" : provider === "ollama" ? "Ollama" : provider === "none" ? "No model" : "Engine…"}</span>
           </span>
           <span className="truncate max-w-[125px] bg-brand-subtle px-1.5 py-0.5 rounded border border-brand-border/60">
             {model.includes("/") ? model.split("/")[1] : model}

@@ -204,7 +204,11 @@ export const TeamPlanViewer: React.FC<TeamPlanViewerProps> = ({
                   {teamPlan.total_headcount_weeks}
                 </span>
                 <span className="text-[10px] text-brand-body/70 mt-1 block">
-                  Cap: {teamPlan.headcount_budget_cap} hc-wks
+                  {teamPlan.estimated_cost_usd != null && teamPlan.budget_limit_usd != null
+                    ? `Est. $${teamPlan.estimated_cost_usd.toFixed(2)} of $${teamPlan.budget_limit_usd.toFixed(2)} budget`
+                    : teamPlan.estimated_cost_usd != null
+                    ? `Est. cost $${teamPlan.estimated_cost_usd.toFixed(2)}`
+                    : "No budget figure yet"}
                 </span>
               </div>
 
@@ -245,7 +249,7 @@ export const TeamPlanViewer: React.FC<TeamPlanViewerProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-brand-body leading-relaxed">
-                Capacity rate: <strong>{teamPlan.points_per_agent_per_week || 4} story points / agent / week</strong>.
+                Capacity rate: <strong>{teamPlan.points_per_agent_per_week != null ? `${teamPlan.points_per_agent_per_week} story points / agent / week` : "not set in config/staffing_assumptions.json"}</strong>.
                 DevOps starts Week 1 for repo and CI scaffolding. QA begins at build week. Performance engineering starts
                 after core API stabilization. No idle seats permitted.
               </p>

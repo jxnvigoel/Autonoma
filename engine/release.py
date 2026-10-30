@@ -58,13 +58,16 @@ def _save(path: str, data: Any) -> None:
 
 # ------------------------------------------------------------------ gates
 
-def gate_state(session_id: str, gate: int, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def gate_state(session_id: str, gate: int, projects_dir: Optional[str] = None) -> Dict[str, Any]:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     return _load(os.path.join(_pdir(session_id, projects_dir), f"gate{gate}_state.json"),
                  {"session_id": session_id, "gate": gate, "status": "not_open", "approved": False})
 
 
 def open_gate(session_id: str, gate: int, summary_md: str, details: Dict[str, Any],
-              projects_dir: str = DATA_PROJECTS_DIR, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+              projects_dir: Optional[str] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+    db_path = db_path or DEFAULT_DB_PATH
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     try:
         from skill_registry import init_approvals_db
     except ImportError:
@@ -86,7 +89,9 @@ def open_gate(session_id: str, gate: int, summary_md: str, details: Dict[str, An
 
 
 def decide_gate(session_id: str, gate: int, approved: bool, note: str = "",
-                projects_dir: str = DATA_PROJECTS_DIR, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+                projects_dir: Optional[str] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+    db_path = db_path or DEFAULT_DB_PATH
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     state = gate_state(session_id, gate, projects_dir)
     if state.get("status") != "open":
         raise HTTPException(status_code=409, detail=f"Gate {gate} is not open (status: {state.get('status')})")
@@ -104,7 +109,8 @@ def decide_gate(session_id: str, gate: int, approved: bool, note: str = "",
     return state
 
 
-def require_gate(session_id: str, gate: int, projects_dir: str = DATA_PROJECTS_DIR) -> None:
+def require_gate(session_id: str, gate: int, projects_dir: Optional[str] = None) -> None:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     if not gate_state(session_id, gate, projects_dir).get("approved"):
         raise HTTPException(status_code=403, detail={"error": f"GATE_{gate}_LOCKED", "session_id": session_id,
                                                      "rule": f"Handbook 2.6: Gate {gate} must be approved by the client first."})
@@ -141,7 +147,9 @@ def known_issues(build: Dict[str, Any], preview: Optional[Dict[str, Any]] = None
     return issues
 
 
-def start_beta(session_id: str, projects_dir: str = DATA_PROJECTS_DIR, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def start_beta(session_id: str, projects_dir: Optional[str] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+    db_path = db_path or DEFAULT_DB_PATH
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     build = get_build_state(session_id, projects_dir)
     if build.get("status") not in ("complete", "complete_with_issues"):
         raise HTTPException(status_code=409, detail=f"Build is not finished (status: {build.get('status')})")
@@ -171,9 +179,11 @@ def start_beta(session_id: str, projects_dir: str = DATA_PROJECTS_DIR, db_path: 
                       "tests": tests, "known_issues": issues}, projects_dir, db_path)
 
 
-def uat_feedback(session_id: str, feedback: str, kind: str = "bug", projects_dir: str = DATA_PROJECTS_DIR,
-                 db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def uat_feedback(session_id: str, feedback: str, kind: str = "bug", projects_dir: Optional[str] = None,
+                 db_path: Optional[str] = None) -> Dict[str, Any]:
     """Client UAT feedback goes through the BA as a Q-; a bug re-enters Stage 6 as a UAT story."""
+    db_path = db_path or DEFAULT_DB_PATH
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     pdir = _pdir(session_id, projects_dir)
     qa_log_path = os.path.join(pdir, "qa_log.json")
     qa_log = _load(qa_log_path, [])
@@ -226,8 +236,10 @@ def rollback_target(repo: str, version: str) -> str:
     return workspace.git(["rev-parse", "HEAD~1"], repo)[1].strip()
 
 
-def prepare_release(session_id: str, version: str = "v1.0.0", projects_dir: str = DATA_PROJECTS_DIR,
-                    db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def prepare_release(session_id: str, version: str = "v1.0.0", projects_dir: Optional[str] = None,
+                    db_path: Optional[str] = None) -> Dict[str, Any]:
+    db_path = db_path or DEFAULT_DB_PATH
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     require_gate(session_id, 3, projects_dir)
     repo = workspace.repo_path(session_id, projects_dir)
     pdir = _pdir(session_id, projects_dir)
@@ -274,7 +286,9 @@ def prepare_release(session_id: str, version: str = "v1.0.0", projects_dir: str 
     return open_gate(session_id, 4, "\n".join(lines) + "\n", {"checks": checks, "version": version}, projects_dir, db_path)
 
 
-def deliver(session_id: str, projects_dir: str = DATA_PROJECTS_DIR, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+def deliver(session_id: str, projects_dir: Optional[str] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+    db_path = db_path or DEFAULT_DB_PATH
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     require_gate(session_id, 4, projects_dir)
     pdir = _pdir(session_id, projects_dir)
     repo = workspace.repo_path(session_id, projects_dir)

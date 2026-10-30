@@ -15,6 +15,7 @@ import {
 import { useConversation } from "../../context/ConversationContext";
 import { MessageBubble, TypingDots } from "../chat/MessageBubble";
 import { cn } from "../../lib/utils";
+import { routeLabel, useModelRoutes } from "../../lib/modelRoutes";
 
 interface ActiveFile {
   path: string;
@@ -40,14 +41,22 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const {
+    sessionId,
     messages,
     isSending,
     error,
     sendMessage,
     clearHistory,
   } = useConversation();
+  // With a project open, messages go to its Business Analyst; otherwise to the general assistant.
+  const chatRole = sessionId ? "ba" : "general";
+  const routes = useModelRoutes();
+  const modelLabel = routeLabel(routes?.roles[chatRole]);
 
   const fileLines = activeFile.content.split("\n").length;
+  // Only a real open file is sent to the model as context (not the editor's placeholder text).
+  const hasFile = Boolean(activeFile.path);
+  const attachFile = includeFileContext && hasFile;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,7 +72,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
 
     try {
-      if (includeFileContext && activeFile) {
+      if (attachFile) {
         await sendMessage(text, {
           path: activeFile.path,
           content: activeFile.content,
@@ -125,7 +134,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                     AI Agent
                   </span>
                   <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand-subtle text-brand-accent font-semibold border border-brand-border">
-                    llama3.2:3b
+                    {modelLabel}
                   </span>
                 </div>
                 <p className="text-[10px] text-brand-body truncate">
@@ -161,13 +170,16 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               <span className="font-mono text-brand-headline truncate font-medium">
                 {activeFile.name}
               </span>
-              <span className="text-[10px] text-brand-body/80">
-                ({fileLines} lines)
-              </span>
+              {hasFile && (
+                <span className="text-[10px] text-brand-body/80">
+                  ({fileLines} lines)
+                </span>
+              )}
             </div>
             <button
               type="button"
               onClick={() => setIncludeFileContext((prev) => !prev)}
+              disabled={!hasFile}
               className={cn(
                 "text-[10px] px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 cursor-pointer shrink-0 font-medium",
                 includeFileContext
@@ -176,7 +188,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               )}
               title="Toggle injecting current file context into prompt"
             >
-              {includeFileContext ? (
+              {!hasFile ? (
+                <span>No file to attach</span>
+              ) : includeFileContext ? (
                 <>
                   <CheckCircle2 className="w-2.5 h-2.5" />
                   <span>File Context ON</span>
@@ -208,7 +222,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                     <button
                       key={item.label}
                       onClick={() => handleQuickPrompt(item.prompt)}
-                      className="w-full text-left px-3 py-2 rounded-lg bg-brand-card hover:bg-brand-subtle border border-brand-border text-xs text-brand-headline transition-colors shadow-sm cursor-pointer flex items-center justify-between group"
+                      disabled={!hasFile}
+                      title={hasFile ? item.prompt : "Open a file first"}
+                      className="w-full text-left px-3 py-2 rounded-lg bg-brand-card hover:bg-brand-subtle border border-brand-border text-xs text-brand-headline transition-colors shadow-sm cursor-pointer flex items-center justify-between group disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <span className="truncate">{item.label}</span>
                       <ChevronRight className="w-3 h-3 text-brand-body group-hover:translate-x-0.5 transition-transform" />
@@ -219,7 +235,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             ) : (
               <>
                 {messages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} compact />
+                  <MessageBubble key={msg.id} message={msg} compact role={chatRole} />
                 ))}
 
                 {isSending && (
@@ -230,7 +246,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   >
                     <div className="rounded-2xl rounded-tl-sm bg-brand-card border border-brand-border px-3.5 py-2.5 shadow-card text-xs text-brand-headline flex items-center gap-2">
                       <span className="font-semibold text-brand-accent">
-                        llama3.2:3b
+                        {modelLabel}
                       </span>
                       <span>Analyzing code</span>
                       <TypingDots />
@@ -252,7 +268,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
           {/* Bottom Input Area */}
           <div className="p-3 border-t border-brand-border bg-brand-card shrink-0 transition-colors duration-200">
-            {includeFileContext && (
+            {attachFile && (
               <div className="mb-2 flex items-center gap-1.5 text-[10px] text-brand-body px-1">
                 <Code2 className="w-3 h-3 text-brand-accent" />
                 <span className="truncate">
@@ -271,7 +287,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder={`Ask about ${activeFile.name}... (Enter to send, Shift+Enter for newline)`}
+                placeholder={hasFile ? `Ask about ${activeFile.name}... (Enter to send, Shift+Enter for newline)` : "Ask anything about the project... (Enter to send)"}
                 rows={2}
                 className="w-full bg-transparent px-3 py-2 text-xs text-brand-headline placeholder:text-brand-body/60 resize-none focus:outline-none min-h-[48px] max-h-[120px] select-text"
               />

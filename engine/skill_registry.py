@@ -12,6 +12,9 @@ import logging
 import sqlite3
 from typing import Dict, Any, List, Optional, Set, Tuple
 
+# Same database as every other module, wherever the engine is started from.
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "office.db")
+
 logger = logging.getLogger("autonoma-engine.skill_registry")
 
 # Role allowed tool permissions per Handbook Section 6.1.3 (Least privilege):
@@ -920,8 +923,9 @@ def validate_agent_permissions(
     return (len(errors) == 0, errors)
 
 
-def init_agents_db(db_path: str = "data/office.db") -> None:
+def init_agents_db(db_path: Optional[str] = None) -> None:
     """Initializes the agents table in SQLite per Handbook Chapter 24.1."""
+    db_path = db_path or DEFAULT_DB_PATH  # read at call time, so tests and the test engine can redirect it
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -950,8 +954,9 @@ def init_agents_db(db_path: str = "data/office.db") -> None:
     conn.close()
 
 
-def init_approvals_db(db_path: str = "data/office.db") -> None:
+def init_approvals_db(db_path: Optional[str] = None) -> None:
     """Initializes the approvals table in SQLite per Handbook Chapter 24.1."""
+    db_path = db_path or DEFAULT_DB_PATH  # read at call time, so tests and the test engine can redirect it
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -974,8 +979,9 @@ def init_approvals_db(db_path: str = "data/office.db") -> None:
 
 
 
-def save_agent_profile_to_db(agent_profile: Dict[str, Any], db_path: str = "data/office.db") -> None:
+def save_agent_profile_to_db(agent_profile: Dict[str, Any], db_path: Optional[str] = None) -> None:
     """Persists or updates an agent profile in SQLite."""
+    db_path = db_path or DEFAULT_DB_PATH  # read at call time, so tests and the test engine can redirect it
     init_agents_db(db_path)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -1020,8 +1026,10 @@ def save_agent_profile_to_db(agent_profile: Dict[str, Any], db_path: str = "data
     conn.close()
 
 
-def get_agent_profile_from_db(agent_id: str, db_path: str = "data/office.db") -> Optional[Dict[str, Any]]:
+def get_agent_profile_from_db(agent_id: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Retrieves an agent profile from SQLite."""
+    db_path = db_path or DEFAULT_DB_PATH  # read at call time, so tests and the test engine can redirect it
+    init_agents_db(db_path)  # a fresh install has no agents table until the first hire
     if not os.path.exists(db_path):
         return None
     conn = sqlite3.connect(db_path)
@@ -1043,8 +1051,10 @@ def get_agent_profile_from_db(agent_id: str, db_path: str = "data/office.db") ->
     return d
 
 
-def get_agents_by_project(project_id: str, db_path: str = "data/office.db") -> List[Dict[str, Any]]:
+def get_agents_by_project(project_id: str, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves all agent profiles for a project from SQLite."""
+    db_path = db_path or DEFAULT_DB_PATH  # read at call time, so tests and the test engine can redirect it
+    init_agents_db(db_path)  # a fresh install has no agents table until the first hire
     if not os.path.exists(db_path):
         return []
     conn = sqlite3.connect(db_path)

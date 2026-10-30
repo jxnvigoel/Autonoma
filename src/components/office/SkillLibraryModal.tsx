@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useEscapeToClose } from "../../lib/utils";
 import { motion } from "framer-motion";
 import {
   X,
@@ -35,6 +36,7 @@ export const SkillLibraryModal: React.FC<SkillLibraryModalProps> = ({
   sessionId,
   onSkillAttached,
 }) => {
+  useEscapeToClose(isOpen, onClose);
   const [packs, setPacks] = useState<SpecialistSkillPack[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -20,9 +20,12 @@ interface BacklogViewerProps {
   onGenerate?: () => void;
   canStart?: boolean;
   onProceedToPlan?: () => void;
+  /** Hired agents (id -> name) so each story shows who owns it, not just an id. */
+  agentNames?: Record<string, string>;
 }
 
 export const BacklogViewer: React.FC<BacklogViewerProps> = ({
+  agentNames = {},
   backlog,
   projectName = "Active Project",
   isGenerating = false,
@@ -45,7 +48,8 @@ export const BacklogViewer: React.FC<BacklogViewerProps> = ({
       searchQuery === "" ||
       s.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.owner.toLowerCase().includes(searchQuery.toLowerCase());
+      s.owner.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (agentNames[s.owner] || "").toLowerCase().includes(searchQuery.toLowerCase());
     return matchesRole && matchesSearch;
   });
 
@@ -287,7 +291,7 @@ export const BacklogViewer: React.FC<BacklogViewerProps> = ({
                 <div className="pt-3 border-t border-brand-border/60 flex items-center justify-between text-[11px]">
                   <div className="flex items-center gap-1.5 text-brand-muted">
                     <Users className="w-3.5 h-3.5" />
-                    <span className="font-medium text-brand-headline">{s.owner}</span>
+                    <span className="font-medium text-brand-headline" title={s.owner}>{agentNames[s.owner] || s.owner}</span>
                   </div>
                   <span className="px-2 py-0.5 rounded uppercase font-bold text-[9px] bg-brand-surface text-brand-muted border border-brand-border">
                     {s.role}
@@ -328,7 +332,7 @@ export const BacklogViewer: React.FC<BacklogViewerProps> = ({
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-brand-body font-mono text-[11px]">
-                      {s.owner}
+                      {agentNames[s.owner] ? `${agentNames[s.owner]} (${s.owner})` : s.owner}
                     </td>
                     <td className="py-2.5 px-3 font-bold text-indigo-600 dark:text-indigo-400">
                       {s.points}

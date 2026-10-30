@@ -55,7 +55,8 @@ def git(args: List[str], cwd: str, check: bool = True) -> Tuple[int, str]:
     return proc.returncode, out
 
 
-def repo_path(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> str:
+def repo_path(session_id: str, projects_dir: Optional[str] = None) -> str:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     return os.path.join(projects_dir, session_id, "repo")
 
 
@@ -65,8 +66,9 @@ def assert_no_remote(repo: str) -> None:
         raise WorkspaceError(f"project repository has remote(s) {out.split()}; Autonoma never pushes, remove them")
 
 
-def ensure_repo(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> str:
+def ensure_repo(session_id: str, projects_dir: Optional[str] = None) -> str:
     """Creates the project repository with the approved pre-build docs as the first commit."""
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     repo = repo_path(session_id, projects_dir)
     if os.path.isdir(os.path.join(repo, ".git")):
         assert_no_remote(repo)

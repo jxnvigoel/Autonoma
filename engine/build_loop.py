@@ -91,8 +91,10 @@ def init_test_runs_db(db_path: str) -> None:
 
 
 class BuildLoop:
-    def __init__(self, session_id: str, projects_dir: str = DATA_PROJECTS_DIR, db_path: str = DEFAULT_DB_PATH,
+    def __init__(self, session_id: str, projects_dir: Optional[str] = None, db_path: Optional[str] = None,
                  parallelism: Optional[int] = None, max_rounds: int = MAX_ROUNDS):
+        db_path = db_path or DEFAULT_DB_PATH
+        projects_dir = projects_dir or DATA_PROJECTS_DIR
         self.session_id = session_id
         self.projects_dir = projects_dir
         self.db_path = db_path
@@ -321,8 +323,20 @@ class BuildLoop:
                 self.set_story(sid, status="blocked", stage="blocked", blocked_reason=f"dependencies not done: {bad}")
                 self.emit("task.blocked", actor="system", task_id=sid, data={"dependencies": bad})
 
+        # Full regression of the whole app on main, after every story is merged (per-story QA ran above).
+        if "test" in self.allow["commands"] and any(s["status"] in DONE_STATUSES for s in self.state["stories"].values()):
+            final = self.sandbox_for(self.repo, "qa", "final-regression").run("test")
+            self.record_test_run("final-regression", "regression", final)
+            self.state["final_regression"] = {"ok": bool(final.get("ok")), "at": _now(),
+                                              "tests_run": final.get("tests_run"), "failing_tests": final.get("failing_tests", []),
+                                              "first_error": (final.get("first_error") or "")[:500]}
+            self.emit("qa.regression", actor="system", data={"ok": bool(final.get("ok")),
+                                                              "failing": len(final.get("failing_tests", []) or [])})
+
         statuses = [s["status"] for s in self.state["stories"].values()]
-        self.state["status"] = "complete" if all(x in DONE_STATUSES for x in statuses) else "complete_with_issues"
+        regression_ok = self.state.get("final_regression", {}).get("ok", True)
+        self.state["status"] = ("complete" if all(x in DONE_STATUSES for x in statuses) and regression_ok
+                                else "complete_with_issues")
         self.state["finished_at"] = _now()
         self.save_state()
         self.write_daily_report()
@@ -669,6 +683,11 @@ class BuildLoop:
 
         passed = bool(regression.get("ok")) and not uncovered and not any(
             b.get("severity") in ("blocker", "major") for b in bugs)
+        # Per acceptance criterion, as code found it in the test files and the real run (company checklist).
+        self.set_story(sid, ac_coverage={"round": qa_round, "covered": [a for a in acs if a not in uncovered],
+                                         "uncovered": uncovered, "suite_ok": bool(regression.get("ok")),
+                                         "failing_acs": sorted({b["ac"] for b in bugs if b.get("ac")}),
+                                         "passed": passed})
         report = self.render_qa_report(story, qa_round, run, regression, uncovered, bugs, discarded, ran_tests_itself)
         os.makedirs(os.path.join(wt, "reports", "qa"), exist_ok=True)
         with open(os.path.join(wt, "reports", "qa", f"{sid}.md"), "w", encoding="utf-8") as f:
@@ -908,7 +927,8 @@ def start_build_in_background(session_id: str, **kwargs: Any) -> Dict[str, Any]:
     return {"status": "started", "session_id": session_id, "stories": len(loop.state["stories"])}
 
 
-def get_build_state(session_id: str, projects_dir: str = DATA_PROJECTS_DIR) -> Dict[str, Any]:
+def get_build_state(session_id: str, projects_dir: Optional[str] = None) -> Dict[str, Any]:
+    projects_dir = projects_dir or DATA_PROJECTS_DIR
     path = os.path.join(projects_dir, session_id, "build_state.json")
     if not os.path.exists(path):
         return {"session_id": session_id, "status": "not_started", "stories": {}}

@@ -2151,10 +2151,9 @@ def init_designer_routes(
         if not os.path.exists(session_dir):
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Verify Gate 1 approval
-        gate1_file = os.path.join(session_dir, "gate1_state.json")
-        gate1_data = load_json_fn(gate1_file, {})
-        if not gate1_data.get("approved"):
+        # Verify Gate 1 approval (recorded in session_state.json by /gate1/approve)
+        gate1_data = load_json_fn(os.path.join(session_dir, "session_state.json"), {})
+        if not gate1_data.get("gate1_approved"):
             raise HTTPException(
                 status_code=403,
                 detail="Gate 1 not approved. The client must approve the PRD and scope before design start."
