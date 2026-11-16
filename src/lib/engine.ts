@@ -47,6 +47,8 @@ export interface LLMSettings {
   groq_configured: boolean;
   masked_api_key: string;
   available_models: LLMModelInfo[];
+  /** Models installed in the local Ollama server. */
+  local_models?: { name: string; size?: number }[];
   role_configs: Record<string, RoleConfig>;
   local_only: boolean;
   fallback_count: number;
@@ -1118,6 +1120,29 @@ export async function apiGetBudgetStatus(
   const res = await fetch(`${ENGINE_BASE_URL}/budget/status/${sessionId}`);
   if (!res.ok) {
     throw new Error(`Failed to retrieve budget status: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** The client raises the budget to resume a project paused at 100% (Handbook 26.4). */
+export async function apiRaiseBudget(
+  sessionId: string,
+  limit: { tokens?: number; usd?: number },
+  note = "Raised by the client from the office"
+): Promise<BudgetGuardStatus> {
+  const res = await fetch(`${ENGINE_BASE_URL}/budget/raise`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId.trim(),
+      budget_limit_tokens: limit.tokens ?? null,
+      budget_limit_usd: limit.usd ?? null,
+      note,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(typeof err?.detail === "string" ? err.detail : `Could not raise the budget (HTTP ${res.status})`);
   }
   return res.json();
 }

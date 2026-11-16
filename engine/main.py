@@ -1,10 +1,5 @@
 import os
 import sys
-
-ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
-if ENGINE_DIR not in sys.path:
-    sys.path.insert(0, ENGINE_DIR)
-
 import time
 import logging
 import json
@@ -170,6 +165,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
+def _register_error_handlers(app: FastAPI) -> None:
+    """
+    Every endpoint reports a failure as a readable `detail`, never a bare 500.
+
+    Model-availability failures are the client's to fix (raise the budget, add a key, start Ollama, wait for a
+    quota), so they get their own status and the model client's own message. Anything else unexpected still
+    answers with JSON the browser is allowed to read: an unhandled 500 carries no CORS headers, so the screen
+    could only show "Failed to fetch" and the real reason stayed in the engine log.
+    """
+    from fastapi.responses import JSONResponse
+    try:
+        import llm_client as _lc
+    except ImportError:
+        from engine import llm_client as _lc
+
+    def _cors(request) -> Dict[str, str]:
+        return {"Access-Control-Allow-Origin": request.headers.get("origin") or "*", "Vary": "Origin"}
+
+    for exc_type, code in ((_lc.BudgetExhaustedError, 402), (_lc.NoLocalModelError, 503),
+                           (_lc.GroqKeyMissingError, 503), (_lc.DailyQuotaError, 429),
+                           (_lc.LLMRateLimitExhaustedError, 429)):
+        def _handler(request, exc, code=code):
+            return JSONResponse(status_code=code, headers=_cors(request),
+                                content={"detail": str(exc), "error": type(exc).__name__})
+        app.add_exception_handler(exc_type, _handler)
+
+    def _unexpected(request, exc):
+        logger.exception(f"Unhandled error on {request.method} {request.url.path}")
+        return JSONResponse(status_code=500, headers=_cors(request),
+                            content={"detail": f"The engine hit an internal error: {type(exc).__name__}: {exc}",
+                                     "error": type(exc).__name__})
+    app.add_exception_handler(Exception, _unexpected)
+
+
+_register_error_handlers(app)
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL") or OLLAMA_DEFAULT_MODEL

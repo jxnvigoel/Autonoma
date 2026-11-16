@@ -9,7 +9,6 @@ running job instead of starting a second copy.
 """
 
 import os
-import re
 import json
 import logging
 import threading
@@ -214,19 +213,17 @@ def _post_routes(app) -> Dict[str, Any]:
 
     def walk(routes, prefix: str = "") -> None:
         for r in routes or []:
-            router_prefix = getattr(getattr(r, "include_context", None), "prefix", "") or ""
-            curr_prefix = prefix + (getattr(r, "path", "") or "") + router_prefix
-            if curr_prefix:
-                curr_prefix = re.sub(r"/+", "/", curr_prefix)
+            ctx_prefix = getattr(getattr(r, "include_context", None), "prefix", "") or ""
+            route_path = getattr(r, "path", "") or ""
+            path = prefix + ctx_prefix + route_path
             if getattr(r, "endpoint", None) is not None and "POST" in (getattr(r, "methods", None) or ()):
-                found.setdefault(curr_prefix, r.endpoint)
-            subroutes = getattr(r, "routes", None)
-            if subroutes is None and hasattr(r, "original_router"):
-                subroutes = getattr(r.original_router, "routes", None)
-            if subroutes is None and hasattr(r, "app"):
-                subroutes = getattr(r.app, "routes", None)
-            if subroutes is not None:
-                walk(subroutes, curr_prefix)
+                found.setdefault(path, r.endpoint)
+            elif getattr(r, "routes", None) is not None:
+                walk(r.routes, path)
+            elif getattr(r, "original_router", None) is not None and getattr(r.original_router, "routes", None) is not None:
+                walk(r.original_router.routes, path)
+            elif getattr(r, "router", None) is not None and getattr(r.router, "routes", None) is not None:
+                walk(r.router.routes, path)
 
     walk(getattr(app, "routes", []))
     return found

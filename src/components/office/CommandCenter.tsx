@@ -38,6 +38,8 @@ import { BuildViewer } from "./BuildViewer";
 import { useConversation } from "../../context/ConversationContext";
 import { routeLabel, useModelRoutes } from "../../lib/modelRoutes";
 import { LiveActivity } from "./LiveActivity";
+import { InlineFeedbackBox } from "./InlineFeedbackBox";
+import { StageNotice } from "./StageNotice";
 import { JobKind } from "../../lib/engine";
 import {
   AgentLiveStatus,
@@ -118,6 +120,11 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     generateBacklog,
     runReadinessReview,
     isFeasibilityRunning,
+    runFeasibility,
+    error: officeError,
+    setError: setOfficeError,
+    setPmError,
+    fetchStage4Session,
   } = useConversation();
 
   const modelRoutes = useModelRoutes();
@@ -132,6 +139,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     };
   }, []);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [gate1FeedbackMode, setGate1FeedbackMode] = useState<"changes" | "pm" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const isBA = activeAgent === "ba";
@@ -199,7 +207,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
       await generateBacklog();
     } catch (err: any) {
       console.error("Failed to generate backlog:", err);
-      if (mountedRef.current) alert(err.message || "Failed to generate backlog. Check Gate 2 approval.");
+      if (mountedRef.current) setOfficeError(err.message || "Failed to generate backlog. Check Gate 2 approval.");
     }
   };
 
@@ -208,7 +216,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
       await runReadinessReview();
     } catch (err: any) {
       console.error("Failed to run readiness review:", err);
-      if (mountedRef.current) alert(err.message || "Failed to run readiness review.");
+      if (mountedRef.current) setOfficeError(err.message || "Failed to run readiness review.");
     }
   };
 
@@ -596,7 +604,37 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               "tech-lead": { kinds: ["readiness"], active: isReadinessGenerating, title: "Tech Lead is reviewing readiness" },
             };
             const cfg = live[activeAgent];
-            return cfg ? <LiveActivity sessionId={sessionId} kinds={cfg.kinds} active={cfg.active} title={cfg.title} /> : null;
+            const stageError = isPM || isBA ? pmError || officeError : officeError;
+            return (
+              <>
+                {cfg && <LiveActivity sessionId={sessionId} kinds={cfg.kinds} active={cfg.active} title={cfg.title} />}
+                {/* Why a stage button "did nothing": the real reason, and the way out when it is the budget. */}
+                <StageNotice
+                  sessionId={sessionId}
+                  kinds={cfg?.kinds ?? []}
+                  active={cfg?.active ?? false}
+                  error={stageError || null}
+                  onDismissError={() => {
+                    setOfficeError(null);
+                    if (isPM || isBA) setPmError(null);
+                  }}
+                  onBudgetRaised={() => fetchStage4Session()}
+                  onRetry={(kind) => {
+                    const run: Record<JobKind, () => unknown> = {
+                      pm: () => startPm(),
+                      feasibility: () => runFeasibility(),
+                      architect: () => generateArchitectArtifacts(),
+                      designer: () => generateDesignerArtifacts(),
+                      hr: () => generateHrPlan().catch(() => undefined),
+                      recruiter: () => executeRecruiterHiring().catch(() => undefined),
+                      scrum: () => handleGenerateBacklog(),
+                      readiness: () => handleRunReadinessReview(),
+                    };
+                    run[kind]?.();
+                  }}
+                />
+              </>
+            );
           })()}
 
           {/* PM Not Started Banner in PM view */}
@@ -672,15 +710,21 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      const feedback = prompt("What changes or clarifications are needed?");
-                      if (feedback) requestGate1Changes(feedback);
-                    }}
+                    onClick={() => setGate1FeedbackMode(gate1FeedbackMode === "changes" ? null : "changes")}
                     className="px-3 py-1.5 rounded-lg border border-brand-border bg-brand-card hover:bg-brand-subtle text-brand-headline font-medium text-xs transition-colors cursor-pointer"
                   >
                     Request Changes
                   </button>
                 </div>
+              )}
+              {!gate1Approved && gate1FeedbackMode === "changes" && (
+                <InlineFeedbackBox
+                  label="What changes or clarifications are needed?"
+                  placeholder="For example: drop the 99.9% uptime metric, the client never asked for it."
+                  submitLabel="Request changes"
+                  onSubmit={(text) => requestGate1Changes(text)}
+                  onCancel={() => setGate1FeedbackMode(null)}
+                />
               )}
               {!gate1Approved && gate1Refusal && (
                 <div className="mt-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-1.5">
@@ -700,10 +744,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                   <div className="flex flex-wrap gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        const feedback = prompt("What should the PM fix?", gate1Refusal.summary);
-                        if (feedback) requestGate1Changes(feedback);
-                      }}
+                      onClick={() => setGate1FeedbackMode(gate1FeedbackMode === "pm" ? null : "pm")}
                       className="px-2.5 py-1 rounded-md bg-brand-card border border-brand-border text-[11px] font-medium cursor-pointer"
                     >
                       Send back to the PM
@@ -720,6 +761,20 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                       Approve anyway (accept known issues)
                     </button>
                   </div>
+                  {gate1FeedbackMode === "pm" && (
+                    <InlineFeedbackBox
+                      label="What should the PM fix?"
+                      initialValue={[
+                        gate1Refusal.summary,
+                        ...gate1Refusal.unsupportedClaims.slice(0, 6).map(
+                          (c) => `- ${c.text}${c.reason ? ` — ${c.reason}` : ""}`
+                        ),
+                      ].join("\n")}
+                      submitLabel="Send to PM"
+                      onSubmit={(text) => requestGate1Changes(text)}
+                      onCancel={() => setGate1FeedbackMode(null)}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -930,10 +985,10 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
           )}
 
           {/* Error Banner */}
-          {((pmError && isPM) || (agentChatError && deliveryAgent)) && (
+          {agentChatError && deliveryAgent && (
             <div className="m-4 p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{isPM ? pmError : agentChatError}</span>
+              <span>{agentChatError}</span>
             </div>
           )}
 

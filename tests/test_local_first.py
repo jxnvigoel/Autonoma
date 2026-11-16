@@ -242,6 +242,55 @@ class LocalFirstClientTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.client._num_ctx_for("m", "", "p" * 60000, 500)
 
+    def test_shipped_router_runs_every_role_on_one_installed_ollama_model(self):
+        """The project ships Ollama-only: one installed local model must serve every role at its own tier."""
+        router = llm_client.load_router()
+        self.assertFalse(router["cloud_enabled"])
+        for installed in ("qwen2.5-coder:7b", "qwen2.5-coder:14b", "qwen2.5-coder:32b"):
+            with mock.patch.object(self.client, "list_ollama_models", return_value=_models(installed)):
+                for role in router["roles"]:
+                    route = self.client.resolve_route(role)
+                    self.assertEqual((route["provider"], route["model"]), ("ollama", installed), role)
+                    self.assertFalse(route["downgraded"], f"{role} on {installed}")
+                judge = self.client.resolve_judge_route("architect")
+                self.assertEqual(judge["model"], installed)
+                self.assertFalse(judge["weaker_than_author"])
+        # A small model still runs every role, and the roles above its tier are reported, not hidden.
+        with mock.patch.object(self.client, "list_ollama_models", return_value=_models("llama3.2:3b")):
+            for role in router["roles"]:
+                self.assertEqual(self.client.resolve_route(role)["model"], "llama3.2:3b", role)
+            self.assertTrue(self.client.resolve_route("architect")["downgraded"])
+            self.assertFalse(self.client.resolve_route("pm")["downgraded"])
+
+    def _ollama_response(self, status=200, body=None):
+        res = mock.Mock(status_code=status, text=json.dumps(body or {}))
+        res.json.return_value = body or {}
+        return res
+
+    def test_ollama_call_keeps_model_loaded_and_uses_configured_time_limit(self):
+        ok = self._ollama_response(body={"response": "hello", "prompt_eval_count": 5, "eval_count": 2})
+        router = {"ollama_timeout_s": 900, "ollama_keep_alive": "10m"}
+        with mock.patch.object(llm_client, "load_router", return_value=router), \
+                mock.patch.object(self.client, "ollama_context_length", return_value=32768), \
+                mock.patch.object(llm_client.requests, "post", return_value=ok) as post:
+            out = self.client._execute_ollama_call("hi", "sys", "qwen2.5-coder:7b", 0.2, 100)
+        self.assertEqual((out["text"], out["provider"], out["cost_usd"]), ("hello", "ollama", 0.0))
+        self.assertEqual(post.call_args.kwargs["timeout"], 900)
+        self.assertEqual(post.call_args.kwargs["json"]["keep_alive"], "10m")
+        self.assertTrue(post.call_args.args[0].endswith("/api/generate"))
+
+    def test_ollama_problems_say_what_to_do(self):
+        with mock.patch.object(self.client, "ollama_context_length", return_value=32768):
+            with mock.patch.object(llm_client.requests, "post", side_effect=llm_client.requests.exceptions.ConnectionError()):
+                with self.assertRaisesRegex(RuntimeError, "Ollama not reachable"):
+                    self.client._execute_ollama_call("hi", None, "m", 0.2, 100)
+            with mock.patch.object(llm_client.requests, "post", side_effect=llm_client.requests.exceptions.Timeout()):
+                with self.assertRaisesRegex(RuntimeError, "did not finish within"):
+                    self.client._execute_ollama_call("hi", None, "m", 0.2, 100)
+            with mock.patch.object(llm_client.requests, "post", return_value=self._ollama_response(404, {"error": "model not found"})):
+                with self.assertRaisesRegex(NoLocalModelError, "ollama pull m"):
+                    self.client._execute_ollama_call("hi", None, "m", 0.2, 100)
+
     def test_ledger_row_records_request_time_and_wait_separately(self):
         self.client.set_fake_responder(lambda **kw: "hello world")
         self.client.query("prompt text", role="pm", session_id="proj-x", task_id="t1")

@@ -123,3 +123,27 @@ class NonGoalContradictionTest(unittest.TestCase):
         found = judge.audit_non_goal_contradictions(self.PRD)
         self.assertEqual(sorted(f["text"].lower() for f in found), ["due dates", "reminders"])
         self.assertTrue(all(f["section"] == "3. Users" for f in found))  # "Cannot" column and "no due date" are fine
+
+
+class SummaryTableLayoutTest(unittest.TestCase):
+    """A markdown table's rows sit on consecutive lines; a blank line between them breaks the table."""
+
+    def test_summary_table_rows_are_contiguous(self):
+        def fake_feature(**kw):
+            fid = f"F-{kw['f_idx']:03d}"
+            block = (f"### Feature {fid}: x\n\n| ID | Acceptance criterion |\n|---|---|\n"
+                     f"| AC-{kw['f_idx']:03d} | Given a, when b, then c |")
+            return block, [{"id": f"AC-{kw['f_idx']:03d}", "text": "t"}], {"model": "fake"}
+
+        with mock.patch.object(pm, "generate_single_feature_spec_llm", side_effect=fake_feature):
+            text, features, _ = pm.generate_section_5_features_llm(PARSED, session_id="s")
+
+        lines = text.split("\n")
+        start = lines.index("| ID | Feature | Description | Priority (MoSCoW) | Requirements |")
+        self.assertEqual(lines[start + 1], "|---|---|---|---|---|")
+        self.assertTrue(lines[start + 2].startswith("| F-001 | Sign in |"))
+        self.assertTrue(lines[start + 3].startswith("| F-002 | Sign out |"))
+        self.assertEqual(lines[start + 4], "")  # the table ends with a blank line before the first feature block
+        self.assertEqual(lines[start - 1], "")
+        self.assertEqual([f["id"] for f in features], ["F-001", "F-002"])
+        self.assertIn("### Feature F-001: x", text)

@@ -205,7 +205,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                 )}
               </div>
               <p className="text-xs text-brand-body">
-                Configure role model assignments, Groq cloud endpoint, rate pacing, and privacy overrides.
+                Choose the model each agent uses. Agents run on local Ollama models unless cloud is turned on.
               </p>
             </div>
           </div>
@@ -267,14 +267,14 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
 
         {/* Feedback Alerts */}
         <div className="px-6 pt-3 space-y-2">
-          {/* Missing Groq Key Alert */}
-          {!settings?.groq_configured && !isLoading && (
+          {/* Missing Groq key: only a problem when this project is set to use the cloud */}
+          {settings && !settings.groq_configured && !settings.local_only && !isLoading && (
             <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-xs text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <p className="font-bold">GROQ_API_KEY Missing from Environment</p>
                 <p className="opacity-90">
-                  Groq is the default LLM provider for all agents. Please add{" "}
+                  This project is set to use Groq, but no key is configured. Please add{" "}
                   <code className="font-mono bg-rose-500/20 px-1 py-0.5 rounded">GROQ_API_KEY=gsk_...</code> to your{" "}
                   <code className="font-mono bg-rose-500/20 px-1 py-0.5 rounded">.env</code> file, or toggle Local-Only mode
                   below to run entirely on Ollama without cloud calls.
@@ -304,29 +304,60 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
             <>
               {/* Credentials & Pacing Status Overview */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl bg-brand-subtle/50 border border-brand-border">
-                <div>
-                  <span className="text-[10px] uppercase font-mono text-brand-body">API Key (.env)</span>
-                  <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline">
-                    <Key className="w-3.5 h-3.5 text-brand-accent" />
-                    <span>{settings?.masked_api_key || "None configured"}</span>
-                  </div>
-                </div>
+                {settings?.local_only ? (
+                  <>
+                    <div>
+                      <span className="text-[10px] uppercase font-mono text-brand-body">Provider</span>
+                      <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline">
+                        <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Ollama (local, no cloud calls)</span>
+                      </div>
+                    </div>
 
-                <div>
-                  <span className="text-[10px] uppercase font-mono text-brand-body">Default Base URL</span>
-                  <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline truncate">
-                    <Cloud className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span className="truncate">https://api.groq.com/openai/v1</span>
-                  </div>
-                </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-mono text-brand-body">Ollama Address</span>
+                      <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline truncate">
+                        <HardDrive className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <span className="truncate">http://localhost:11434</span>
+                      </div>
+                    </div>
 
-                <div>
-                  <span className="text-[10px] uppercase font-mono text-brand-body">Fallback Provider</span>
-                  <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline">
-                    <HardDrive className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Ollama ({localModel})</span>
-                  </div>
-                </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-mono text-brand-body">Installed Local Models</span>
+                      <div className="mt-1 font-mono font-medium text-brand-headline break-words">
+                        {settings.local_models?.length
+                          ? settings.local_models.map((m) => m.name).join(", ")
+                          : `None yet: run "ollama pull ${localModel}"`}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <span className="text-[10px] uppercase font-mono text-brand-body">API Key (.env)</span>
+                      <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline">
+                        <Key className="w-3.5 h-3.5 text-brand-accent" />
+                        <span>{settings?.masked_api_key || "None configured"}</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-mono text-brand-body">Default Base URL</span>
+                      <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline truncate">
+                        <Cloud className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span className="truncate">https://api.groq.com/openai/v1</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-mono text-brand-body">Fallback Provider</span>
+                      <div className="flex items-center gap-1.5 mt-1 font-mono font-medium text-brand-headline">
+                        <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Ollama ({localModel})</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Role Configuration Table */}
@@ -336,7 +367,9 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                     Agent Role Model Assignments
                   </h3>
                   <span className="text-[11px] text-brand-body">
-                    {settings?.available_models?.length || 0} live Groq models discovered
+                    {settings?.local_only
+                      ? `${settings.local_models?.length || 0} local model${settings.local_models?.length === 1 ? "" : "s"} installed`
+                      : `${settings?.available_models?.length || 0} live Groq models discovered`}
                   </span>
                 </div>
 
@@ -390,7 +423,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                               className="px-2.5 py-1.5 rounded-lg bg-brand-subtle border border-brand-border text-xs text-brand-headline focus:ring-1 focus:ring-brand-accent outline-hidden cursor-pointer"
                             >
                               <option value="groq">Groq (Cloud)</option>
-                              <option value="ollama">Ollama (Local Fallback)</option>
+                              <option value="ollama">Ollama (Local)</option>
                             </select>
                           </div>
 
@@ -554,7 +587,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                     <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-2" />
                     <p className="font-bold text-xs text-brand-headline">Zero Fallbacks Recorded</p>
                     <p className="text-[11px] text-brand-body mt-0.5">
-                      All LLM requests succeeded on Groq Cloud without rate limit exhaustion.
+                      No request had to fall back from a cloud model to a local one.
                     </p>
                   </div>
                 )}

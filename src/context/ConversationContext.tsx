@@ -691,6 +691,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsArchitectGenerating(true);
+      setError(null);
       try {
         const data = await apiGenerateArchitectArtifacts(target, attach);
         if (!isCurrent(target)) return;
@@ -713,6 +714,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsDesignerGenerating(true);
+      setError(null);
       try {
         const data = await apiGenerateDesignerArtifacts(target, attach);
         if (!isCurrent(target)) return;
@@ -740,6 +742,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!sessionId) return;
       setIsGate1Approving(true);
       setGate1Refusal(null);
+      setError(null);
       try {
         await apiApproveGate1(sessionId, notes, acceptKnownIssues);
         await refreshOfficeStatus(sessionId);
@@ -760,6 +763,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
   const requestGate1Changes = useCallback(
     async (feedback: string) => {
       if (!sessionId) return;
+      setError(null);
       try {
         await apiRequestGate1Changes(sessionId, feedback);
         // The engine archived the reviewed PRD and started the PM rewrite; follow it.
@@ -781,6 +785,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsFeasibilityRunning(true);
+      setError(null);
       try {
         await apiRunFeasibility(target, attach);
         if (!isCurrent(target)) return;
@@ -848,6 +853,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     async (notes?: string) => {
       if (!sessionId) return;
       setIsGate2Approving(true);
+      setError(null);
       try {
         await apiApproveGate2(sessionId, notes);
         await refreshOfficeStatus(sessionId);
@@ -866,6 +872,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
     async (feedback: string) => {
       if (!sessionId) return;
       setIsGate2Approving(true);
+      setError(null);
       try {
         await apiRequestGate2Changes(sessionId, feedback);
         await refreshOfficeStatus(sessionId);
@@ -885,6 +892,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsScrumGenerating(true);
+      setError(null);
       try {
         await apiStartScrumStage(target, attach);
         if (!isCurrent(target)) return;
@@ -905,6 +913,7 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       const target = targetSessionId || sessionId;
       if (!target) return;
       setIsReadinessGenerating(true);
+      setError(null);
       try {
         await apiStartReadinessReview(target, attach);
         if (!isCurrent(target)) return;

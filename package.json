@@ -8,14 +8,15 @@
     "compile:electron": "esbuild electron/main.ts --bundle --platform=node --target=node18 --outfile=dist-electron/main.cjs --external:electron --external:node-pty && esbuild electron/preload.ts --bundle --platform=node --target=node18 --outfile=dist-electron/preload.cjs --external:electron",
     "dev:vite": "vite",
     "dev:electron": "npm run compile:electron && wait-on tcp:5173 && node scripts/run-electron.cjs",
-    "predev": "node scripts/free-ports.cjs",
+    "predev": "node scripts/free-ports.cjs && node scripts/doctor.cjs --quick",
     "dev": "concurrently -k -n vite,electron -c blue,green \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:web": "node scripts/free-ports.cjs && concurrently -k -n engine,vite -c magenta,blue \"npm run engine\" \"npm run dev:vite\"",
     "start": "npm run build && node scripts/free-ports.cjs && node scripts/run-electron.cjs --built",
     "build": "tsc && vite build && npm run compile:electron",
     "preview": "vite preview",
     "engine": "python3 engine/main.py",
-    "postinstall": "node -e \"const fs = require('fs'), path = require('path'); const p = path.join('node_modules', 'node-pty', 'prebuilds'); if (fs.existsSync(p)) { fs.readdirSync(p).forEach(d => { const helper = path.join(p, d, 'spawn-helper'); if (fs.existsSync(helper)) { try { fs.chmodSync(helper, 0o755); } catch(e){} } }); }\""
+    "postinstall": "node -e \"const fs = require('fs'), path = require('path'); const p = path.join('node_modules', 'node-pty', 'prebuilds'); if (fs.existsSync(p)) { fs.readdirSync(p).forEach(d => { const helper = path.join(p, d, 'spawn-helper'); if (fs.existsSync(helper)) { try { fs.chmodSync(helper, 0o755); } catch(e){} } }); }\"",
+    "doctor": "node scripts/doctor.cjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -44,5 +45,8 @@
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "wait-on": "^9.5.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

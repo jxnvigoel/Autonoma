@@ -14,24 +14,9 @@ import main  # noqa: E402
 
 def engine_routes():
     out = set()
-
-    def walk(routes, prefix=""):
-        for r in routes or []:
-            router_prefix = getattr(getattr(r, "include_context", None), "prefix", "") or ""
-            curr = prefix + (getattr(r, "path", "") or "") + router_prefix
-            if curr:
-                curr = re.sub(r"/+", "/", curr)
-            for m in getattr(r, "methods", None) or []:
-                out.add((m, re.sub(r"\{[^}]+\}", "{}", curr)))
-            subroutes = getattr(r, "routes", None)
-            if subroutes is None and hasattr(r, "original_router"):
-                subroutes = getattr(r.original_router, "routes", None)
-            if subroutes is None and hasattr(r, "app"):
-                subroutes = getattr(r.app, "routes", None)
-            if subroutes is not None:
-                walk(subroutes, curr)
-
-    walk(getattr(main.app, "routes", []))
+    for r in main.app.routes:
+        for m in getattr(r, "methods", None) or []:
+            out.add((m, re.sub(r"\{[^}]+\}", "{}", r.path)))
     return out
 
 

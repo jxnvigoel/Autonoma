@@ -1,5 +1,5 @@
 {
-  "cloud_enabled": true,
+  "cloud_enabled": false,
   "local_default_model": "qwen2.5-coder:7b",
   "tiers": {
     "high": [
@@ -10,6 +10,10 @@
       {
         "provider": "groq",
         "model": "llama-3.3-70b-versatile"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:32b"
       },
       {
         "provider": "ollama",
@@ -39,11 +43,23 @@
       },
       {
         "provider": "ollama",
+        "model": "qwen2.5-coder:32b"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:14b"
+      },
+      {
+        "provider": "ollama",
         "model": "qwen2.5-coder:7b"
       },
       {
         "provider": "ollama",
         "model": "qwen2.5:7b"
+      },
+      {
+        "provider": "ollama",
+        "model": "llama3.1:8b"
       },
       {
         "provider": "ollama",
@@ -65,7 +81,23 @@
       },
       {
         "provider": "ollama",
+        "model": "qwen2.5-coder:32b"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:14b"
+      },
+      {
+        "provider": "ollama",
         "model": "qwen2.5-coder:7b"
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen2.5:7b"
+      },
+      {
+        "provider": "ollama",
+        "model": "llama3.1:8b"
       },
       {
         "provider": "ollama",
@@ -128,5 +160,7 @@
     "recruiter",
     "scrum"
   ],
-  "local_first_note": "Short structured tasks (team plan, hiring, backlog) run on the local model first so they do not use the Groq free-tier quota; code and the Judge check every result. Groq is the fallback."
+  "local_first_note": "All agents run on the local Ollama model (cloud_enabled is false). Every tier lists the local models best first, and the first one installed is used, so one installed model of 7b or larger serves every role. A smaller model still runs, but roles above its tier are reported as downgraded. The Groq entries are only used if cloud_enabled is turned on and GROQ_API_KEY is set.",
+  "ollama_timeout_s": 1800,
+  "ollama_keep_alive": "30m"
 }

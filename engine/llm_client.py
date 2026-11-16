@@ -2,8 +2,9 @@
 LLM client and model router (Handbook Chapters 22, 23.3, 26.4).
 
 Routing (Handbook 22.4):
-- Every role routes through config/model_router.json (role -> tier -> ordered provider list);
-  the configured order is Groq first, local Ollama as the fallback.
+- Every role routes through config/model_router.json (role -> tier -> ordered provider list).
+  The project runs on local Ollama models: cloud is off in the router config. If cloud is turned on
+  (and GROQ_API_KEY is set), the Groq entries of each tier are tried first and Ollama is the fallback.
 - Cloud is used only while cloud is enabled (router `cloud_enabled`, config/runtime.json, or
   AUTONOMA_ALLOW_CLOUD) AND the project is not local-only. With cloud disabled the client makes
   no outbound request at all; only the local Ollama server is called.
@@ -81,6 +82,9 @@ ROLE_DEFAULTS: Dict[str, Dict[str, Any]] = {
 }
 
 TIER_ORDER = ["high", "medium", "low"]
+
+# One local model call at a time (see _execute_ollama_call).
+_OLLAMA_TURN = threading.Lock()
 
 
 class GroqKeyMissingError(Exception):
@@ -1013,9 +1017,27 @@ class LLMClient:
             payload["options"]["num_predict"] = int(max_tokens)
         if system:
             payload["system"] = system
-        t0 = time.time()
-        res = requests.post(f"{OLLAMA_HOST}/api/generate", json=payload, timeout=600)
-        request_ms = int((time.time() - t0) * 1000)
+        router = self.router
+        # Keep the model in memory between the calls of a stage; reloading it costs seconds every call.
+        payload["keep_alive"] = router.get("ollama_keep_alive", "30m")
+        # A laptop writes a long answer slowly (8,000 tokens can take over 10 minutes), so the limit is generous.
+        timeout_s = float(router.get("ollama_timeout_s", 1800))
+        # Ollama answers one request per model at a time. Stages that fan out several calls take turns here,
+        # so the time limit covers the call itself and not the time spent queued behind the others.
+        with _OLLAMA_TURN:
+            t0 = time.time()
+            try:
+                res = requests.post(f"{OLLAMA_HOST}/api/generate", json=payload, timeout=timeout_s)
+            except requests.exceptions.ConnectionError:
+                raise RuntimeError(f"Ollama not reachable at {OLLAMA_HOST}. Open the Ollama app (or run "
+                                   f"`ollama serve`) and try again.")
+            except requests.exceptions.Timeout:
+                raise RuntimeError(f"Ollama ({model}) did not finish within {timeout_s:.0f}s. The model is too slow "
+                                   f"on this machine for this task: install a smaller model, or raise "
+                                   f"ollama_timeout_s in config/model_router.json.")
+            request_ms = int((time.time() - t0) * 1000)
+        if res.status_code == 404:
+            raise NoLocalModelError(f"The model '{model}' is not installed in Ollama. Run `ollama pull {model}`.")
         if res.status_code != 200:
             raise RuntimeError(f"Ollama returned HTTP {res.status_code}: {res.text}")
         data = res.json()

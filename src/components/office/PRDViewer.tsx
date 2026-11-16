@@ -75,6 +75,14 @@ export const PRDViewer: React.FC<PRDViewerProps> = ({
     });
   };
 
+  const isTableRow = (l?: string) => !!l && l.trim().startsWith("|") && l.trim().endsWith("|") && l.trim().length > 1;
+  const isTableSeparator = (l?: string) => !!l && /^\|[\s:|-]*-[\s:|-]*\|$/.test(l.trim());
+  const nextNonBlank = (all: string[], from: number) => {
+    let j = from;
+    while (j < all.length && !all[j].trim()) j++;
+    return j;
+  };
+
   // Parse lines into sections for rich structured presentation including Markdown tables
   const renderFormattedSections = () => {
     // HTML comments (the generation metadata) are notes for tools, not part of the document.
@@ -142,12 +150,39 @@ export const PRDViewer: React.FC<PRDViewerProps> = ({
         continue;
       }
 
-      // Table parsing: detect consecutive lines starting with '|'
-      if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+      // Table parsing: rows are lines that start and end with '|'
+      if (isTableRow(line)) {
         const tableLines: string[] = [];
-        while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
-          tableLines.push(lines[i].trim());
-          i++;
+        while (i < lines.length) {
+          if (isTableRow(lines[i])) {
+            tableLines.push(lines[i].trim());
+            i++;
+            continue;
+          }
+          if (!lines[i].trim()) {
+            // Some PRDs were written with a blank line between table rows. Keep reading the same table,
+            // unless what follows is a new table (a header row followed by its separator row).
+            const next = nextNonBlank(lines, i);
+            if (isTableRow(lines[next]) && !isTableSeparator(lines[nextNonBlank(lines, next + 1)])) {
+              i = next;
+              continue;
+            }
+            if (tableLines.length === 1 && isTableSeparator(lines[next])) {
+              i = next;
+              continue;
+            }
+          }
+          break;
+        }
+
+        if (tableLines.length < 2) {
+          // A lone '|' line is not a table: show it as text (i is already past it).
+          elements.push(
+            <p key={`p-${i}`} className="text-xs text-brand-body leading-relaxed my-1.5">
+              {formatInlineText(tableLines[0])}
+            </p>
+          );
+          continue;
         }
 
         if (tableLines.length >= 2) {
@@ -155,7 +190,7 @@ export const PRDViewer: React.FC<PRDViewerProps> = ({
             .split("|")
             .slice(1, -1)
             .map((c) => c.trim());
-          const dataRows = tableLines.slice(2); // Skip separator row
+          const dataRows = tableLines.slice(isTableSeparator(tableLines[1]) ? 2 : 1);
 
           elements.push(
             <div key={`table-${i}`} className="my-3 overflow-x-auto rounded-xl border border-brand-border shadow-2xs">

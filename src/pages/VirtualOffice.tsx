@@ -333,7 +333,7 @@ export const VirtualOffice: React.FC<VirtualOfficeProps> = ({
             <div>
               <span className="font-bold">GROQ_API_KEY Missing: </span>
               <span>
-                Groq is the default provider for all agents. Add your key to <code className="font-mono bg-rose-500/20 px-1 py-0.5 rounded">.env</code> or switch to Local-Only mode.
+                This project is set to use Groq. Add your key to <code className="font-mono bg-rose-500/20 px-1 py-0.5 rounded">.env</code> or switch to Local-Only mode.
               </span>
             </div>
           </div>

@@ -33,6 +33,7 @@ import { useConversation } from "@/context/ConversationContext";
 import { MessageBubble, TypingDots } from "@/components/chat/MessageBubble";
 import { RequirementsModal } from "@/components/chat/RequirementsModal";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
+import { BudgetPausedBanner } from "@/components/office/StageNotice";
 
 interface UseAutoResizeTextareaProps {
   minHeight: number;
@@ -149,6 +150,7 @@ export function AnimatedAIChat({
     isLoadingSession,
     isSending,
     error: contextError,
+    setError: setContextError,
     readyForRequirements,
     requirementsContent,
     sendMessage,
@@ -202,7 +204,7 @@ export function AnimatedAIChat({
       if (res.status === "starting") {
         setEngineError(res.message);
       } else if (res.status === "error" || !res.model_ready) {
-        // Ollama being off is not an error while Groq serves the models; the header shows its state.
+        // The agents run on Ollama: when it is off or has no model, the engine's message says what to do.
         setEngineError(res.message);
       } else {
         setEngineError(null);
@@ -575,6 +577,16 @@ export function AnimatedAIChat({
 
                 <div ref={messagesEndRef} />
               </div>
+
+              {/* Budget at 100%: every agent is paused until the client raises it (Handbook 26.4). */}
+              <BudgetPausedBanner
+                sessionId={sessionId}
+                refreshKey={`${displayError}|${messages.length}`}
+                className="mb-4"
+                onRaised={() => {
+                  if (contextError && /budget/i.test(contextError)) setContextError(null);
+                }}
+              />
 
               {/* Inline Engine / Ollama Error Banner */}
               <AnimatePresence>

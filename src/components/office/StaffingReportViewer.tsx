@@ -13,6 +13,7 @@ import {
   Lock,
 } from "lucide-react";
 import { AgentProfile, Gate2State, BudgetGuardStatus } from "../../lib/engine";
+import { InlineFeedbackBox } from "./InlineFeedbackBox";
 
 interface StaffingReportViewerProps {
   reportContent: string | null;
@@ -44,6 +45,7 @@ export const StaffingReportViewer: React.FC<StaffingReportViewerProps> = ({
   const [activeTab, setActiveTab] = useState<"org" | "gate2" | "routing" | "skills" | "report">("org");
   const [copied, setCopied] = useState(false);
   const [approvalNotes, setApprovalNotes] = useState("");
+  const [showGate2Feedback, setShowGate2Feedback] = useState(false);
 
 
   const handleCopy = () => {
@@ -350,15 +352,20 @@ export const StaffingReportViewer: React.FC<StaffingReportViewerProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => {
-                      const fb = prompt("What adjustments are required for staffing, model tiers, or budget?");
-                      if (fb && onRequestGate2Changes) onRequestGate2Changes(fb);
-                    }}
+                    onClick={() => setShowGate2Feedback((v) => !v)}
                     className="px-4 py-2 rounded-xl border border-brand-border bg-brand-card hover:bg-brand-subtle text-brand-headline font-medium text-xs transition-colors cursor-pointer shrink-0"
                   >
                     Request Staffing Changes (Routes to BA)
                   </button>
                 </div>
+              )}
+              {showGate2Feedback && onRequestGate2Changes && (
+                <InlineFeedbackBox
+                  label="What adjustments are required for staffing, model tiers, or budget?"
+                  submitLabel="Send to BA"
+                  onSubmit={(text) => onRequestGate2Changes(text)}
+                  onCancel={() => setShowGate2Feedback(false)}
+                />
               )}
             </div>
 
