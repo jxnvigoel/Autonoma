@@ -27,21 +27,43 @@ const GAP_Y = 84;
 const PAD = 44;
 
 function layoutSystem(sys: ArchitectureModel["system"]) {
-  // Rank = longest path from a source, so arrows always point down the page.
+  // Rank = longest path from a source, so arrows always point down the page. An edge that closes a cycle
+  // (a response going back, e.g. DB -> server -> browser) is left out of the ranking, or every pass pushes
+  // the cycle's nodes further down until they fall outside the drawing.
+  const known = new Set(sys.nodes.map((n) => n.id));
+  const forward: { from: string; to: string }[] = [];
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>([from]);
+    const stack = [from];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (cur === to) return true;
+      for (const e of forward) if (e.from === cur && !seen.has(e.to)) { seen.add(e.to); stack.push(e.to); }
+    }
+    return false;
+  };
+  for (const e of sys.edges) {
+    if (e.from !== e.to && known.has(e.from) && known.has(e.to) && !reaches(e.to, e.from)) forward.push(e);
+  }
   const rank: Record<string, number> = {};
   sys.nodes.forEach((n) => (rank[n.id] = 0));
   for (let pass = 0; pass < sys.nodes.length; pass++) {
     let changed = false;
-    for (const e of sys.edges) {
-      if (rank[e.to] !== undefined && rank[e.from] !== undefined && rank[e.to] < rank[e.from] + 1) {
+    for (const e of forward) {
+      if (rank[e.to] < rank[e.from] + 1) {
         rank[e.to] = rank[e.from] + 1;
         changed = true;
       }
     }
     if (!changed) break;
   }
+  // Rows are numbered 0, 1, 2... with no gaps, so the drawing height fits every row.
+  const levels = [...new Set(Object.values(rank))].sort((a, b) => a - b);
   const rows: Record<number, string[]> = {};
-  sys.nodes.forEach((n) => (rows[rank[n.id]] = [...(rows[rank[n.id]] || []), n.id]));
+  sys.nodes.forEach((n) => {
+    const r = levels.indexOf(rank[n.id]);
+    rows[r] = [...(rows[r] || []), n.id];
+  });
   const maxRow = Math.max(1, ...Object.values(rows).map((r) => r.length));
   const width = PAD * 2 + maxRow * NODE_W + (maxRow - 1) * GAP_X;
   const pos: Record<string, { x: number; y: number }> = {};
@@ -97,7 +119,9 @@ const SystemDiagram: React.FC<{ model: ArchitectureModel }> = ({ model }) => {
         </p>
       )}
       <div className="overflow-auto rounded-xl border border-brand-border bg-brand-bg">
-        <svg viewBox={`0 0 ${width} ${height + 20}`} className="w-full min-w-[520px]" role="img" aria-label="System diagram">
+        {/* Drawn at most a little larger than its own size, so a small diagram is not blown up to the panel width. */}
+        <svg viewBox={`0 0 ${width} ${height + 20}`} className="block mx-auto w-full" style={{ maxWidth: Math.max(width * 1.3, 380) }}
+          role="img" aria-label="System diagram">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" className="fill-brand-body" />
@@ -121,15 +145,23 @@ const SystemDiagram: React.FC<{ model: ArchitectureModel }> = ({ model }) => {
           {sys.edges.map((e, i) => {
             const a = pos[e.from], b = pos[e.to];
             if (!a || !b) return null;
-            const x1 = a.x + NODE_W / 2, y1 = a.y + NODE_H, x2 = b.x + NODE_W / 2, y2 = b.y;
+            // A request and its response between the same two boxes are drawn side by side, labels outside,
+            // instead of on one line with their labels on top of each other.
+            const paired = sys.edges.some((o) => o.from === e.to && o.to === e.from);
+            const down = b.y >= a.y;
+            const shift = paired ? (down ? -14 : 14) : 0;
+            const x1 = a.x + NODE_W / 2 + shift, x2 = b.x + NODE_W / 2 + shift;
+            const y1 = down ? a.y + NODE_H : a.y, y2 = down ? b.y : b.y + NODE_H;
             const my = (y1 + y2) / 2;
             const on = !focus || e.from === focus || e.to === focus;
+            const labelLeft = paired && shift < 0;
             return (
               <g key={i} opacity={on ? 1 : 0.15}>
-                <path d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2 - 2}`} fill="none"
+                <path d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${down ? y2 - 2 : y2 + 2}`} fill="none"
                   className="stroke-brand-body" strokeWidth={1.4} markerEnd="url(#arrow)" />
                 {e.label && (
-                  <text x={(x1 + x2) / 2 + 6} y={my} className="fill-brand-body text-[10px]">{e.label}</text>
+                  <text x={(x1 + x2) / 2 + (labelLeft ? -6 : 6)} y={my} textAnchor={labelLeft ? "end" : "start"}
+                    className="fill-brand-body text-[10px]">{e.label}</text>
                 )}
               </g>
             );

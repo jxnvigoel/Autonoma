@@ -39,6 +39,7 @@ DEV_ROLES = {"backend", "frontend", "fullstack", "engineer", "devops"}
 MAX_TOOL_ROUNDS = {"dev": 25, "default": 8}
 DEFAULT_RUN_TOKEN_CAP = 120_000
 KEEP_FULL_TOOL_RESULTS = 8
+MAX_DONE_PUSHBACKS = 2  # times a developer's untested "done" is sent back before CI gets the final say
 
 TOOL_DEFS: Dict[str, str] = {
     "read_file": '{"path": "src/app.py", "start": 1, "end": 120}  read lines (files over 400 lines return an outline first)',
@@ -143,6 +144,10 @@ def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+_BUILTIN_TOOL_NAMES = {"open_file": "read_file", "print_tree": "list_files", "list_dir": "list_files",
+                       "grep": "search", "find": "search"}
+
+
 def normalize_reply(obj: Optional[Dict[str, Any]], allowed_tools: List[str],
                     command_ids: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """
@@ -173,6 +178,18 @@ def normalize_reply(obj: Optional[Dict[str, Any]], allowed_tools: List[str],
                 notes.append(f"{name}: arguments string parsed as JSON")
             except json.JSONDecodeError:
                 args = {"_unparsed": args}
+        if isinstance(name, str) and name not in allowed_tools and "." in name:
+            # gpt-oss's built-in tool names (repo_browser.open_file, functions.write_file, ...)
+            short = name.rsplit(".", 1)[1]
+            short = _BUILTIN_TOOL_NAMES.get(short, short)
+            if short in allowed_tools:
+                notes.append(f"built-in tool name '{name}' mapped to {short}")
+                name = short
+                if isinstance(args, dict) and "file" in args and "path" not in args:
+                    args = {**args, "path": args.pop("file")}
+                if short == "list_files" and isinstance(args, dict) and "glob" not in args:
+                    base = str(args.get("path") or "").strip("/")
+                    args = {"glob": f"{base}/**/*" if base else "**/*"}
         if name not in allowed_tools and name in command_ids and "run" in allowed_tools:
             notes.append(f"approved command '{name}' used as a tool name; mapped to run")
             name, args = ("run_tests" if name == "test" and "run_tests" in allowed_tools else "run"), {"command": name}
@@ -252,6 +269,28 @@ class AgentRunner:
             ok, res = self.sandbox.call(name, args)
         return {"name": name, "input": args, "ok": ok, "result": res}
 
+    def _unverified_done(self, final: Dict[str, Any], tool_log: List[Dict[str, Any]]) -> str:
+        """A developer may only say 'done' after a green test run that came after its last code change.
+        Returns the push-back message, or "" when the claim is backed by a tool result."""
+        if final.get("status") != "done" or self.role not in DEV_ROLES or "run_tests" not in self.allowed_tools:
+            return ""
+        last_write = max((i for i, e in enumerate(tool_log) if e["name"] in ("write_file", "edit_file") and e["ok"]),
+                         default=-1)
+        if last_write < 0:
+            return ""  # nothing written: the orchestrator already rejects a run that committed no changes
+        test_runs = [(i, e) for i, e in enumerate(tool_log)
+                     if e["name"] in ("run_tests", "run") and isinstance(e.get("result"), dict)
+                     and e["result"].get("command_id") == "test"]
+        after = [e for i, e in test_runs if i > last_write]
+        if after and after[-1]["result"].get("ok"):
+            return ""
+        if not after:
+            return ("You said done, but you have not run run_tests since your last change. "
+                    "The orchestrator's CI will reject untested work. Call run_tests now, fix any failure "
+                    "(write tests in tests/ if there are none), and only then send the final envelope.")
+        return ("You said done, but your last run_tests failed. Read its output above, fix the code or tests, "
+                "run run_tests again, and send the final envelope only when it passes.")
+
     @staticmethod
     def _render_tool_result(entry: Dict[str, Any], full: bool) -> str:
         args = dict(entry["input"])
@@ -268,6 +307,7 @@ class AgentRunner:
         transcript: List[Dict[str, Any]] = []  # {"kind": "reply"|"tool"|"error", ...}
         result = RunResult(status="blocked", envelope={})
         parse_retry_used = False
+        done_pushbacks = 0
         self.emit("agent.status", data={"status": "working"})
 
         for round_no in range(1, self.max_rounds + 1):
@@ -321,6 +361,12 @@ class AgentRunner:
             parse_retry_used = False
 
             if "final" in obj:
+                gap = self._unverified_done(obj["final"], result.tool_log)
+                if gap and done_pushbacks < MAX_DONE_PUSHBACKS:
+                    done_pushbacks += 1
+                    transcript.append({"kind": "error", "text": gap})
+                    self.emit("protocol.normalized", data={"notes": ["done refused: tests not green yet"]})
+                    continue
                 result.envelope = obj["final"]
                 result.status = obj["final"]["status"]
                 break

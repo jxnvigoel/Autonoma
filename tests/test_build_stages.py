@@ -122,7 +122,7 @@ class ToolProtocolTest(unittest.TestCase):
         obj, _ = normalize_reply({"tool_calls": [{"name": "rm", "input": {}}]}, allowed, ["lint"])
         self.assertIn("disallowed", validate_reply(obj, allowed))  # unknown names are still rejected
 
-    def _runner(self, replies, **kw):
+    def _runner(self, replies, allow=None, **kw):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         it = iter(replies)
@@ -133,7 +133,7 @@ class ToolProtocolTest(unittest.TestCase):
         self.addCleanup(setattr, client, "budget_guard_enabled", True)
         self.addCleanup(setattr, client, "ledger_db_path", None)
         self.addCleanup(client.set_fake_responder, None)
-        sb = Sandbox(tmp, "backend", {}, log_dir=os.path.join(tmp, "logs"))
+        sb = Sandbox(tmp, "backend", allow or {}, log_dir=os.path.join(tmp, "logs"))
         return AgentRunner("test-proj", "be-1", "backend", sb, **kw)
 
     def test_invalid_reply_twice_blocks_the_run(self):
@@ -157,6 +157,34 @@ class ToolProtocolTest(unittest.TestCase):
         res = self._runner([call] * 5, max_rounds=3).run("task", "ctx", "t")
         self.assertEqual(res.status, "blocked")
         self.assertEqual(res.error, "tool round limit")
+
+    def test_untested_done_is_sent_back_until_tests_pass(self):
+        write = json.dumps({"tool_calls": [{"name": "write_file", "input": {"path": "src/__init__.py", "content": ""}}]})
+        test = json.dumps({"tool_calls": [{"name": "run_tests", "input": {}}]})
+        done = json.dumps({"final": {"status": "done"}})
+        runner = self._runner([write, done, test, done], allow={"test": "python3 -m compileall -q src"})
+        res = runner.run("task", "ctx", "t")
+        self.assertEqual(res.status, "done")
+        self.assertEqual([e["name"] for e in res.tool_log], ["write_file", "run_tests"])
+
+    def test_untested_done_accepted_after_pushback_limit(self):
+        write = json.dumps({"tool_calls": [{"name": "write_file", "input": {"path": "src/a.py", "content": "x=1"}}]})
+        done = json.dumps({"final": {"status": "done"}})
+        res = self._runner([write, done, done, done]).run("task", "ctx", "t")
+        self.assertEqual(res.status, "done")  # CI still gets the final say
+
+    def test_unverified_done_rules(self):
+        runner = self._runner([])
+        w = {"name": "write_file", "ok": True, "result": {}}
+        green = {"name": "run_tests", "ok": True, "result": {"command_id": "test", "ok": True}}
+        red = {"name": "run_tests", "ok": True, "result": {"command_id": "test", "ok": False}}
+        done = {"status": "done"}
+        self.assertEqual(runner._unverified_done(done, []), "")
+        self.assertIn("not run run_tests", runner._unverified_done(done, [w]))
+        self.assertIn("failed", runner._unverified_done(done, [w, red]))
+        self.assertEqual(runner._unverified_done(done, [w, green]), "")
+        self.assertIn("not run run_tests", runner._unverified_done(done, [green, w]))
+        self.assertEqual(runner._unverified_done({"status": "blocked"}, [w]), "")
 
     def test_token_cap(self):
         call = json.dumps({"tool_calls": [{"name": "list_files", "input": {}}]})

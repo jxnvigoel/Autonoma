@@ -16,6 +16,7 @@ Rule: LLM writes, code validates.
 """
 
 import os
+import sys
 import re
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -25,6 +26,10 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+
+ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
+if ENGINE_DIR not in sys.path:
+    sys.path.insert(0, ENGINE_DIR)
 
 try:
     from requirements_parser import parse_ba_data, render_requirements_markdown
@@ -769,7 +774,10 @@ def start_pm_session(req: PMSessionRequest):
     validated by code, and evaluated by Judge.
     """
     session_id = req.session_id
-    from main import get_session_dir, load_json, save_json, generate_requirements_doc
+    try:
+        from main import get_session_dir, load_json, save_json, generate_requirements_doc
+    except ImportError:
+        from engine.main import get_session_dir, load_json, save_json, generate_requirements_doc
 
     session_dir = get_session_dir(session_id)
     docs_dir = os.path.join(session_dir, "docs")
@@ -894,7 +902,10 @@ def start_pm_session(req: PMSessionRequest):
 
 @pm_router.get("/state/{session_id}")
 def get_pm_state(session_id: str):
-    from main import get_session_dir, load_json
+    try:
+        from main import get_session_dir, load_json
+    except ImportError:
+        from engine.main import get_session_dir, load_json
 
     session_dir = get_session_dir(session_id)
     docs_dir = os.path.join(session_dir, "docs")
@@ -940,7 +951,10 @@ PM_CHAT_SYSTEM = (
 @pm_router.get("/session/{session_id}")
 def get_pm_session(session_id: str):
     """What the PM workstation shows: chat, PRD, estimate, and whether the PRD can be generated yet."""
-    from main import DATA_PROJECTS_DIR, validate_session_id, load_json
+    try:
+        from main import DATA_PROJECTS_DIR, validate_session_id, load_json
+    except ImportError:
+        from engine.main import DATA_PROJECTS_DIR, validate_session_id, load_json
 
     session_dir = os.path.join(DATA_PROJECTS_DIR, validate_session_id(session_id))
     if not os.path.isdir(session_dir):
@@ -958,7 +972,10 @@ def get_pm_session(session_id: str):
 @pm_router.post("/message")
 def pm_message(req: PMMessageRequest):
     """Client chat with the PM about the drafted PRD (answers only; changes go through Gate 1)."""
-    from main import get_session_dir, load_json, save_json
+    try:
+        from main import get_session_dir, load_json, save_json
+    except ImportError:
+        from engine.main import get_session_dir, load_json, save_json
 
     text = (req.message or "").strip()
     if not text:

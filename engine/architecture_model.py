@@ -61,7 +61,10 @@ def parse_mermaid_flowchart(md: str) -> Dict[str, Any]:
         if sm:
             raw = sm.group(2)
             kind = "database" if raw.startswith("[(") else "decision" if raw.startswith("{") else "service"
-            label = re.sub(r"<br\s*/?>", "\n", raw.strip("[](){}")).strip('"')
+            # Strip only the shape's own delimiters: "[Browser (HTML/JS)]" keeps its ")".
+            opener = next(o for o in ("[(", "((", "[[", "[", "(", "{") if raw.startswith(o))
+            inner = raw[len(opener):len(raw) - len(opener)]
+            label = re.sub(r"<br\s*/?>", "\n", inner).strip().strip('"')
             nodes[nid].update({"label": label, "kind": kind})
         return nid
 
@@ -180,10 +183,13 @@ def build_model(project_dir: str) -> Dict[str, Any]:
     stack = [{"layer": _plain(r[0]), "choice": _plain(r[1]), "refs": ID_RE.findall(r[-1])}
              for r in _table_rows(_section(arch, 3)) if len(r) >= 2]
     slices = []
-    for m in re.finditer(r"^\s*\d+\.\s+\*\*(.+?)\*\*:?\s*$(.*?)(?=^\s*\d+\.\s+\*\*|\Z)", _section(arch, 11), re.M | re.S):
-        body = m.group(2)
+    # "1. **Title**" may be followed on the same line by its description ("**Walking skeleton** – minimal ...").
+    for m in re.finditer(r"^\s*\d+\.\s+\*\*([^*\n]+)\*\*:?([^\n]*)$(.*?)(?=^\s*\d+\.\s+\*\*|\Z)",
+                         _section(arch, 11), re.M | re.S):
+        body = m.group(2) + m.group(3)
         slices.append({"title": m.group(1).strip().rstrip(":"),
-                       "items": [re.sub(r"\s+", " ", i).strip() for i in re.findall(r"^\s*-\s+(.+)$", body, re.M)],
+                       "items": ([re.sub(r"\s+", " ", i).strip() for i in re.findall(r"^\s*-\s+(.+)$", body, re.M)]
+                                 or ([re.sub(r"^[\s\u2013\u2014:-]+", "", m.group(2)).strip()] if m.group(2).strip() else [])),
                        "refs": sorted(set(ID_RE.findall(body)))})
     seats = [{"seat": _plain(r[0]), "role": _plain(r[1]), "count": _plain(r[2]), "refs": ID_RE.findall(r[-1])}
              for r in _table_rows(_section(arch, 12)) if len(r) >= 3]

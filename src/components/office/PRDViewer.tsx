@@ -77,7 +77,8 @@ export const PRDViewer: React.FC<PRDViewerProps> = ({
 
   // Parse lines into sections for rich structured presentation including Markdown tables
   const renderFormattedSections = () => {
-    const lines = content.split("\n");
+    // HTML comments (the generation metadata) are notes for tools, not part of the document.
+    const lines = content.replace(/<!--[\s\S]*?-->/g, "").split("\n");
     const elements: React.ReactNode[] = [];
     let i = 0;
 

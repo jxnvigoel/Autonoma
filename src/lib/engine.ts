@@ -348,9 +348,11 @@ export interface BASessionDetail {
  */
 export async function checkEngineStatus(): Promise<EngineStatus> {
   try {
+    // /status can take several seconds when it refreshes the Groq model list (every 5 minutes) or Ollama is busy;
+    // a shorter limit made a healthy engine look like it was still starting.
     const res = await fetch(`${ENGINE_BASE_URL}/status`, {
       method: "GET",
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(12000),
     });
 
     if (!res.ok) {
@@ -1145,6 +1147,8 @@ export interface BacklogStory {
 
 export interface BacklogData {
   stories: BacklogStory[];
+  /** Features whose stories were built from the PRD entry because the model's split was unreadable. */
+  notes?: string[];
 }
 
 export interface CriticalPathInfo {
@@ -1466,3 +1470,13 @@ export const apiGetProjectGit = (sessionId: string) =>
 
 export const apiGetProjectCommit = (sessionId: string, sha: string) =>
   engineJson<{ sha: string; diff: string; truncated: boolean }>(`/project-files/commit/${sessionId}/${sha}`);
+
+// Client chat with a delivery agent (engine/agent_chat.py): its own thread, answered from its own documents.
+export type DeliveryAgent = "architect" | "designer" | "hr" | "recruiter" | "scrum" | "tech-lead";
+
+export const apiGetAgentMessages = (sessionId: string, agent: DeliveryAgent) =>
+  engineJson<{ messages: ChatMessage[]; has_documents: boolean }>(`/agent/messages/${sessionId}/${agent}`);
+
+export const apiSendAgentMessage = (sessionId: string, agent: DeliveryAgent, message: string) =>
+  engineJson<{ message: string; messages: ChatMessage[] }>(
+    `/agent/message`, postJson({ session_id: sessionId, agent, message }));

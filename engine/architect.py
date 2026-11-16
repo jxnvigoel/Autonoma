@@ -18,6 +18,7 @@ Rule: LLM writes, code validates.
 """
 
 import os
+import sys
 import re
 import json
 import uuid
@@ -28,6 +29,10 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+
+ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
+if ENGINE_DIR not in sys.path:
+    sys.path.insert(0, ENGINE_DIR)
 
 try:
     from requirements_parser import parse_ba_data, parse_prd_data
@@ -168,112 +173,185 @@ Length: Maximum 1 page (under 500 words). Return ONLY markdown."""
 # STAGE 3 STEP 11: ADR GENERATOR (APPENDIX A.8 VIA LLM)
 # ==============================================================================
 
+ADR_TOPICS = [
+    {"id": "ADR-001", "title": "Architectural style and deployment",
+     "question": "How the application is structured into processes and deployed on the client's hosting"},
+    {"id": "ADR-002", "title": "Data storage",
+     "question": "Where and how the application's data is stored and queried",
+     # The schema step writes SQL DDL and checks it by running it in SQLite, and the build uses that schema.
+     "limit": "docs/schema.md is written as SQL DDL and validated by executing it in SQLite, and the build uses it, "
+              "so every option compared must be a SQL database (embedded or server)."},
+    {"id": "ADR-003", "title": "Authentication and authorization",
+     "question": "How users prove who they are and how access to each user's data is enforced"},
+    {"id": "ADR-004", "title": "Error handling and reliability",
+     "question": "How errors are reported to clients and how data survives crashes and restarts",
+     # normalize_openapi_spec gives every API error an RFC 9457 Problem Details body.
+     "limit": "docs/openapi.yaml returns every API error as an RFC 9457 Problem Details JSON body (application/"
+              "problem+json); that format is fixed, so compare options for how failures are handled and how data "
+              "survives crashes and restarts."},
+]
+
+_ID_PATTERN = r"\b(?:NFR|FR|F|Q|OQ|ASM|ADR|G|NG|P|M|R)[-\u2011]\d+\b"
+
+
+def _project_ids(parsed_ba: Dict[str, Any], prd_data: Dict[str, Any]) -> Dict[str, str]:
+    """Every requirement id this project has, with what it means: the only ids an ADR may cite."""
+    ids: Dict[str, str] = {}
+    for n in parsed_ba.get("non_functional_reqs") or prd_data.get("nfrs") or []:
+        if isinstance(n, dict) and n.get("id"):
+            ids[n["id"]] = f"{n.get('nfr') or n.get('name') or ''}: {n.get('target', '')}".strip(": ")
+    for f in prd_data.get("features") or []:
+        if isinstance(f, dict) and f.get("id"):
+            ids[f["id"]] = f.get("title") or f.get("name") or ""
+    for key, label in (("functional_reqs", "feature"), ("assumptions", "text"), ("open_questions", "text"),
+                       ("discovered_goals", "goal"), ("discovered_non_goals", "non_goal"),
+                       ("discovered_metrics", "metric"), ("personas", "persona"), ("risks", "risk")):
+        for item in (parsed_ba.get(key) or []) + (prd_data.get(key) or [] if key == "risks" else []):
+            if isinstance(item, dict) and item.get("id"):
+                ids.setdefault(item["id"], str(item.get(label, ""))[:120])
+    for qid in (parsed_ba.get("qa_map") or {}):
+        ids.setdefault(qid, "client answer")
+    for t in ADR_TOPICS:
+        ids.setdefault(t["id"], t["title"])
+    return ids
+
+
+def validate_adr(text: str, adr_id: str, allowed_ids: Dict[str, str]) -> List[str]:
+    """Appendix A.8 checks code can make: the sections, at least two options, and only real ids cited."""
+    errors = []
+    if not re.search(rf"^#\s*{adr_id}\b", text, re.M):
+        errors.append(f"first heading must be '# {adr_id}: <title>'")
+    for section in ("Context", "Options", "Decision", "Consequences"):
+        if not re.search(rf"^##\s*{section}\b", text, re.M | re.I):
+            errors.append(f"missing '## {section}' section")
+    options = re.search(r"^##\s*Options\b(.*?)(?=^##\s|\Z)", text, re.M | re.S | re.I)
+    rows = [l for l in (options.group(1) if options else "").splitlines()
+            if l.strip().startswith("|") and not re.match(r"^\s*\|[\s:|-]+\|\s*$", l) and not re.search(r"\|\s*Option\s*\|", l)]
+    if len(rows) < 2:
+        errors.append(f"the Options table has {len(rows)} option row(s); it needs at least two real alternatives")
+    driven = re.search(r"\*\*Driven by\*\*:?([^\n]*)", text)
+    if not driven or not re.search(_ID_PATTERN, driven.group(1)):
+        errors.append("the '**Driven by**:' line must cite the requirement ids behind this decision")
+    unknown = sorted({m.replace("\u2011", "-") for m in re.findall(_ID_PATTERN, text)} - set(allowed_ids))
+    if unknown:
+        errors.append(f"cites ids that do not exist in this project: {', '.join(unknown)}; cite only the listed ids")
+    return errors
+
+
 def generate_adrs(
     parsed_ba: Dict[str, Any],
     prd_data: Dict[str, Any],
     adr_dir: str,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    feedback: Optional[Dict[str, List[str]]] = None,
+    only: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Generates structured Architecture Decision Records (ADR-001.md to ADR-004.md) via LLM.
-    Every ADR states Context, Options Considered (with pros/cons), Decision (why chosen and why others lost),
-    and Consequences, adhering to Appendix A.8.
+    Generates docs/adr/ADR-001.md .. ADR-004.md (Appendix A.8): Context, at least two real Options with pros and
+    cons, the Decision and why the others lost, and Consequences. The decision areas are fixed; the options, the
+    choice and the requirements driving it come from this project's NFRs, features and client answers.
+    `only` regenerates just those ADRs (the rest are read back); `feedback` carries the Judge's findings per ADR.
     """
     os.makedirs(adr_dir, exist_ok=True)
     app_name = prd_data.get("app_name", "App")
-    nfrs = prd_data.get("nfrs", [])
-    features = prd_data.get("features", [])
-
-    adr_topics = [
-        {
-            "id": "ADR-001",
-            "title": "Architectural Style and Process Isolation",
-            "driven_by": "[NFR-02], [NFR-04], [F-001]",
-            "decision_topic": "Monolithic Local Desktop Process vs Multi-Service Client-Server Architecture",
-            "opt_a": "Local Monolithic Desktop Application (Electron / Local Core)",
-            "opt_b": "Distributed Microservices or Multi-Container Docker Stack"
-        },
-        {
-            "id": "ADR-002",
-            "title": "Data Persistence Engine and Query Layer",
-            "driven_by": "[NFR-01], [NFR-02], [NFR-03]",
-            "decision_topic": "Embedded SQLite with B-Tree Indexing vs Client-Server PostgreSQL vs Flat JSON Files",
-            "opt_a": "Embedded SQLite (WAL Mode, ACID Transactions, B-Tree Indexes)",
-            "opt_b": "Flat JSON / Plain File Storage or Remote PostgreSQL Server"
-        },
-        {
-            "id": "ADR-003",
-            "title": "Local User Persona Scoping and Authorization Boundary",
-            "driven_by": "[F-001], [F-002], [OQ-02]",
-            "decision_topic": "Process-Bound Role Scoping vs Full OAuth2 / Cloud IAM Infrastructure",
-            "opt_a": "Local Role-Based Scoping with Object Ownership Validation",
-            "opt_b": "Remote OAuth2/OIDC Cloud Identity Provider (Auth0/Cognito)"
-        },
-        {
-            "id": "ADR-004",
-            "title": "Reliability, Error Handling, and Atomic Logging",
-            "driven_by": "[NFR-01], [R-01], [F-002]",
-            "decision_topic": "Synchronous WAL Transactions and Problem Details vs In-Memory Buffering",
-            "opt_a": "RFC 9457 Problem Details with SQLite Write-Ahead Logging",
-            "opt_b": "Generic In-Memory Event Bus without Disk Durability"
-        }
-    ]
-
+    allowed = _project_ids(parsed_ba, prd_data)
+    nfr_lines = "\n".join(f"- [{k}] {v}" for k, v in allowed.items() if k.startswith("NFR-"))
+    feature_lines = "\n".join(f"- [{k}] {v}" for k, v in allowed.items() if re.match(r"F-\d", k))
+    other_lines = "; ".join(f"[{k}] {v[:60]}" for k, v in allowed.items()
+                            if re.match(r"(ASM|OQ|G|P)-", k))
+    answers = " ".join(f"[{k}] {v.get('answer', '')}" for k, v in (parsed_ba.get("qa_map") or {}).items()
+                       if isinstance(v, dict))[:2500]
+    decided: List[str] = []
     adrs_created = []
+    # When the schema already exists (a revision), the ADRs must describe the tables it defines.
+    written = ""
+    schema_file = os.path.join(os.path.dirname(adr_dir), "schema.md")
+    if os.path.exists(schema_file):
+        tables = re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)", open(schema_file, encoding="utf-8").read(), re.I)
+        if tables:
+            written = f"\nALREADY WRITTEN IN THIS STAGE: docs/schema.md defines the tables {', '.join(tables)}."
 
-    for adr_info in adr_topics:
-        adr_id = adr_info["id"]
-        prompt = f"""You are the Lead Solution Architect. Write Architecture Decision Record '{adr_id}: {adr_info['title']}' for '{app_name}' adhering to Appendix A.8.
-TOPIC: {adr_info['decision_topic']}
-DRIVEN BY: {adr_info['driven_by']}
-OPTION A: {adr_info['opt_a']}
-OPTION B: {adr_info['opt_b']}
+    for topic in ADR_TOPICS:
+        adr_id = topic["id"]
+        adr_file = os.path.join(adr_dir, f"{adr_id}.md")
+        if only is not None and adr_id not in only and os.path.exists(adr_file):
+            text = open(adr_file, encoding="utf-8").read()
+            adrs_created.append({"id": adr_id, "title": topic["title"], "path": f"docs/adr/{adr_id}.md",
+                                 "decision": adr_decision(text)})
+            decided.append(f"{adr_id}: {adr_decision(text)}")
+            continue
+        base_prompt = f"""You are the Lead Solution Architect for '{app_name}'. Write Architecture Decision Record {adr_id} (Handbook Appendix A.8).
+DECISION AREA: {topic['title']} - {topic['question']}.
 
-Structure required (Appendix A.8):
-# {adr_id}: {adr_info['title']}
-**Status**: accepted  
-**Driven by**: {adr_info['driven_by']}  
+THE ONLY REQUIREMENT IDS THAT EXIST (cite only these, with exactly this meaning; invent no other id):
+Non-functional requirements:
+{nfr_lines or '- (none)'}
+Features:
+{feature_lines or '- (none)'}
+Other: {other_lines or '(none)'}
+CLIENT ANSWERS (source of truth for hosting, installs, users; cite as [Q-###]):
+{answers}
+DECIDED IN EARLIER ADRS (stay consistent): {'; '.join(decided) or '(none yet)'}{written}
+{('TOOLCHAIN LIMIT: ' + topic['limit']) if topic.get('limit') else ''}
+
+Pick at least two options that could each really be built for this project, judge each honestly against the
+requirements above, and choose the simplest one that meets them (Handbook 7.2.6). Do not assume platforms,
+clients or services the requirements do not mention.
+
+Structure required:
+# {adr_id}: {topic['title']}
+**Status**: accepted
+**Driven by**: [the requirement ids behind this decision]
 
 ## Context
-(Problem and constraints in 2–4 complete sentences)
+(Problem and constraints in 2-4 sentences, citing ids)
 
 ## Options
 | Option | Pros | Cons | Fits constraints? |
 |---|---|---|---|
-| A. {adr_info['opt_a']} | ... | ... | Yes |
-| B. {adr_info['opt_b']} | ... | ... | No (violates local offline constraint) |
+| A. <option> | ... | ... | Yes/No, citing ids |
+| B. <option> | ... | ... | Yes/No, citing ids |
 
 ## Decision
-We choose Option A ({adr_info['opt_a']}) because ... Explain clearly why Option B lost.
+We choose <option> because ... (and why each other option lost).
 
 ## Consequences
 What gets easier, what gets harder, and what we must watch.
 
-Return ONLY the markdown ADR content."""
-
-        raw_text, meta = query_llm_with_meta(
-            prompt=prompt,
-            role="architect",
-            session_id=session_id,
-            task_id=f"adr_{adr_id}"
-        )
+Return ONLY the markdown ADR."""
+        prompt = base_prompt
+        if (feedback or {}).get(adr_id):
+            prompt += "\n\nTHE REVIEWER FOUND THESE PROBLEMS IN THE PREVIOUS VERSION; FIX EACH ONE:\n" + \
+                      "\n".join(f"- {e}" for e in feedback[adr_id])
+        errors: List[str] = []
+        for attempt in range(1, 4):
+            raw_text, meta = query_llm_with_meta(prompt=prompt, role="architect", session_id=session_id,
+                                                 task_id=f"adr_{adr_id}")
+            clean_text = re.sub(r"^```(?:markdown)?\s*|\s*```$", "", raw_text.strip())
+            errors = validate_adr(clean_text, adr_id, allowed)
+            if not errors:
+                break
+            logger.warning(f"{adr_id} failed validation on attempt {attempt}: {errors}")
+            prompt = base_prompt + "\n\nYOUR PREVIOUS VERSION FAILED THESE CHECKS; FIX EACH ONE:\n" + \
+                     "\n".join(f"- {e}" for e in errors)
+        else:
+            raise ValueError(f"{adr_id} failed validation after 3 attempts: {errors}")
 
         stamp = _generate_stamp(meta, role_name="Solution Architect")
-        clean_text = raw_text.strip()
-        final_adr = f"{stamp}{clean_text}" if not clean_text.startswith("<!-- ARTIFACT METADATA:") else clean_text
-
-        adr_file = os.path.join(adr_dir, f"{adr_id}.md")
         with open(adr_file, "w", encoding="utf-8") as f:
-            f.write(final_adr)
-
-        adrs_created.append({
-            "id": adr_id,
-            "title": adr_info["title"],
-            "path": f"docs/adr/{adr_id}.md",
-            "meta": meta
-        })
+            f.write(f"{stamp}{clean_text}")
+        decision = adr_decision(clean_text)
+        decided.append(f"{adr_id}: {decision}")
+        adrs_created.append({"id": adr_id, "title": topic["title"], "path": f"docs/adr/{adr_id}.md",
+                             "decision": decision, "meta": meta})
 
     return adrs_created
+
+
+def adr_decision(text: str) -> str:
+    """The ADR's chosen option, as one short line for the documents that must agree with it."""
+    m = re.search(r"^##\s*Decision\s*\n+\s*([^\n]+)", text, re.M | re.I)
+    return re.sub(r"\s+", " ", m.group(1)).strip()[:200] if m else ""
 
 
 # ==============================================================================
@@ -383,13 +461,17 @@ def generate_openapi_spec(
     parsed_ba: Dict[str, Any],
     prd_data: Dict[str, Any],
     docs_dir: str,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    only: Optional[List[str]] = None,
+    feedback: Optional[Dict[str, List[str]]] = None
 ) -> str:
     """
     Generates docs/openapi.yaml one feature at a time (Handbook 7.1.6, 7.2.4 step 6).
     Each LLM call writes only the `paths` for one F- feature, so replies stay small enough for
     provider output caps; code assembles the document (info, Problem Details, security) and the
     full validator checks syntax, responses and that every Must-have F- maps to an endpoint.
+    `only` rewrites just those features' endpoints in the existing document (the others are kept), with the
+    Judge's notes for each in `feedback`.
     """
     app_name = prd_data.get("app_name", "App")
     features = prd_data.get("features", [])
@@ -397,6 +479,20 @@ def generate_openapi_spec(
     api_counter = 1
     standard_methods = {"get", "post", "put", "delete", "patch"}
     last_meta: Dict[str, Any] = {}
+    openapi_path = os.path.join(docs_dir, "openapi.yaml")
+    if only is not None and os.path.exists(openapi_path):
+        old = yaml.safe_load(open(openapi_path, encoding="utf-8").read()) or {}
+        for pth, item in (old.get("paths") or {}).items():
+            for method, op in (item or {}).items():
+                cited = set(re.findall(r"F-\d+", str((op or {}).get("summary", ""))))
+                if method.lower() in standard_methods and (not cited or cited - set(only)):
+                    # Kept for its other features; the revised feature re-cites it if it still uses it.
+                    op["summary"] = re.sub(r"\s*\[(?:%s)\]" % "|".join(map(re.escape, only)), "", op.get("summary", ""))
+                    paths.setdefault(pth, {})[method.lower()] = op
+        used = [int(n) for item in paths.values() for op in item.values()
+                for n in re.findall(r"API-(\d+)", str(op.get("summary", "")))]
+        api_counter = max(used, default=0) + 1
+        last_meta = {"provider": "groq", "model": "revised"}
 
     def _clean(raw: str) -> str:
         text = raw.strip()
@@ -405,12 +501,22 @@ def generate_openapi_spec(
             text = re.sub(r"\n```$", "", text).strip()
         return text
 
+    all_features = "\n".join(f"- {x.get('id')}: {x.get('title') or x.get('name', '')}" for x in features)
     for f in features:
         fid = f.get("id", "")
+        if only is not None and fid not in only:
+            continue
         title = f.get("title") or f.get("name", "")
         prio = f.get("priority", "Must")
-        existing = "\n".join(f"- {m.upper()} {pth}" for pth, ops in paths.items() for m in ops) or "- none yet"
+        existing = "\n".join(f"- {m.upper()} {pth}: {str(op.get('summary', ''))[:70]}" for pth, ops in paths.items()
+                              for m, op in ops.items()) or "- none yet"
+        story = (f.get("story") or "")[:300]
+        acs = "; ".join(a.get("text", "")[:140] for a in (f.get("acs") or [])[:4])
         base_prompt = f"""You are the Lead Solution Architect for '{app_name}'. Write ONLY the OpenAPI 3.0.3 path entries for feature {fid}: {title} ({prio}).
+STORY: {story}
+ACCEPTANCE CRITERIA: {acs}
+ALL FEATURES (each owns its own endpoints; do not build another feature's behaviour here):
+{all_features}
 
 Endpoints already defined (you may add a NEW method to an existing path; never redefine an existing method):
 {existing}
@@ -419,8 +525,13 @@ RULES:
 1. Return a YAML mapping whose keys are URL paths (for example /api/v1/todos). No 'paths:' wrapper, no other keys, no code fences, no prose.
 2. Every operation has: summary citing [{fid}] and an endpoint id, numbering from [API-{api_counter:03d}]; operationId; security: [{{bearerAuth: []}}] unless it is sign-up or sign-in (then security: []); requestBody when it takes input; responses with a 2xx and each relevant error (400, 401, 403, 404, 409, 500) as $ref: '#/components/responses/Problem'.
 3. List endpoints use cursor pagination parameters 'after' and 'limit'.
-4. Only the endpoints this feature needs. Use REST resources with plural nouns.
-5. Be compact: small inline schemas (type and required properties only), no examples, one-line descriptions."""
+4. Only the endpoints this feature's story and criteria need. Use REST resources with plural nouns. If an endpoint
+   above already does what this feature needs, add nothing for it: never a second endpoint for the same action.
+5. No endpoint may return or list another user's data unless the story requires it.
+6. Be compact: small inline schemas (type and required properties only), no examples, one-line descriptions."""
+        if (feedback or {}).get(fid):
+            base_prompt += "\n\nA REVIEWER FOUND THESE PROBLEMS IN THIS FEATURE'S PREVIOUS ENDPOINTS; FIX EACH ONE:\n" + \
+                           "\n".join(f"- {e}" for e in feedback[fid])
         prompt = base_prompt
         errs: List[str] = []
         budget = 1500
@@ -494,12 +605,11 @@ RULES:
             "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
         },
     }
-    text = yaml.safe_dump(spec, sort_keys=False, allow_unicode=True)
+    text = yaml.safe_dump(normalize_openapi_spec(spec), sort_keys=False, allow_unicode=True)
     is_valid, errors, endpoints = validate_openapi_spec(text, prd_features=features)
     if not is_valid:
         raise ValueError(f"Assembled OpenAPI failed validation: {errors}")
     logger.info(f"OpenAPI assembled from {len(features)} feature fragments ({sum(len(v) for v in paths.values())} operations).")
-    openapi_path = os.path.join(docs_dir, "openapi.yaml")
     with open(openapi_path, "w", encoding="utf-8") as fh:
         fh.write(f"# Generated by {last_meta.get('provider', '?')}:{last_meta.get('model', '?')} per feature; "
                  f"assembled and validated by code.\n" + text)
@@ -517,60 +627,46 @@ def generate_team_plan(
     adrs: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
-    Generates docs/team-plan.json for HR sizing based on work from features and ADRs.
-    Adheres strictly to Handbook Section 6.2.3.
+    Generates the Architect's draft docs/team-plan.json for HR (Handbook 6.2.3): the seats the work needs, each
+    citing the features and ADRs it covers. Built from this project's features, ADRs and timeline only; HR sizes
+    the real plan. (It used to be a fixed template that named tools no project asked for.)
     """
     app_name = prd_data.get("app_name", "App")
     features = prd_data.get("features", [])
-    must_features = [f for f in features if "must" in f.get("priority", "").lower()]
+    must_ids = [f["id"] for f in features if "must" in f.get("priority", "").lower() and f.get("id")]
+    all_ids = [f["id"] for f in features if f.get("id")]
+    adr_ids = [a["id"] for a in adrs or []] or [t["id"] for t in ADR_TOPICS]
 
-    f_ids = [f["id"] for f in must_features]
-    adr_ids = ["ADR-001", "ADR-002", "ADR-003", "ADR-004"]
+    def adr(n: int) -> List[str]:
+        return [a for a in adr_ids if a == f"ADR-{n:03d}"]
+
+    timeline = str((parsed_ba.get("intake") or {}).get("timeline") or parsed_ba.get("timeline") or "")
+    weeks_m = re.search(r"(\d+)\s*(week|wk|month)", timeline, re.I)
+    weeks = (int(weeks_m.group(1)) * (4 if weeks_m.group(2).lower().startswith("month") else 1)) if weeks_m else 4
+    weeks = max(2, min(weeks, 26))
+    backend_count = max(1, min(3, -(-len(must_ids or all_ids) // 4)))
+    feats = ", ".join(all_ids)
 
     plan = {
         "seats": [
-            {
-                "id": "ROLE-01",
-                "role": "fullstack",
-                "count": 2,
-                "from_week": 1,
-                "to_week": 4,
-                "why": f"Build walking skeleton and implement core features {', '.join(f_ids[:3])} with local persistence",
-                "refs": f_ids[:3] + ["ADR-001", "ADR-002"]
-            },
-            {
-                "id": "ROLE-02",
-                "role": "frontend",
-                "count": 1,
-                "from_week": 2,
-                "to_week": 4,
-                "why": f"Implement user interfaces, offline forms, and compliance views for {', '.join(f_ids[3:])}",
-                "refs": f_ids[3:] + ["ADR-003"]
-            },
-            {
-                "id": "ROLE-03",
-                "role": "qa",
-                "count": 1,
-                "from_week": 2,
-                "to_week": 4,
-                "why": "Write and execute unit tests, integration test suites, and offline state regression checks",
-                "refs": f_ids + ["ADR-004"]
-            },
-            {
-                "id": "ROLE-04",
-                "role": "devops",
-                "count": 1,
-                "from_week": 1,
-                "to_week": 2,
-                "why": "Setup GitHub Actions CI pipeline, local test harnesses, and automated build packaging",
-                "refs": ["ADR-001", "ADR-002"]
-            }
+            {"id": "ROLE-01", "role": "backend", "count": backend_count, "from_week": 1, "to_week": weeks,
+             "why": f"Build the walking skeleton, then the endpoints and storage for {feats}",
+             "refs": all_ids + adr(1) + adr(2) + adr(3)},
+            {"id": "ROLE-02", "role": "frontend", "count": 1, "from_week": min(2, weeks), "to_week": weeks,
+             "why": f"Build the screens and keyboard flows for {feats}",
+             "refs": all_ids + adr(1)},
+            {"id": "ROLE-03", "role": "qa", "count": 1, "from_week": min(2, weeks), "to_week": weeks,
+             "why": f"Write and run the acceptance tests for every criterion of {feats}",
+             "refs": all_ids + adr(4)},
+            {"id": "ROLE-04", "role": "devops", "count": 1, "from_week": 1, "to_week": min(2, weeks),
+             "why": "Package the application and install it on the client's hosting, with backups",
+             "refs": adr(1) + adr(4)},
         ],
-        "timeline_weeks": 4,
+        "timeline_weeks": weeks,
         "notes": [
-            f"Team plan sized for {app_name} v1 MVP delivery.",
-            "All Must-have features covered across engineering seats.",
-            "Brooks's law respected: seats staggered to minimize coordination overhead."
+            f"Draft seats for {app_name} v1; HR sizes the final plan.",
+            f"Timeline: {timeline or 'not given by the client; 4 weeks assumed'}.",
+            f"Every Must-have feature is covered: {', '.join(must_ids) or 'none listed'}.",
         ]
     }
 
@@ -585,30 +681,420 @@ def generate_team_plan(
 # STAGE 3 STEP 11: ARCHITECTURE.MD TRD GENERATOR (APPENDIX A.3 VIA LLM)
 # ==============================================================================
 
+def split_adr_findings(verdict: Dict[str, Any], adr_dir: str) -> Tuple[Dict[str, List[str]], Dict[str, Any]]:
+    """
+    Separates the findings an ADR must fix (claims quoted from an ADR file, the ADR trade-off criterion) from the
+    ones for the TRD. Rebuilding the TRD cannot repair an ADR, so without this the loop never converges.
+    Returns ({ADR id: notes}, verdict with only the TRD's findings).
+    """
+    from judge import _compact_adr, normalize_quote
+    texts: Dict[str, str] = {}
+    for fn in sorted(os.listdir(adr_dir)) if os.path.isdir(adr_dir) else []:
+        m = re.match(r"(ADR-\d+)", fn)
+        if m:
+            raw = open(os.path.join(adr_dir, fn), encoding="utf-8", errors="ignore").read()
+            texts[m.group(1)] = normalize_quote(raw + "\n" + _compact_adr(raw))
+    out: Dict[str, List[str]] = {}
+    trd_claims = []
+    for u in verdict.get("unsupported_claims") or []:
+        needle = normalize_quote(u.get("text", "") if isinstance(u, dict) else "")
+        hits = [a for a, t in texts.items() if needle and needle in t]
+        if not hits:
+            trd_claims.append(u)
+        for a in hits:
+            out.setdefault(a, []).append(f"{u.get('text', '')}: {u.get('reason', '')}"[:300])
+    trd_scores = []
+    for sc in verdict.get("scores") or []:
+        if isinstance(sc, dict) and sc.get("criterion") == "adr_tradeoffs_and_alternatives":
+            if sc.get("score", 0) < sc.get("max", 0):
+                named = {i.replace("\u2011", "-") for i in re.findall(r"ADR[-\u2011]\d+", f"{sc.get('evidence', '')} {sc.get('fix', '')}")}
+                for a in sorted(named & set(texts)) or sorted(texts):
+                    out.setdefault(a, []).append(f"{sc.get('evidence', '')} Fix: {sc.get('fix', '')}"[:400])
+            continue
+        trd_scores.append(sc)
+    return out, {**verdict, "unsupported_claims": trd_claims, "scores": trd_scores}
+
+
+def split_api_findings(verdict: Dict[str, Any], docs_dir: str) -> Tuple[Dict[str, List[str]], Dict[str, Any]]:
+    """
+    Separates the findings only docs/openapi.yaml can fix (API design and traceability, claims about endpoints)
+    by the feature that owns them; sections 6 and 7 are built from it, so a TRD rebuild cannot change them.
+    Returns ({F- id: notes}, verdict with the remaining findings).
+    """
+    try:
+        spec = yaml.safe_load(open(os.path.join(docs_dir, "openapi.yaml"), encoding="utf-8").read()) or {}
+    except (OSError, yaml.YAMLError):
+        return {}, verdict
+    owner: Dict[str, List[str]] = {}  # API- id or path -> features
+    all_features: List[str] = []
+    for pth, item in (spec.get("paths") or {}).items():
+        for method, op in (item or {}).items():
+            summary = str((op or {}).get("summary", "")) if isinstance(op, dict) else ""
+            feats = list(dict.fromkeys(re.findall(r"F-\d+", summary)))
+            all_features += [f for f in feats if f not in all_features]
+            for key in re.findall(r"API-\d+", summary) + [pth.lower()]:
+                owner.setdefault(key, []).extend(f for f in feats if f not in owner.get(key, []))
+
+    def features_named(text: str) -> List[str]:
+        text = re.sub(r"[\u2010\u2011]", "-", text)
+        named = [f for f in re.findall(r"F-\d+", text) if f in all_features]
+        for key in re.findall(r"API-\d+", text) + [p for p in owner if p.startswith("/") and p in text.lower()]:
+            named += owner.get(key, [])
+        return list(dict.fromkeys(named))
+
+    out: Dict[str, List[str]] = {}
+    rest_scores = []
+    for sc in verdict.get("scores") or []:
+        if isinstance(sc, dict) and sc.get("criterion") in ("api_design_and_auth", "traceability_f_to_endpoints_and_tables"):
+            if sc.get("score", 0) < sc.get("max", 0):
+                note = f"{sc.get('evidence', '')} Fix: {sc.get('fix', '')}"
+                for f in features_named(note) or all_features:
+                    out.setdefault(f, []).append(note[:400])
+            continue
+        rest_scores.append(sc)
+    rest_claims = []
+    for u in verdict.get("unsupported_claims") or []:
+        text = f"{u.get('text', '')} {u.get('reason', '')}" if isinstance(u, dict) else ""
+        named = features_named(text) if re.search(r"/api/|API[-\u2011]\d+", text) else []
+        for f in named:
+            out.setdefault(f, []).append(text[:300])
+        if not named:
+            rest_claims.append(u)
+    return out, {**verdict, "scores": rest_scores, "unsupported_claims": rest_claims}
+
+
+def revise_from_findings(verdict: Dict[str, Any], doc: str, parsed_ba: Dict[str, Any], prd_data: Dict[str, Any],
+                         docs_dir: str, session_id: Optional[str], label: str) -> Tuple[Dict[int, List[str]], Optional[List[Dict[str, Any]]]]:
+    """Sends each Judge finding to the document that can fix it: the ADRs, the API contract, or a TRD part.
+    Rewrites the ADRs and endpoints right away; returns the TRD parts to rebuild and the new ADR list if changed."""
+    adr_dir = os.path.join(docs_dir, "adr")
+    adr_feedback, rest = split_adr_findings(verdict, adr_dir)
+    api_feedback, rest = split_api_findings(rest, docs_dir)
+    part_feedback = route_findings_to_parts(doc, rest)
+    adrs = None
+    if adr_feedback:
+        logger.info(f"{label}: revising {sorted(adr_feedback)}")
+        adrs = generate_adrs(parsed_ba, prd_data, adr_dir, session_id=session_id, feedback=adr_feedback,
+                             only=sorted(adr_feedback))
+        part_feedback.setdefault(1, []).append("The ADRs were revised; section 3 must match their decisions.")
+    if api_feedback:
+        logger.info(f"{label}: revising the endpoints of {sorted(api_feedback)}")
+        generate_openapi_spec(parsed_ba, prd_data, docs_dir, session_id=session_id, only=sorted(api_feedback),
+                              feedback=api_feedback)
+        part_feedback.setdefault(2, []).append("The API was revised; section 5 must match docs/openapi.yaml.")
+    return part_feedback, adrs
+
+
+# Where each criterion's evidence lives: 1 = sections 1-4, 2 = 5-8, 3 = 9-12.
+_CRITERION_PARTS = {
+    "nfr_coverage": [1], "capacity_and_scaling": [1], "adr_tradeoffs_and_alternatives": [1],
+    "traceability_f_to_endpoints_and_tables": [2], "api_design_and_auth": [2],
+    "security_stride": [3], "walking_skeleton_and_team_plan": [3],
+}
+
+
 def route_findings_to_parts(arch_text: str, verdict: Dict[str, Any]) -> Dict[int, List[str]]:
     """
-    Sends each Judge / code-audit finding to the document part (1: sections 1-4, 2: 5-8, 3: 9-12)
-    whose text contains it; a finding that cannot be located goes to every part.
+    Sends each Judge / code-audit finding to the document part (1: sections 1-4, 2: 5-8, 3: 9-12) it is about:
+    the section it names, else the part holding the text it quotes, else the part its criterion scores. Only a
+    finding that none of these place goes to every part; sending everything everywhere rewrote the whole
+    document each round, so fixes in one place came with new errors in another.
     """
-    bounds = [(int(m.group(1)), m.start()) for m in re.finditer(r"^##\s*(\d{1,2})\.", arch_text, re.MULTILINE)]
-    def part_for(pos: int) -> Optional[int]:
-        sec = None
-        for n, start in bounds:
-            if start <= pos:
-                sec = n
-        return None if sec is None else min(3, (sec - 1) // 4 + 1)
+    from judge import normalize_quote
+    part_text: Dict[int, str] = {1: "", 2: "", 3: ""}
+    heads = list(re.finditer(r"^##\s*(\d{1,2})\.", arch_text, re.M))
+    for i, h in enumerate(heads):
+        body = arch_text[h.start():heads[i + 1].start() if i + 1 < len(heads) else len(arch_text)]
+        part_text[min(3, (int(h.group(1)) - 1) // 4 + 1)] += " " + normalize_quote(body)
+
+    def parts_quoting(text: str) -> List[int]:
+        needle = normalize_quote(text)
+        return [p for p, t in part_text.items() if len(needle) > 3 and needle in t]
+
+    def parts_named(text: str) -> List[int]:
+        secs = {int(n) for n in re.findall(r"(?:[Ss]ection|\u00a7)\s*(\d{1,2})\b", text) if 1 <= int(n) <= 12}
+        return sorted({(n - 1) // 4 + 1 for n in secs})
+
     out: Dict[int, List[str]] = {}
-    findings = [(str(u.get("text", "")), f"{u.get('text', '')}: {u.get('reason', '')}")
-                for u in (verdict.get("unsupported_claims") or []) if isinstance(u, dict)]
-    findings += [("", f"{sc.get('criterion')}: {sc.get('fix')}") for sc in (verdict.get("scores") or [])
-                 if isinstance(sc, dict) and sc.get("score", 0) < sc.get("max", 0) and sc.get("fix")]
-    for needle, note in findings[:60]:
-        pos = arch_text.lower().find(needle.lower()) if needle.strip() else -1
-        parts = [part_for(pos)] if pos >= 0 and part_for(pos) else [1, 2, 3]
+
+    def add(parts: List[int], note: str) -> None:
         for p in parts:
             if len(out.setdefault(p, [])) < 20:
                 out[p].append(note[:300])
+
+    for u in verdict.get("unsupported_claims") or []:
+        if not isinstance(u, dict):
+            continue
+        note = f"{u.get('text', '')}: {u.get('reason', '')}"
+        add(parts_quoting(str(u.get("text", ""))) or parts_named(note) or [1, 2, 3], note)
+    for sc in verdict.get("scores") or []:
+        if not isinstance(sc, dict) or sc.get("score", 0) >= sc.get("max", 0) or not sc.get("fix"):
+            continue
+        evidence = f"{sc.get('evidence', '')} {sc.get('fix', '')}"
+        quoted = [q for q in re.findall(r"[\"\u201c`]([^\"\u201d`]{12,})[\"\u201d`]", evidence)]
+        parts = (parts_named(evidence) or sorted({p for q in quoted for p in parts_quoting(q)})
+                 or _CRITERION_PARTS.get(str(sc.get("criterion")), [1, 2, 3]))
+        add(parts, f"{sc.get('criterion')}: {sc.get('fix')}")
     return out
+
+
+def _verdict_rank(verdict: Dict[str, Any]) -> Tuple[int, int]:
+    """Higher is better: a pass first, then the score less the unsupported claims."""
+    return (1 if verdict.get("pass") else 0,
+            int(verdict.get("total") or 0) - len(verdict.get("unsupported_claims") or []))
+
+
+def _snapshot_docs(docs_dir: str) -> Dict[str, str]:
+    """The Architect documents a revision round can change, so the best round can be put back."""
+    names = ["architecture.md", "openapi.yaml"]
+    adr_dir = os.path.join(docs_dir, "adr")
+    if os.path.isdir(adr_dir):
+        names += [os.path.join("adr", f) for f in sorted(os.listdir(adr_dir)) if f.endswith(".md")]
+    snap = {}
+    for n in names:
+        path = os.path.join(docs_dir, n)
+        if os.path.exists(path):
+            snap[n] = open(path, encoding="utf-8").read()
+    return snap
+
+
+def _restore_docs(docs_dir: str, snap: Dict[str, str]) -> None:
+    for n, text in snap.items():
+        with open(os.path.join(docs_dir, n), "w", encoding="utf-8") as f:
+            f.write(text)
+
+
+_HTTP_METHODS = ("get", "post", "put", "patch", "delete")
+_PROBLEM_REF = {"$ref": "#/components/responses/Problem"}
+
+
+def normalize_openapi_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Code owns the parts of the contract a model keeps getting wrong: every operation gets an API-### id, and
+    the RFC 9457 error responses that apply to it (400/500 always, 422 with a body, 401/403 when authenticated,
+    404 when it addresses a resource id)."""
+    ops = [(p, m, op) for p, item in (spec.get("paths") or {}).items() if isinstance(item, dict)
+           for m, op in item.items() if m.lower() in _HTTP_METHODS and isinstance(op, dict)]
+    used = {int(n) for _, _, op in ops for n in re.findall(r"API-(\d+)", str(op.get("summary", "")))}
+    next_id = 1
+    for pth, method, op in ops:
+        if not re.search(r"API-\d+", str(op.get("summary", ""))):
+            while next_id in used:
+                next_id += 1
+            used.add(next_id)
+            op["summary"] = f"{op.get('summary', '')} [API-{next_id:03d}]".strip()
+        codes = ["400", "500"]
+        if "requestBody" in op:
+            codes.append("422")
+        if op.get("security", spec.get("security")):
+            codes += ["401", "403"]
+        if "{" in pth:
+            codes.append("404")
+        responses = op.setdefault("responses", {})
+        for code in codes:
+            responses.setdefault(code, dict(_PROBLEM_REF))
+        # Errors that cannot happen on this operation: a read has no conflict, a list route no missing id,
+        # no body nothing to validate, and a public route no authentication failure.
+        impossible = {"409"} if method.lower() == "get" else set()
+        if "{" not in pth:
+            impossible.add("404")  # no resource id in the path, so nothing to be missing
+        if "requestBody" not in op:
+            impossible.add("422")
+        if not op.get("security", spec.get("security")):
+            impossible.add("403")  # nobody is signed in to be refused
+            if not re.search(r"sign-?ins?|logins?|tokens?|refresh", pth, re.I):
+                impossible.add("401")
+        for code in impossible:
+            responses.pop(code, None)
+        op["responses"] = dict(sorted(responses.items()))
+    return spec
+
+
+def _normalize_openapi_file(docs_dir: str) -> None:
+    """Applies normalize_openapi_spec to docs/openapi.yaml in place, keeping its generation comment."""
+    openapi_file = os.path.join(docs_dir, "openapi.yaml")
+    try:
+        with open(openapi_file, encoding="utf-8") as fh:
+            raw_spec = fh.read()
+        header = "".join(l for l in raw_spec.splitlines(keepends=True)[:1] if l.startswith("#"))
+        normalized = yaml.safe_dump(normalize_openapi_spec(yaml.safe_load(raw_spec) or {}), sort_keys=False, allow_unicode=True)
+        with open(openapi_file, "w", encoding="utf-8") as fh:
+            fh.write(header + normalized)
+    except (OSError, yaml.YAMLError, AttributeError):
+        pass
+
+
+def _schema_tables(schema_text: str) -> Dict[str, str]:
+    """Table name -> TBL- id, from the schema's summary table or its DDL comments."""
+    out: Dict[str, str] = {}
+    for tid, name in re.findall(r"(TBL-\d+)\**\s*`(\w+)`", schema_text):
+        out.setdefault(name.lower(), tid)
+    for name, tid in re.findall(r"Table:\s*(\w+)\s*\((TBL-\d+)\)", schema_text):
+        out.setdefault(name.lower(), tid)
+    for name in re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)", schema_text, re.IGNORECASE):
+        out.setdefault(name.lower(), "")
+    return out
+
+
+_AUTH_TABLE_HINTS = {
+    "signup": ("user", "account"), "register": ("user", "account"),
+    "signin": ("user", "account", "session", "token"), "login": ("user", "account", "session", "token"),
+    "logout": ("session", "token"), "signout": ("session", "token"), "refresh": ("session", "token"),
+}
+
+
+def _schema_columns(schema_text: str) -> Dict[str, List[str]]:
+    """Table name -> its column names, read from the DDL."""
+    out: Dict[str, List[str]] = {}
+    for name, body in re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)\s*\((.*?)\)\s*;", schema_text, re.I | re.S):
+        cols = []
+        for line in re.sub(r"--[^\n]*", "", body).split(","):
+            word = (line.strip().split() or [""])[0].strip('"`')
+            if word and word.upper() not in ("PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT") and re.match(r"^\w+$", word):
+                cols.append(word)
+        out[name.lower()] = cols
+    return out
+
+
+def _tables_for_path(path: str, tables: List[str]) -> List[str]:
+    """The tables an endpoint reads or writes, judged from its path: a segment naming a table, or an auth verb."""
+    segs = [s.lower() for s in path.strip("/").split("/") if s and not s.startswith("{")]
+    found: List[str] = []
+    for seg in segs:
+        for t in tables:
+            if t not in found and (seg == t or seg.rstrip("s") == t.rstrip("s")):
+                found.append(t)
+    for seg in segs:
+        key = seg.replace("-", "").replace("_", "")
+        for hint in _AUTH_TABLE_HINTS.get(key) or _AUTH_TABLE_HINTS.get(key.rstrip("s"), ()):
+            for t in tables:
+                if t not in found and hint in t:
+                    found.append(t)
+    return found
+
+
+def api_traceability_sections(docs_dir: str) -> Tuple[str, str]:
+    """Section 6's API table and section 7's feature -> endpoint -> table map, built from docs/openapi.yaml and
+    docs/schema.md so the TRD cannot disagree with them."""
+    try:
+        spec = yaml.safe_load(open(os.path.join(docs_dir, "openapi.yaml"), encoding="utf-8").read()) or {}
+    except (OSError, yaml.YAMLError):
+        return "", ""
+    try:
+        schema_text = open(os.path.join(docs_dir, "schema.md"), encoding="utf-8").read()
+    except OSError:
+        schema_text = ""
+    tables = _schema_tables(schema_text)
+    columns = _schema_columns(schema_text)
+    rows, by_feature = [], {}
+    for pth, item in (spec.get("paths") or {}).items():
+        for method, op in (item or {}).items():
+            if method.lower() not in _HTTP_METHODS or not isinstance(op, dict):
+                continue
+            summary = str(op.get("summary", ""))
+            api_id = (re.findall(r"API-\d+", summary) or ["API-?"])[0]
+            feats = list(dict.fromkeys(re.findall(r"F-\d+", summary + json.dumps(op.get("tags", [])))))
+            auth = "Bearer token [ADR-003]" if op.get("security", spec.get("security")) else "Public"
+            errors = ", ".join(c for c in (op.get("responses") or {}) if str(c)[:1] in "45")
+            touched = _tables_for_path(pth, list(tables))
+            refs = ", ".join(f"{tables[t]} `{t}`" if tables[t] else f"`{t}`" for t in touched) or "none"
+            rows.append(f"| {api_id} | `{method.upper()} {pth}` | {', '.join(f'[{f}]' for f in feats) or '-'} | "
+                        f"{auth} | {errors or '-'} | {refs} |")
+            for f in feats:
+                entry = by_feature.setdefault(f, ([], []))
+                entry[0].append(api_id)
+                entry[1].extend(r for r in refs.split(", ") if r != "none" and r not in entry[1])
+    if not rows:
+        return "", ""
+    api = ("API summary (from docs/openapi.yaml; every error is an RFC 9457 Problem Details body):\n\n"
+           "| ID | Method + path | Feature | Auth rule | Errors | Tables |\n|---|---|---|---|---|---|\n" + "\n".join(rows))
+    table_rows = "\n".join(f"| {tid or '-'} | `{name}` | {', '.join(columns.get(name, [])) or '-'} |"
+                           for name, tid in tables.items())
+    trace = (("Tables (from docs/schema.md):\n\n| ID | Table | Columns |\n|---|---|---|\n" + table_rows + "\n\n"
+              if table_rows else "") +
+             "Feature traceability (from docs/openapi.yaml and docs/schema.md):\n\n"
+             "| Feature | Endpoints | Tables |\n|---|---|---|\n"
+             + "\n".join(f"| [{f}] | {', '.join(a)} | {', '.join(t) or 'none'} |"
+                         for f, (a, t) in sorted(by_feature.items())))
+    return api, trace
+
+
+def team_plan_section(docs_dir: str) -> str:
+    """Section 12's seat table, from docs/team-plan.json, so every seat cites its features and ADRs."""
+    try:
+        plan = json.load(open(os.path.join(docs_dir, "team-plan.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    rows = [f"| {st.get('id')} | {st.get('role')} | {st.get('count')} | {st.get('from_week')}-{st.get('to_week')} | "
+            f"{st.get('why', '')} | {', '.join(f'[{r}]' for r in st.get('refs') or [])} |"
+            for st in plan.get("seats") or [] if isinstance(st, dict)]
+    if not rows:
+        return ""
+    return ("Seats (from docs/team-plan.json; HR sizes the final plan):\n\n"
+            "| Seat | Role | Count | Weeks | Why | Refs |\n|---|---|---|---|---|---|\n" + "\n".join(rows)
+            + "".join(f"\n\n{n}" for n in plan.get("notes") or [] if str(n).startswith("Every Must-have")))
+
+
+def _with_code_sections(doc: str, docs_dir: str) -> str:
+    """Replaces sections 6 and 7 with the code-built API table, schema tables and feature-to-table map."""
+    api, trace = api_traceability_sections(docs_dir)
+    if not api:
+        return doc
+    m6 = re.search(r"^## 6\.[^\n]*\n", doc, re.M)
+    m7 = re.search(r"^## 7\.[^\n]*\n", doc, re.M)
+    if not m6 or not m7 or m7.start() < m6.end():
+        return doc
+    m8 = re.search(r"^## \d{1,2}\.", doc[m7.end():], re.M)  # the next section, whatever its number
+    end7 = m7.end() + m8.start() if m8 else len(doc)
+    doc = (doc[:m6.end()] + "\n" + api + "\n\n" + doc[m7.start():m7.end()] + "\n" + trace + "\n\n"
+           + doc[end7:].lstrip("\n"))
+    seats = team_plan_section(docs_dir)
+    m12 = re.search(r"^## 12\.[^\n]*\n", doc, re.M)
+    if seats and m12:
+        doc = doc[:m12.end()] + "\n" + seats + "\n"
+    return doc
+
+
+def _known_assumptions(parsed_ba: Dict[str, Any]) -> Tuple[Dict[str, str], str]:
+    """The requirements' ASM- ids with their text, and the id a new architecture assumption should take."""
+    known = {a["id"]: str(a.get("text", "")) for a in parsed_ba.get("assumptions") or []
+             if isinstance(a, dict) and re.match(r"ASM-\d+$", str(a.get("id", "")))}
+    nums = [int(k.split("-")[1]) for k in known]
+    width = max((len(k.split("-")[1]) for k in known), default=2)
+    return known, f"ASM-{max(nums, default=0) + 1:0{width}d}"
+
+
+def assumption_errors(doc: str, parsed_ba: Dict[str, Any]) -> List[str]:
+    """Every ASM- id the document cites exists in the requirements or is defined in section 2."""
+    known, next_asm = _known_assumptions(parsed_ba)
+    text = re.sub(r"[\u2010\u2011]", "-", doc)
+    m = re.search(r"^## 2\.[^\n]*\n(.*?)(?=^## 3\.|\Z)", text, re.M | re.S)
+    defined = set(re.findall(r"^\s*[-*]\s*\**(ASM-\d+)\**\s*[:\u2013-]", m.group(1) if m else "", re.M))
+    undefined = sorted(set(re.findall(r"ASM-\d+", text)) - set(known) - defined)
+    if not undefined:
+        return []
+    return [f"Section 2 cites assumption id(s) {', '.join(undefined)} that exist nowhere: use an existing id "
+            f"({', '.join(known) or 'none'}) or define a new one in section 2 as '- **{next_asm}**: <assumption>'"]
+
+
+def capacity_citation_errors(doc: str, qa_map: Dict[str, Any]) -> List[str]:
+    """A capacity input cited to a client answer must be a number that answer actually gives."""
+    m = re.search(r"^## 2\.[^\n]*\n(.*?)(?=^## 3\.|\Z)", doc, re.M | re.S)
+    if not m or not qa_map:
+        return []
+    answers = {str(k).upper(): str((v or {}).get("answer", "")) for k, v in qa_map.items() if isinstance(v, dict)}
+    errors = []
+    # A fragment is one table cell or one factor of a product; the number nearest before a [Q-] cite is its input.
+    for frag in re.split(r"\||×|\*|;|\n", m.group(1)):
+        for cite in re.finditer(r"\[(Q-\d+)\]", frag):
+            if re.search(r"ASM", frag, re.I):
+                continue
+            nums = re.findall(r"\d+(?:[.,]\d+)?", re.sub(r"\[Q-\d+\]|(?:ASM|NFR|F|ADR|API)[‑-]\d+", "", frag[:cite.start()]))
+            answer = answers.get(cite.group(1), "")
+            if nums and answer and not re.search(rf"(?<![\d.]){re.escape(nums[-1])}(?![\d])", answer):
+                errors.append(f"Section 2 cites [{cite.group(1)}] for '{nums[-1]}' ({frag.strip()[:80]}), but the "
+                              f"client's answer {cite.group(1)} does not give that number; use the client's figure or "
+                              f"mark it as an ASM- assumption")
+    return errors
 
 
 def generate_architecture_trd(
@@ -630,11 +1116,17 @@ def generate_architecture_trd(
     """
     app_name = prd_data.get("app_name", "App")
     features = prd_data.get("features", [])
-    nfrs = prd_data.get("nfrs", [])
+    # The PRD table does not always parse; the requirements list then gives each NFR with its target, without
+    # which the model guesses what NFR-02 means.
+    nfrs = prd_data.get("nfrs") or [{"id": n.get("id"), "name": n.get("nfr") or n.get("category", ""),
+                                      "target": n.get("target", "")}
+                                     for n in parsed_ba.get("non_functional_reqs") or [] if isinstance(n, dict)]
     must_features = [f for f in features if "must" in f.get("priority", "").lower()]
 
     features_summary = "\n".join([f"- **{f['id']}**: {f.get('title') or f.get('name', '')}" for f in features])
     nfrs_summary = "\n".join([f"- **{n.get('id', 'NFR')}**: {n.get('name', '')} - {n.get('target', '')}" for n in nfrs])
+    assumptions, next_asm = _known_assumptions(parsed_ba)
+    asm_block = ("; ".join(f"{k}: {v[:90]}" for k, v in assumptions.items()) or "(none)")
 
     base_prompt = f"""You are the Lead Solution Architect. Generate docs/architecture.md for '{app_name}' covering ALL 12 POINTS of Handbook Appendix A.3.
 APPLICATION: {app_name}
@@ -660,10 +1152,10 @@ MANDATORY APPENDIX A.3 SECTIONS:
 (Method, sessions, and RBAC table: Role, Can, Cannot, Enforced where)
 
 ## 6. API
-(API Summary table: ID, Method + path, Feature [F-###], Auth rule, Errors)
+(Write only this heading: code fills in the API table from docs/openapi.yaml)
 
 ## 7. Data model
-(Summary of tables referencing docs/schema.md)
+(Write only this heading: code fills in the tables and the feature-to-table map from docs/schema.md)
 
 ## 8. External integrations
 (External services and failure handling, environment variables table)
@@ -678,9 +1170,12 @@ MANDATORY APPENDIX A.3 SECTIONS:
 (Explicitly name the 'walking skeleton' first, then subsequent slices)
 
 ## 12. Team plan (for HR)
-(Seats needed citing [F-###] and [ADR-###] refs, covering every Must-have)
+(Write only this heading: code fills in the seats from docs/team-plan.json)
 
 Return ONLY the markdown document."""
+
+    # The contract is code-owned: ids and standard error responses are filled in before the TRD describes it.
+    _normalize_openapi_file(docs_dir)
 
     # Facts produced earlier in this stage, so sections 3, 6, 7 and 12 describe what actually exists.
     facts: List[str] = []
@@ -747,7 +1242,14 @@ Return ONLY the markdown document."""
                       f"Choose the simplest design that meets these constraints (Handbook 7.2.6): no extra servers, "
                       f"queues, caches, proxies, monitoring SaaS or external services unless an NFR above needs them, "
                       f"and nothing that contradicts the client's hosting or installation limits. Every number in the "
-                      f"capacity estimate must come from the client's answers or be marked as an ASM- assumption.\n\n"
+                      f"capacity estimate must come from the client's answers or be marked as an ASM- assumption, and "
+                      f"state no budget, benchmark or latency figure (disk size, query time) the inputs above do not "
+                      f"give.\n"
+                      f"ASSUMPTIONS THAT ALREADY EXIST (from the requirements): {asm_block}. A new assumption takes the "
+                      f"next free id ({next_asm}, then the next) and is defined in section 2 as a bullet "
+                      f"'- **{next_asm}**: <assumption>'; never cite an assumption id that is not defined.\n"
+                      f"Add no CI/CD service, container, hosting or tool that the client's answers do not mention, and "
+                      f"cite an ADR only for what that ADR decides.\n\n"
                       f"Cite source IDs ([NFR-..], [Q-..], [F-..], [ADR-..]) for every number and decision. "
                       f"Mark any library version you cannot verify as UNVERIFIED:. Be concise; tables over prose. "
                       f"Return ONLY the markdown for these sections.")
@@ -757,9 +1259,12 @@ Return ONLY the markdown document."""
                                                  task_id=f"architect_trd_p{part}", max_tokens=3000)
             last_meta = meta
             texts[part] = raw_text.strip()
-        doc = "\n\n".join(texts[p] for p, _ in parts)
+        doc = _with_code_sections("\n\n".join(texts[p] for p, _ in parts), docs_dir)
 
         is_valid, errors = validate_architecture_pre_judge(doc, prd_data, adr_list)
+        cap_errors = capacity_citation_errors(doc, parsed_ba.get("qa_map") or {}) + assumption_errors(doc, parsed_ba)
+        if cap_errors:
+            is_valid, errors = False, list(errors) + cap_errors
         if is_valid:
             logger.info(f"Architecture TRD passed pre-Judge validation on attempt {attempt}.")
             stamp = _generate_stamp(last_meta, role_name="Solution Architect")
@@ -971,9 +1476,17 @@ def start_architect_endpoint(req: ArchitectSessionRequest):
     trd_state: Dict[str, Any] = {}
     part_feedback: Dict[int, List[str]] = {}
     judge_rounds: List[Dict[str, Any]] = []
+    # A rebuild can score lower than the round before it; the best round's documents are the ones kept.
+    best: Optional[Tuple[Dict[str, Any], Dict[str, str], int]] = None
     for judge_round in range(1, 4):
-        arch_path = generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adrs, session_id=session_id,
-                                              state=trd_state, part_feedback=part_feedback)
+        try:
+            arch_path = generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adrs, session_id=session_id,
+                                                  state=trd_state, part_feedback=part_feedback)
+        except ValueError:
+            if best is None:
+                raise
+            logger.warning(f"Architecture Judge round {judge_round}: rebuild failed validation; keeping the best round")
+            break
         with open(arch_path, "r", encoding="utf-8") as f:
             arch_text = f.read()
         # Stage 3 Step 13: Judge evaluation
@@ -987,12 +1500,30 @@ def start_architect_endpoint(req: ArchitectSessionRequest):
         )
         judge_rounds.append({"round": judge_round, "pass": judge_verdict.get("pass"), "total": judge_verdict.get("total"),
                              "unsupported": len(judge_verdict.get("unsupported_claims") or [])})
+        logger.info(f"Architecture Judge round {judge_round}: {judge_verdict.get('total')}/{judge_verdict.get('max')}, "
+                    + ", ".join(f"{sc.get('criterion')} {sc.get('score')}/{sc.get('max')}" for sc in judge_verdict.get("scores") or []
+                                if isinstance(sc, dict))
+                    + f"; {len(judge_verdict.get('unsupported_claims') or [])} unsupported claims")
+        if best is None or _verdict_rank(judge_verdict) > _verdict_rank(best[0]):
+            best = (judge_verdict, _snapshot_docs(docs_dir), judge_round)
         if judge_verdict.get("pass") or judge_verdict.get("is_degraded") or judge_round == 3:
             break
-        part_feedback = route_findings_to_parts(arch_text, judge_verdict)
+        try:
+            part_feedback, revised = revise_from_findings(judge_verdict, arch_text, parsed_ba, prd_data, docs_dir,
+                                                          session_id, f"Architecture Judge round {judge_round}")
+        except ValueError as e:
+            logger.warning(f"Architecture Judge round {judge_round}: revision failed ({e}); keeping the best round")
+            break
+        adrs = revised or adrs
         if not part_feedback:
             break
         logger.info(f"Architecture Judge round {judge_round} failed; rebuilding parts {sorted(part_feedback)}")
+    # Revisions after the best round (including a failed one) are undone, so the documents match the verdict.
+    if best is not None and _snapshot_docs(docs_dir) != best[1]:
+        logger.info(f"Keeping round {best[2]}'s documents: it scored {best[0].get('total')}, the last round "
+                    f"{judge_verdict.get('total')}")
+        _restore_docs(docs_dir, best[1])
+        judge_verdict = best[0]
     judge_verdict["judge_rounds"] = judge_rounds
 
     architect_state = {
@@ -1064,7 +1595,8 @@ def get_architect_session_endpoint(session_id: str):
 def rejudge_architect_endpoint(req: ArchitectSessionRequest):
     """
     Re-runs only the Judge (Stage 3 step 13) on the Architect's existing documents, e.g. after a
-    degraded verdict when the high-tier model's quota was used up. Nothing is regenerated.
+    degraded verdict when the high-tier model's quota was used up. Only the code-built tables are refreshed;
+    the model-written sections are regenerated only for findings the Judge reports.
     """
     session_id = req.session_id
     from main import get_session_dir, load_json, save_json
@@ -1088,10 +1620,16 @@ def rejudge_architect_endpoint(req: ArchitectSessionRequest):
         if m:
             first = open(os.path.join(adr_dir, fn), "r", encoding="utf-8").read().splitlines()
             title = next((l.lstrip("# ").strip() for l in first if l.startswith("#")), m.group(1))
-            adr_list.append({"id": m.group(1), "title": title, "path": f"docs/adr/{fn}"})
+            adr_list.append({"id": m.group(1), "title": title, "path": f"docs/adr/{fn}",
+                             "decision": adr_decision("\n".join(first))})
+
+    # The code-owned parts (API ids and errors, sections 6 and 7 tables) are refreshed first: no LLM call.
+    _normalize_openapi_file(docs_dir)
+    doc = _with_code_sections(read("architecture.md"), docs_dir)
+    with open(os.path.join(docs_dir, "architecture.md"), "w", encoding="utf-8") as fh:
+        fh.write(doc)
 
     # Existing document split into its three parts, so a real failure rebuilds only the parts with findings.
-    doc = read("architecture.md")
     trd_state: Dict[str, Any] = {"parts": {}}
     for part in (1, 2, 3):
         lo, hi = 1 + 4 * (part - 1), 4 * part
@@ -1099,21 +1637,41 @@ def rejudge_architect_endpoint(req: ArchitectSessionRequest):
         if m:
             trd_state["parts"][part] = m.group(1).strip()
     judge_rounds: List[Dict[str, Any]] = []
+    # A rebuild can score lower than the round before it; the best round's documents are the ones kept.
+    best: Optional[Tuple[Dict[str, Any], Dict[str, str], int]] = None
     for judge_round in range(1, 4):
         judge_verdict = evaluate_architecture_with_judge(
             arch_text=doc, prd_text=prd_text, parsed_ba=parsed_ba,
             rubric_path="skills/architect/rubric.json", session_id=session_id, schema_text=read("schema.md"))
         judge_rounds.append({"round": judge_round, "pass": judge_verdict.get("pass"), "total": judge_verdict.get("total"),
                              "unsupported": len(judge_verdict.get("unsupported_claims") or [])})
+        logger.info(f"Architecture Judge round {judge_round}: {judge_verdict.get('total')}/{judge_verdict.get('max')}, "
+                    + ", ".join(f"{sc.get('criterion')} {sc.get('score')}/{sc.get('max')}" for sc in judge_verdict.get("scores") or []
+                                if isinstance(sc, dict))
+                    + f"; {len(judge_verdict.get('unsupported_claims') or [])} unsupported claims")
+        if best is None or _verdict_rank(judge_verdict) > _verdict_rank(best[0]):
+            best = (judge_verdict, _snapshot_docs(docs_dir), judge_round)
         if judge_verdict.get("pass") or judge_verdict.get("is_degraded") or judge_round == 3:
             break
-        part_feedback = route_findings_to_parts(doc, judge_verdict)
-        if not part_feedback or len(trd_state["parts"]) < 3:
+        try:
+            part_feedback, revised = revise_from_findings(judge_verdict, doc, parsed_ba, prd_data, docs_dir,
+                                                          session_id, f"Re-judge round {judge_round}")
+            adr_list = revised or adr_list
+            if not part_feedback or len(trd_state["parts"]) < 3:
+                break
+            logger.info(f"Re-judge round {judge_round} failed; rebuilding architecture parts {sorted(part_feedback)}")
+            generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adr_list, session_id=session_id,
+                                      state=trd_state, part_feedback=part_feedback)
+        except ValueError as e:
+            logger.warning(f"Re-judge round {judge_round}: revision failed ({e}); keeping the best round")
             break
-        logger.info(f"Re-judge round {judge_round} failed; rebuilding architecture parts {sorted(part_feedback)}")
-        generate_architecture_trd(parsed_ba, prd_data, docs_dir, adr_list=adr_list, session_id=session_id,
-                                  state=trd_state, part_feedback=part_feedback)
         doc = read("architecture.md")
+    # Revisions after the best round (including a failed one) are undone, so the documents match the verdict.
+    if best is not None and _snapshot_docs(docs_dir) != best[1]:
+        logger.info(f"Keeping round {best[2]}'s documents: it scored {best[0].get('total')}, the last round "
+                    f"{judge_verdict.get('total')}")
+        _restore_docs(docs_dir, best[1])
+        judge_verdict = best[0]
     judge_verdict["judge_rounds"] = judge_rounds
     state.update({"status": "done" if judge_verdict.get("pass", False) else "review_failed",
                   "judge_verdict": judge_verdict, "rejudged_at": datetime.now(timezone.utc).isoformat()})

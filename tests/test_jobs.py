@@ -169,5 +169,41 @@ class StageRoutesTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class NestedRouteLookupTest(unittest.TestCase):
+    def test_stage_routes_inside_mounted_routers_are_found(self):
+        from fastapi import FastAPI, APIRouter
+        inner = FastAPI()
+        router = APIRouter(prefix="/pm")
+
+        @router.post("/start")
+        def start(session_id: str):
+            return {"started": session_id}
+
+        inner.include_router(router)
+        app = FastAPI()
+        app.mount("/v2", inner)
+        app.include_router(router)
+        self.assertEqual(jobs.missing_routes(app, {"pm": "/pm/start", "pm2": "/v2/pm/start", "x": "/x/start"}),
+                         ["x: /x/start"])
+
+class FinishWhilePolledTest(unittest.TestCase):
+    def test_a_job_finishing_during_a_status_read_is_never_reported_interrupted(self):
+        # Reading "running" from disk and then finding the thread gone used to overwrite the real result.
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "p1"))
+        with mock.patch.object(jobs, "DATA_PROJECTS_DIR", tmp):
+            jobs.register("instant-test", lambda sid: {"ok": True})
+            seen = set()
+            for _ in range(40):
+                jobs.start("p1", "instant-test")
+                while True:
+                    st = jobs.status("p1", "instant-test")["status"]
+                    seen.add(st)
+                    if st != "running":
+                        break
+            self.assertNotIn("interrupted", seen)
+            self.assertEqual(jobs.status("p1", "instant-test")["status"], "done")
+
 if __name__ == "__main__":
     unittest.main()

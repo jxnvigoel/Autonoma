@@ -597,9 +597,12 @@ DEV_SCRIPTS = {
         RUN_TESTS,
         final(artifact="story/ST-001", handoff_note="Skeleton: /health, SQLite WAL, seed, backup/restore, Dockerfile."),
     ],
-    # ST-002 round 1: buggy login -> CI red.
+    # ST-002 round 1: buggy login, the developer insists on "done" without running tests. The runtime
+    # sends it back twice (MAX_DONE_PUSHBACKS), then accepts, and CI goes red.
     "ST-002:build:dev1": [
         tools(w("src/auth.py", AUTH_BUGGY), w("src/app.py", APP_V2), w("tests/test_auth.py", TEST_AUTH)),
+        final(artifact="story/ST-002", handoff_note="Login added (did not run tests)."),
+        final(artifact="story/ST-002", handoff_note="Login added (did not run tests)."),
         final(artifact="story/ST-002", handoff_note="Login added (did not run tests)."),
     ],
     # ST-002 round 2: tests green but passwords in plain text -> Tech Lead blocker.

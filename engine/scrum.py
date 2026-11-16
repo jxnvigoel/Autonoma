@@ -663,32 +663,272 @@ Return ONLY valid JSON matching this schema. Do not enclose in backticks or mark
 """
 
 
-def _parse_backlog_json(raw_text: str) -> Optional[Dict[str, Any]]:
-    """Robustly parses backlog JSON from LLM output."""
-    clean = raw_text.strip()
-    if clean.startswith("```"):
-        clean = re.sub(r"^```(?:json)?\s*", "", clean)
-        clean = re.sub(r"\s*```$", "", clean)
-    clean = clean.strip()
-
+def _parse_json_object(raw_text: str) -> Optional[Dict[str, Any]]:
+    """The first complete JSON object in a model answer: reasoning, fences and prose around it are ignored."""
     try:
-        data = json.loads(clean)
-        if isinstance(data, dict) and "stories" in data:
-            return data
-    except Exception:
-        pass
-
-    # Regex search for {"stories": [...]}
-    match = re.search(r"(\{[\s\S]*\"stories\"[\s\S]*\})", raw_text)
-    if match:
+        from llm_client import strip_reasoning
+    except ImportError:
+        from engine.llm_client import strip_reasoning
+    text = strip_reasoning(raw_text or "")
+    text = re.sub(r"```(?:json)?", "", text)
+    decoder = json.JSONDecoder()
+    for m in re.finditer(r"\{", text):
         try:
-            data = json.loads(match.group(1))
-            if isinstance(data, dict) and "stories" in data:
-                return data
-        except Exception:
-            pass
-
+            obj, _ = decoder.raw_decode(text[m.start():])
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            return obj
     return None
+
+
+MUST_HAVE_RE = re.compile(r"\*\*(?:Priority|MoSCoW)\*\*:\s*Must[- ]?have", re.I)
+
+
+def prd_features(prd_text: str) -> List[Dict[str, Any]]:
+    """Feature blocks of the PRD (### Feature F-###: Title) with their priority and acceptance criteria."""
+    out: List[Dict[str, Any]] = []
+    for sec in re.split(r"(?=^###\s*(?:Feature\s*)?`?F-\d+)", prd_text, flags=re.M):
+        m = re.match(r"###\s*(?:Feature\s*)?`?(F-\d+)`?\s*[:\-–]?\s*([^\n]*)", sec)
+        if not m:
+            continue
+        body = re.split(r"^##\s", sec, maxsplit=1, flags=re.M)[0]  # stop at the next top-level section
+        acs: List[Dict[str, str]] = []
+        for am in re.finditer(r"\b(AC-\d{2,4})\b\s*\|?\s*([^\n|]*)", body):
+            if am.group(1) not in {a["id"] for a in acs}:
+                acs.append({"id": am.group(1), "text": am.group(2).strip()})
+        out.append({"id": m.group(1), "title": m.group(2).strip().strip("`*") or m.group(1),
+                    "must_have": bool(MUST_HAVE_RE.search(body)), "body": body.strip(), "acs": acs})
+    return out
+
+
+def feature_trace(arch_text: str, openapi_text: str) -> Dict[str, Dict[str, List[str]]]:
+    """Feature -> endpoints and tables, from the architecture's traceability table, else openapi summaries."""
+    trace: Dict[str, Dict[str, List[str]]] = {}
+    for line in arch_text.splitlines():
+        m = re.match(r"\|\s*\[?(F-\d+)\]?\s*\|([^|]*)\|([^|]*)\|", line)
+        if m:
+            t = trace.setdefault(m.group(1), {"api": [], "tables": []})
+            t["api"] += [a for a in re.findall(r"API-\d+", m.group(2)) if a not in t["api"]]
+            t["tables"] += [x for x in re.findall(r"TBL-\d+", m.group(3)) if x not in t["tables"]]
+    for line in openapi_text.splitlines():
+        if "summary:" in line:
+            fids, apis = re.findall(r"F-\d+", line), re.findall(r"API-\d+", line)
+            for fid in fids:
+                t = trace.setdefault(fid, {"api": [], "tables": []})
+                t["api"] += [a for a in apis if a not in t["api"]]
+    return trace
+
+
+def _api_lines(openapi_text: str) -> Dict[str, str]:
+    """API-### -> 'METHOD /path: summary' from openapi.yaml."""
+    out: Dict[str, str] = {}
+    path, method = "", ""
+    for line in openapi_text.splitlines():
+        pm = re.match(r"^  (/\S*):\s*$", line)
+        if pm:
+            path = pm.group(1)
+            continue
+        mm = re.match(r"^    (get|post|put|patch|delete):\s*$", line)
+        if mm:
+            method = mm.group(1).upper()
+            continue
+        if "summary:" in line and path:
+            for api in re.findall(r"API-\d+", line):
+                out[api] = f"{method} {path}: {line.split('summary:', 1)[1].strip()}"
+    return out
+
+
+_ROLE_SYNONYMS = {"ui": "frontend", "fe": "frontend", "web": "frontend", "client": "frontend",
+                  "be": "backend", "api": "backend", "server": "backend", "fullstack": "backend",
+                  "ops": "devops", "infra": "devops", "test": "qa", "tester": "qa"}
+
+
+class _Owners:
+    """Hands each story to the least-loaded hired agent of its role (Handbook 9.2.4 rule 5)."""
+
+    def __init__(self, roster: List[Dict[str, Any]]):
+        self.by_role: Dict[str, List[str]] = {}
+        for a in roster:
+            self.by_role.setdefault((a.get("role") or "").lower(), []).append(a["id"])
+        self.load: Dict[str, int] = {}
+
+    def role(self, wanted: str, default: str = "backend") -> str:
+        r = (wanted or "").lower().strip()
+        r = _ROLE_SYNONYMS.get(r, r)
+        if r in self.by_role:
+            return r
+        for fallback in (default, "backend", "fullstack", "frontend"):
+            if fallback in self.by_role:
+                return fallback
+        return next(iter(self.by_role), default)
+
+    def assign(self, role: str, points: int) -> str:
+        ids = self.by_role.get(role) or [f"{role}-1"]
+        owner = min(ids, key=lambda i: (self.load.get(i, 0), ids.index(i)))
+        self.load[owner] = self.load.get(owner, 0) + points
+        return owner
+
+
+def _snap_points(p: Any) -> int:
+    try:
+        n = int(round(float(p)))
+    except (TypeError, ValueError):
+        return 3
+    return 1 if n <= 1 else 2 if n == 2 else 3 if n <= 3 else 5
+
+
+FEATURE_STORIES_SYSTEM = """You are the Scrum Master. Split ONE feature into INVEST stories: each one a small
+user-visible slice an agent finishes in a day, testable through the acceptance criteria it cites.
+Return ONLY a JSON object, no prose:
+{"stories": [{"title": "...", "role": "backend|frontend", "points": 1|2|3|5, "ac": ["AC-001"],
+  "api": ["API-001"], "tables": ["TBL-01"], "after": [0], "needs_perf": false}]}
+Rules: 1 to 4 stories. Cite only the AC-, API- and TBL- ids listed for this feature. Every listed AC- lands in
+at least one story. "after" lists the indexes (0-based) of earlier stories in YOUR list that must finish first.
+Points are 1, 2, 3 or 5; split anything bigger. needs_perf is true only for a story with a latency target."""
+
+
+def _feature_prompt(feature: Dict[str, Any], apis: List[str], tables: List[str], api_lines: Dict[str, str],
+                    roles: List[str]) -> str:
+    ac_lines = "\n".join(f"- {a['id']}: {a['text'][:300]}" for a in feature["acs"]) or "- (none listed)"
+    api_txt = "\n".join(f"- {a}: {api_lines.get(a, '')}" for a in apis) or "- (none)"
+    return (f"FEATURE {feature['id']}: {feature['title']}\n\n{feature['body'][:2500]}\n\n"
+            f"ACCEPTANCE CRITERIA:\n{ac_lines}\n\nENDPOINTS:\n{api_txt}\n\nTABLES: {', '.join(tables) or '(none)'}\n"
+            f"ROLES ON THE TEAM: {', '.join(roles)}\n")
+
+
+def _fallback_feature_stories(feature: Dict[str, Any], apis: List[str], tables: List[str],
+                              roles: List[str]) -> List[Dict[str, Any]]:
+    """Stories straight from the PRD entry when the model's split is unusable: API + storage, then the screen."""
+    acs = [a["id"] for a in feature["acs"]]
+    out = [{"title": f"{feature['title']}: endpoint and storage", "role": "backend", "points": 3,
+            "ac": acs, "api": apis, "tables": tables, "after": [], "needs_perf": False}]
+    if "frontend" in roles:
+        out.append({"title": f"{feature['title']}: screen and client validation", "role": "frontend", "points": 2,
+                    "ac": acs, "api": apis, "tables": [], "after": [0], "needs_perf": False})
+    return out
+
+
+def build_backlog(session_id: str, prd_text: str, arch_text: str, openapi_text: str,
+                  roster: List[Dict[str, Any]], force_provider: Optional[str] = None,
+                  force_model: Optional[str] = None) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    docs/backlog.json, one feature at a time (Handbook 9.2.4). The model splits each feature into stories with
+    a small JSON answer; code numbers them, gives owners by load, records dependencies, checks every citation
+    and makes sure every acceptance criterion lands in a story. ST-001 is the walking skeleton (rule 1).
+    """
+    features = prd_features(prd_text)
+    if not features:
+        raise ValueError("docs/prd.md has no '### Feature F-###' sections to split into stories.")
+    trace = feature_trace(arch_text, openapi_text)
+    api_lines = _api_lines(openapi_text)
+    known_apis = set(re.findall(r"API-\d+", arch_text + "\n" + openapi_text))
+    known_tables = set(re.findall(r"TBL-\d+", arch_text))
+    owners = _Owners(roster)
+    roles = sorted(owners.by_role) or ["backend"]
+    notes: List[str] = []
+
+    all_tables = sorted(known_tables)
+    first_api = next(iter(trace.get(features[0]["id"], {}).get("api", [])), None)
+    skel_role = owners.role("devops" if "devops" in owners.by_role else "backend")
+    stories: List[Dict[str, Any]] = [{
+        "id": "ST-001",
+        "title": "Walking skeleton: app scaffold, database migrations, health check and one request from the UI "
+                 "through the API to the database, with CI running",
+        "role": skel_role, "owner": owners.assign(skel_role, 3), "points": 3,
+        "refs": {"features": [], "ac": [], "api": [first_api] if first_api else [], "tables": all_tables},
+        "depends_on": [], "needs_perf": False,
+        "definition_of_done": ["App starts and the health check answers", "Migrations create every table in docs/schema.md",
+                               "CI runs lint, type checks and tests green", "Tech Lead approved"],
+    }]
+
+    for feature in features:
+        fid = feature["id"]
+        apis = [a for a in trace.get(fid, {}).get("api", []) if a in known_apis or not known_apis]
+        tables = [t for t in trace.get(fid, {}).get("tables", []) if t in known_tables or not known_tables]
+        feature_acs = [a["id"] for a in feature["acs"]]
+        drafts: Optional[List[Dict[str, Any]]] = None
+        for attempt in range(2):
+            try:
+                raw, _meta = query_llm_with_meta(
+                    prompt=_feature_prompt(feature, apis, tables, api_lines, roles)
+                    + ("\nYour previous answer was not a JSON object with a 'stories' array. Return only that JSON."
+                       if attempt else ""),
+                    system=FEATURE_STORIES_SYSTEM, role="scrum", session_id=session_id,
+                    task_id=f"scrum_backlog_{fid}", temperature=0.2, max_tokens=1500,
+                    force_provider=force_provider, force_model=force_model)
+            except Exception as e:  # quota, network: this feature falls back to the PRD-shaped split below
+                logger.warning(f"Scrum Master call for {fid} failed: {e}")
+                break
+            data = _parse_json_object(raw)
+            if data and isinstance(data.get("stories"), list) and data["stories"]:
+                drafts = [d for d in data["stories"] if isinstance(d, dict) and str(d.get("title") or "").strip()]
+                if drafts:
+                    break
+        if not drafts:
+            drafts = _fallback_feature_stories(feature, apis, tables, roles)
+            notes.append(f"{fid}: the model's split could not be read, so its stories were built from the PRD entry.")
+
+        base = len(stories)
+        made: List[Dict[str, Any]] = []
+        for i, d in enumerate(drafts[:6]):
+            role = owners.role(str(d.get("role") or "backend"))
+            points = _snap_points(d.get("points"))
+            ac = [a for a in (d.get("ac") or []) if a in feature_acs]
+            api = [a for a in (d.get("api") or []) if a in apis]
+            tbl = [t for t in (d.get("tables") or []) if t in tables]
+            after = [int(x) for x in (d.get("after") or []) if str(x).isdigit() and int(x) < i]
+            sid = f"ST-{base + i + 1:03d}"
+            made.append({
+                "id": sid, "title": str(d["title"]).strip()[:160], "role": role, "owner": "", "points": points,
+                "refs": {"features": [fid], "ac": ac, "api": api, "tables": tbl},
+                "depends_on": ["ST-001"] + [f"ST-{base + j + 1:03d}" for j in after],
+                "needs_perf": bool(d.get("needs_perf")),
+            })
+        # Endpoints and tables are written by a backend seat (the frontend's write scope excludes them): a
+        # feature with endpoints but no backend story gets one, and its screens wait for it.
+        if (apis or tables) and not any(st["role"] != "frontend" for st in made):
+            be_role = owners.role("backend")
+            if be_role != "frontend":
+                sid = f"ST-{base + len(made) + 1:03d}"
+                made.insert(0, {"id": sid, "title": f"{feature['title']}: endpoint and storage", "role": be_role,
+                                "owner": "", "points": 3,
+                                "refs": {"features": [fid], "ac": list(feature_acs), "api": list(apis),
+                                         "tables": list(tables)},
+                                "depends_on": ["ST-001"], "needs_perf": False})
+                for st in made[1:]:
+                    st["depends_on"].append(sid)
+                # Renumber so ids follow list order (validators and the plan read them in order).
+                remap = {st["id"]: f"ST-{base + k + 1:03d}" for k, st in enumerate(made)}
+                for st in made:
+                    st["id"] = remap[st["id"]]
+                    st["depends_on"] = [remap.get(d, d) for d in st["depends_on"]]
+        # Every acceptance criterion of the feature lands in some story (rule 3).
+        covered = {a for st in made for a in st["refs"]["ac"]}
+        for ac in feature_acs:
+            if ac not in covered:
+                target = next((st for st in made if st["role"] != "frontend"), made[0])
+                target["refs"]["ac"].append(ac)
+        # A feature's endpoints are built by some story too.
+        used_api = {a for st in made for a in st["refs"]["api"]}
+        for api in apis:
+            if api not in used_api:
+                next((st for st in made if st["role"] != "frontend"), made[0])["refs"]["api"].append(api)
+        for st in made:
+            refs = st["refs"]
+            if not refs["ac"]:  # a story with no criterion cannot be tested: it serves the feature's criteria
+                refs["ac"] = list(feature_acs)
+            if not refs["api"] and st["role"] in ("frontend", "backend"):
+                refs["api"] = list(apis)
+            if not refs["tables"] and st["role"] == "backend":
+                refs["tables"] = list(tables)
+            st["owner"] = owners.assign(st["role"], st["points"])
+            st["definition_of_done"] = ([f"{a} has a passing automated test" for a in st["refs"]["ac"]]
+                                        + ["Tech Lead approved"]
+                                        + (["API matches docs/openapi.yaml"] if st["refs"]["api"] else []))
+        stories.extend(made)
+
+    return {"project": session_id, "generated_at": datetime.now(timezone.utc).isoformat(), "stories": stories}, notes
 
 
 def generate_backlog_and_plan(
@@ -756,106 +996,30 @@ def generate_backlog_and_plan(
                     "seat_id": sid
                 })
 
-    # Prepare Prompt for Scrum Master
-    roster_summary = "\n".join([f"- Agent `{a['id']}` (Role: `{a['role']}`, Seat: `{a.get('seat_id')}`)" for a in agents_roster])
-    seats_summary = json.dumps(team_plan.get("seats", []), indent=2)
+    openapi_text = ""
+    openapi_path = os.path.join(docs_dir, "openapi.yaml")
+    if os.path.exists(openapi_path):
+        with open(openapi_path, "r", encoding="utf-8") as f:
+            openapi_text = f.read()
 
-    prompt = f"""Generate the comprehensive project backlog for project '{session_id}'.
+    backlog_data, notes = build_backlog(session_id, prd_text, arch_text, openapi_text, agents_roster,
+                                        force_provider=force_provider, force_model=force_model)
 
-INPUT ARTIFACTS:
-1. PRD (Features, MoSCoW priorities, Acceptance Criteria AC-###):
-{prd_text[:6000]}
-
-2. Architecture (Build order, Walking skeleton, APIs, Tables):
-{arch_text[:5000]}
-
-3. Team Plan Seats:
-{seats_summary}
-
-4. Hired Agent Roster:
-{roster_summary}
-
-INSTRUCTIONS:
-1. Story ST-001 MUST be the walking skeleton proving the architecture (no dependencies).
-2. Every Must-have AC-### from PRD MUST be covered by at least one story.
-3. Size each story with Fibonacci points <= 5 (1, 2, 3, or 5).
-4. Assign owners from the Hired Agent Roster matching the role.
-5. Record clean DAG dependencies without cycles.
-6. Set needs_perf: true on performance-critical stories.
-7. Return ONLY valid JSON matching the schema.
-"""
-
-    max_retries = 3
-    last_errors = []
-    backlog_data = None
-
-    for attempt in range(1, max_retries + 1):
-        attempt_prompt = prompt
-        if last_errors:
-            err_text = "\n".join([f"- {e}" for e in last_errors])
-            attempt_prompt += f"\n\nPREVIOUS ATTEMPT REJECTED BY CODE VALIDATORS:\n{err_text}\nFix ALL validation errors in your new output!"
-
-        logger.info(f"Running Scrum Master LLM generation for {session_id} (Attempt {attempt}/{max_retries})...")
-
-        raw_resp, meta = query_llm_with_meta(
-            prompt=attempt_prompt,
-            system=SCRUM_MASTER_SYSTEM_PROMPT,
-            role="scrum",
-            session_id=session_id,
-            task_id="scrum_backlog_generation",
-            temperature=0.2,
-            max_tokens=4000,
-            force_provider=force_provider,
-            force_model=force_model
-        )
-
-        parsed = _parse_backlog_json(raw_resp)
-        if not parsed:
-            last_errors = ["Scrum Master output could not be parsed as valid JSON with a 'stories' array."]
-            continue
-
-        # Run full validation suite
-        v_errors = []
-        ok, errs = validate_backlog_schema(parsed)
-        if not ok:
-            v_errors.extend(errs)
-
-        ok, errs = validate_backlog_points(parsed)
-        if not ok:
-            v_errors.extend(errs)
-
-        ok, errs = validate_backlog_must_have_ac_coverage(parsed, prd_text)
-        if not ok:
-            v_errors.extend(errs)
-
-        ok, errs = validate_backlog_dependency_cycles(parsed)
-        if not ok:
-            v_errors.extend(errs)
-
-        ok, errs = validate_backlog_walking_skeleton(parsed)
-        if not ok:
-            v_errors.extend(errs)
-
-        ok, errs = validate_backlog_owners_in_roster(parsed, agents_roster)
-        if not ok:
-            v_errors.extend(errs)
-
-        ok, errs = validate_backlog_refs_exist(parsed, prd_text, arch_text)
-        if not ok:
-            v_errors.extend(errs)
-
-        if not v_errors:
-            backlog_data = parsed
-            logger.info(f"Scrum Master backlog validation PASSED on attempt {attempt}.")
-            break
-        else:
-            last_errors = v_errors
-            logger.warning(f"Scrum Master backlog validation failed on attempt {attempt}: {v_errors}")
-
-    if not backlog_data:
-        raise ValueError(
-            f"Scrum Master failed to produce a valid backlog after {max_retries} attempts. Errors: {last_errors}"
-        )
+    v_errors: List[str] = []
+    for check in (validate_backlog_schema, validate_backlog_points, validate_backlog_dependency_cycles,
+                  validate_backlog_walking_skeleton):
+        ok, errs = check(backlog_data)
+        v_errors.extend(errs)
+    for check, arg in ((validate_backlog_must_have_ac_coverage, prd_text),
+                       (validate_backlog_owners_in_roster, agents_roster)):
+        ok, errs = check(backlog_data, arg)
+        v_errors.extend(errs)
+    ok, errs = validate_backlog_refs_exist(backlog_data, prd_text, arch_text + "\n" + openapi_text)
+    v_errors.extend(errs)
+    if v_errors:
+        raise ValueError(f"Scrum Master backlog failed the code checks: {v_errors[:8]}")
+    if notes:
+        backlog_data["notes"] = notes
 
     # 1. Save docs/backlog.json
     backlog_file = os.path.join(docs_dir, "backlog.json")

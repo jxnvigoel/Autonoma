@@ -48,6 +48,10 @@ import {
   apiGetScrumPlan,
   apiGetScrumGantt,
   apiGetReadinessStatus,
+  apiGetAgentMessages,
+  apiSendAgentMessage,
+  ChatMessage,
+  DeliveryAgent,
 } from "../../lib/engine";
 
 interface CommandCenterProps {
@@ -208,8 +212,22 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
     }
   };
 
-  const currentMessages = isBA ? baMessages : pmMessages;
-  const isAgentThinking = isBA ? isBaSending : isPmSending;
+  // The BA and PM have their own sessions; every other agent has its own thread (engine/agent_chat.py).
+  const deliveryAgent = !isBA && !isPM ? (activeAgent as DeliveryAgent) : null;
+  const [agentThreads, setAgentThreads] = useState<Record<string, ChatMessage[]>>({});
+  const [agentSending, setAgentSending] = useState(false);
+  const [agentChatError, setAgentChatError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionId || !deliveryAgent) return;
+    setAgentChatError(null);
+    apiGetAgentMessages(sessionId, deliveryAgent)
+      .then((r) => mountedRef.current && setAgentThreads((t) => ({ ...t, [deliveryAgent]: r.messages || [] })))
+      .catch(() => mountedRef.current && setAgentThreads((t) => ({ ...t, [deliveryAgent]: [] })));
+  }, [sessionId, deliveryAgent]);
+
+  const currentMessages = isBA ? baMessages : isPM ? pmMessages : (agentThreads[activeAgent] || []);
+  const isAgentThinking = isBA ? isBaSending : isPM ? isPmSending : agentSending;
 
   // Agent meta
   const agentMeta = {
@@ -310,6 +328,24 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
       await sendBaMessage(trimmed);
     } else if (isPM) {
       await sendPm(trimmed);
+    } else if (deliveryAgent && sessionId) {
+      const agent = deliveryAgent;
+      const pending: ChatMessage = { id: `pending-${Date.now()}`, role: "user", content: trimmed };
+      setAgentThreads((t) => ({ ...t, [agent]: [...(t[agent] || []), pending] }));
+      setAgentSending(true);
+      setAgentChatError(null);
+      try {
+        const res = await apiSendAgentMessage(sessionId, agent, trimmed);
+        if (mountedRef.current) setAgentThreads((t) => ({ ...t, [agent]: res.messages }));
+      } catch (err: any) {
+        if (mountedRef.current) {
+          setAgentThreads((t) => ({ ...t, [agent]: (t[agent] || []).filter((m) => m.id !== pending.id) }));
+          setInputMessage(trimmed);
+          setAgentChatError(err?.message || "The agent could not answer.");
+        }
+      } finally {
+        if (mountedRef.current) setAgentSending(false);
+      }
     }
   };
 
@@ -894,10 +930,10 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
           )}
 
           {/* Error Banner */}
-          {pmError && isPM && (
+          {((pmError && isPM) || (agentChatError && deliveryAgent)) && (
             <div className="m-4 p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{pmError}</span>
+              <span>{isPM ? pmError : agentChatError}</span>
             </div>
           )}
 
@@ -936,7 +972,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                       : "Click 'Execute Recruiter Hiring Loop' above to staff agents and open Gate 2."
                     : isPM
                     ? "Click 'Initialize PM & Draft PRD' or ask a question to begin."
-                    : "Type a response below to talk with your Business Analyst."}
+                    : `Type a message below to talk with your ${agentMeta.role}.`}
                 </p>
               </div>
             ) : (
@@ -1143,6 +1179,8 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     criticalPath={planData?.critical_path}
                     loadBalance={planData?.load_balance}
                     gantt={ganttData}
+                    hasBacklog={Boolean(backlogData?.stories?.length)}
+                    onOpenBacklog={() => setScrumViewTab("backlog")}
                     onProceedToReadiness={() => {
                       setScrumViewTab("readiness");
                       onSwitchAgent("tech-lead");
@@ -1156,6 +1194,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     isExecutingReview={isReadinessGenerating}
                     onExecuteReview={handleRunReadinessReview}
                     canStartReview={Boolean(backlogData?.stories?.length)}
+                    onOpenBacklog={() => setScrumViewTab("backlog")}
                     onProceedToBuild={() => {
                       setScrumViewTab("build");
                       onSwitchAgent("tech-lead");
@@ -1227,6 +1266,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     onExecuteReview={handleRunReadinessReview}
                     canStartReview={Boolean(backlogData?.stories?.length)}
                     onProceedToBuild={() => setScrumViewTab("build")}
+                    onOpenBacklog={() => onSwitchAgent("scrum")}
                   />
                 )}
                 {scrumViewTab === "backlog" && (
@@ -1246,6 +1286,8 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
                     criticalPath={planData?.critical_path}
                     loadBalance={planData?.load_balance}
                     gantt={ganttData}
+                    hasBacklog={Boolean(backlogData?.stories?.length)}
+                    onOpenBacklog={() => setScrumViewTab("backlog")}
                     onProceedToReadiness={() => setScrumViewTab("readiness")}
                   />
                 )}

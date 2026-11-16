@@ -1412,7 +1412,44 @@ def score_architecture_deterministically(
     }
 
 
-def adr_context_for_judge(docs_dir: str, per_adr_chars: int = 1400) -> str:
+def normalize_quote(text: str) -> str:
+    """Text as compared when checking that a Judge quote exists: the Judge re-types quotes with added quotation
+    marks, bold, code ticks and plain hyphens, so an exact comparison throws real findings away."""
+    t = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2212]", "-", str(text).lower())
+    t = re.sub(r"[\u00a0\u202f\u2009]", " ", t)
+    t = re.sub(r"<br\s*/?>", " ", t)
+    t = re.sub(r"[*`\"'\u201c\u201d\u2018\u2019\u2026]", "", t)
+    return re.sub(r"\s+", " ", t).strip(" .;:")
+
+
+def _compact_adr(body: str, cell_chars: int = 150, section_chars: int = 420) -> str:
+    """Shortens each options-table cell (but never the option's name) and each section's prose, so every option
+    and every section fits in the Judge's view. Cutting the file at a fixed length dropped Option B when Option A's
+    row was long, and cut off Consequences, which the Judge then failed as unfinished."""
+    def cell(c: str, i: int) -> str:
+        c = re.sub(r"<br\s*/?>", " ", c).strip()
+        return c if i == 0 or len(c) <= cell_chars else c[:cell_chars].rstrip() + "…"
+    lines = []
+    for line in body.splitlines():
+        if line.lstrip().startswith("|") and not re.match(r"^\s*\|[\s:|-]+\|\s*$", line):
+            cells = line.strip().strip("|").split("|")
+            line = "| " + " | ".join(cell(c, i) for i, c in enumerate(cells)) + " |"
+        lines.append(line)
+    out, used = [], 0
+    for line in lines:
+        if line.startswith("#"):
+            used = 0
+        elif not line.lstrip().startswith("|"):
+            if used >= section_chars:
+                continue
+            if used + len(line) > section_chars:
+                line = line[:section_chars - used].rstrip() + " [section shortened for review]"
+            used += len(line)
+        out.append(line)
+    return "\n".join(out)
+
+
+def adr_context_for_judge(docs_dir: str, per_adr_chars: int = 3800) -> str:
     """The ADR files as the Judge should read them: each decision's text, without the generation metadata."""
     out = ""
     adr_dir = os.path.join(docs_dir, "adr")
@@ -1422,7 +1459,7 @@ def adr_context_for_judge(docs_dir: str, per_adr_chars: int = 1400) -> str:
         with open(os.path.join(adr_dir, fn), "r", encoding="utf-8", errors="ignore") as f:
             body = re.sub(r"<!--.*?-->", "", f.read(), flags=re.S)
         body = re.sub(r"^> \*\*Artifact Provenance\*\*[^\n]*$", "", body, flags=re.M).strip()
-        out += f"\n--- {fn} ---\n{body[:per_adr_chars]}\n"
+        out += f"\n--- {fn} ---\n{_compact_adr(body)[:per_adr_chars]}\n"
     return out
 
 
@@ -1494,7 +1531,8 @@ Return ONLY valid JSON matching the Judge schema."""
     sec_ops = _extract_arch_block(arch_text, "## 9. Security", [])
 
     chunks = [
-        ("chunk_1_stack_adrs", sec_overview or arch_text[:len(arch_text)//3], ["nfr_coverage", "capacity_and_scaling", "adr_tradeoffs_and_alternatives", "hallucination_and_grounding"]),
+        ("chunk_1_stack_adrs", sec_overview or arch_text[:len(arch_text)//3], ["nfr_coverage", "capacity_and_scaling", "hallucination_and_grounding"]),
+        ("chunk_1b_adr_files", "", ["adr_tradeoffs_and_alternatives"]),
         ("chunk_2_api_schema", sec_data_api or arch_text[len(arch_text)//3:2*len(arch_text)//3], ["traceability_f_to_endpoints_and_tables", "api_design_and_auth"]),
         ("chunk_3_stride_ops", sec_ops or arch_text[2*len(arch_text)//3:], ["security_stride", "walking_skeleton_and_team_plan"])
     ]
@@ -1517,17 +1555,49 @@ Return ONLY valid JSON matching the Judge schema."""
                                         str(sid_for_docs), "docs")
         adr_context = adr_context_for_judge(docs_dir) if docs_dir else ""
         api_context = ""
-        if docs_dir and os.path.exists(os.path.join(docs_dir, "openapi.yaml")):
+        # Section 6 written by code from openapi.yaml already lists every endpoint; only older documents need this.
+        if docs_dir and os.path.exists(os.path.join(docs_dir, "openapi.yaml")) and "API summary (from docs/openapi.yaml" not in arch_text:
             with open(os.path.join(docs_dir, "openapi.yaml"), "r", encoding="utf-8", errors="ignore") as f:
                 api_context = "\n".join(l.strip() for l in f if re.search(r"summary:|^\s{2}/", l))[:1500]
         adr_index = "; ".join(f"{m.group(1)}: {m.group(2).strip()}" for m in re.finditer(r"--- (ADR-\d+)\.md ---\n#\s*ADR-\d+:?\s*([^\n]*)", adr_context))
         adr_line = f"\nADRS THAT EXIST (docs/adr/): {adr_index}\n" if adr_index else ""
+        # The document cites the client's answers as [Q-###] (users, load, hosting limits); without them the Judge
+        # calls a correctly cited number ungrounded.
+        qa_map = (parsed_ba or {}).get("qa_map") or {}
+        client_answers = " ".join(f"[{k}] {v.get('answer', '')}" for k, v in qa_map.items() if isinstance(v, dict))[:2500]
+        answers_block = f"\nCLIENT ANSWERS (the source the [Q-###] citations point to):\n{client_answers}\n" if client_answers else ""
         extra_by_chunk = {
-            "chunk_1_stack_adrs": f"\nADR DOCUMENTS (docs/adr/):{adr_context or ' none written yet'}\n" if adr_context or docs_dir else "",
+            "chunk_1_stack_adrs": answers_block + adr_line,
             "chunk_2_api_schema": (f"\nSCHEMA (docs/schema.md, defines the TBL- ids):\n{(schema_text or '')[:2500]}\n"
                                    f"\nAPI ENDPOINTS (docs/openapi.yaml):\n{api_context}\n{adr_line}"),
             "chunk_3_stride_ops": adr_line,
         }
+
+        # A claim quoted from an ADR is real: it is checked against everything the Judge was shown.
+        judged_text = normalize_quote(arch_text + "\n" + adr_context)
+
+        # The ADR files are judged as their own chunk: together with sections 1-4 the prompt is over Groq's
+        # per-minute token limit for one request.
+        chunks[1] = ("chunk_1b_adr_files", "ADR DOCUMENTS (docs/adr/; long table cells and prose are abbreviated for "
+                     "length: '\u2026' and '[section shortened for review]' mark text left out of this view, not missing "
+                     f"from the file, so do not score a section as unfinished for them):{adr_context or ' none written yet'}",
+                     chunks[1][2])
+
+        # Every chunk is told which requirement ids exist: the NFRs are listed in section 1, so a chunk holding
+        # sections 9-12 otherwise reports each correct [NFR-..] citation as an undefined id.
+        nfr_list = "; ".join(f"{n.get('id')} {n.get('nfr') or n.get('category') or ''}: {str(n.get('target', ''))[:80]}"
+                             for n in (parsed_ba or {}).get("non_functional_reqs") or [] if isinstance(n, dict) and n.get("id"))
+        feature_ids = ", ".join(dict.fromkeys(re.findall(r"\bF-\d{3}\b", prd_text)))
+        # Assumptions, goals, open questions and the rest are cited too (ADRs cite [ASM-01], [G-02]).
+        other_ids = "; ".join(f"{item.get('id')} {str(item.get(label, ''))[:60]}"
+                              for key, label in (("assumptions", "text"), ("discovered_goals", "goal"),
+                                                 ("open_questions", "text"), ("personas", "persona"),
+                                                 ("discovered_metrics", "metric"), ("discovered_non_goals", "non_goal"),
+                                                 ("functional_reqs", "feature"))
+                              for item in (parsed_ba or {}).get(key) or [] if isinstance(item, dict) and item.get("id"))
+        requirement_ids = (f"\nREQUIREMENT IDS THAT EXIST (defined in the PRD; citing them is correct): "
+                           f"{nfr_list or '(no NFRs listed)'}; features {feature_ids or '(none)'}"
+                           f"{'; ' + other_ids if other_ids else ''}\n")
 
         all_chunks_ok = True
         for chunk_id, chunk_content, target_criteria in chunks:
@@ -1539,7 +1609,7 @@ TARGET RUBRIC CRITERIA:
 
 DISCOVERY / PRD CONTEXT:
 {prd_text[:800]}
-
+{requirement_ids}
 CODE AUDIT FINDINGS ({len(code_unsupported)} total; first 20 shown):
 {json.dumps(code_unsupported[:20], indent=1)}
 
@@ -1575,8 +1645,8 @@ Return ONLY valid JSON matching the Judge schema."""
                     for u in parsed_chunk.get("unsupported_claims", []):
                         if isinstance(u, dict) and not any(cu.get("text") == u.get("text") for cu in chunk_unsupported):
                             claimed_text = u.get("text", "").strip()
-                            if claimed_text and len(claimed_text) > 3 and claimed_text.lower() not in arch_text.lower():
-                                logger.info(f"Ignored hallucinated Judge claim '{claimed_text}' not in arch text")
+                            if claimed_text and len(claimed_text) > 3 and normalize_quote(claimed_text) not in judged_text:
+                                logger.info(f"Ignored hallucinated Judge claim '{claimed_text}' not in the judged documents")
                                 continue
                             chunk_unsupported.append(u)
                 else:

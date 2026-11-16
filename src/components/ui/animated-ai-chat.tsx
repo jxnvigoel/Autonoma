@@ -201,7 +201,8 @@ export function AnimatedAIChat({
       setEngineStatus(res);
       if (res.status === "starting") {
         setEngineError(res.message);
-      } else if (res.status === "error" || !res.ollama_online || !res.model_ready) {
+      } else if (res.status === "error" || !res.model_ready) {
+        // Ollama being off is not an error while Groq serves the models; the header shows its state.
         setEngineError(res.message);
       } else {
         setEngineError(null);
@@ -359,7 +360,8 @@ export function AnimatedAIChat({
     setShowRequirementsModal(true);
   };
 
-  const displayError = engineError || contextError;
+  // The error from what the user just did comes first; an engine notice must not hide it.
+  const displayError = contextError || engineError;
 
   const handleSendToPM = async () => {
     setIsSendingToPM(true);

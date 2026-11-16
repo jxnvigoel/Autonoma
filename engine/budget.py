@@ -349,7 +349,12 @@ def get_gate2_state(session_id: str, db_path: Optional[str] = None) -> Dict[str,
         except Exception:
             gate2_state = {}
 
-    has_team_plan = os.path.exists(team_plan_file)
+    # HR's plan, not the Architect's draft of the same file (checklist.hr_planned).
+    try:
+        from checklist import hr_planned
+    except ImportError:
+        from engine.checklist import hr_planned
+    has_team_plan = os.path.exists(team_plan_file) and hr_planned(os.path.dirname(team_plan_file))
     has_staffing_report = os.path.exists(staffing_report_file)
 
     # Check database approvals table

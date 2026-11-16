@@ -116,7 +116,7 @@ def compute_traceability_matrix(
         fid = f_match.group(1)
         title_match = re.search(r"###\s*(?:Feature\s*)?`?F-\d+`?:\s*([^\n\r]+)", sec)
         title = title_match.group(1).strip() if title_match else fid
-        is_must_have = bool(re.search(r"\*\*(?:Priority|MoSCoW)\*\*:\s*Must-have", sec, re.IGNORECASE))
+        is_must_have = bool(re.search(r"\*\*(?:Priority|MoSCoW)\*\*:\s*Must[- ]?have", sec, re.IGNORECASE))
         acs = re.findall(r"\b(AC-\d{2,4})\b", sec)
         features.append({
             "id": fid,
@@ -260,6 +260,38 @@ At the very end of your review, include a JSON block with the machine-readable v
 """
 
 
+def _parse_verdict(raw: str) -> Tuple[Optional[str], List[str], List[str]]:
+    """The review's verdict and its own gaps, from the closing JSON block or a 'Verdict:' line."""
+    text = raw or ""
+    blocks = re.findall(r"\{[^{}]*\"verdict\"[^{}]*\}", text, re.S)
+    for block in reversed(blocks):
+        try:
+            data = json.loads(block)
+        except ValueError:
+            continue
+        v = str(data.get("verdict", "")).strip().lower().replace("-", "_").replace(" ", "_")
+        if v in ("ready", "not_ready"):
+            as_list = lambda x: [str(i) for i in x] if isinstance(x, list) else []
+            return v, as_list(data.get("gaps")), as_list(data.get("contradictions"))
+    m = re.findall(r"verdict\W{0,6}(not[ _-]?ready|ready)\b", text, re.I)
+    if m:
+        return ("not_ready" if "not" in m[-1].lower() else "ready"), [], []
+    return None, [], []
+
+
+def _matrix_markdown(matrix: Dict[str, Any], verdict: str, gaps: List[str], contradictions: List[str]) -> str:
+    """The orchestrator's traceability table, written by code under the Tech Lead's text."""
+    lines = ["## Orchestrator traceability (computed by code)", "",
+             "| Feature | Must-have | Endpoints | Tables | Stories |", "|---|---|---|---|---|"]
+    for row in matrix.get("features", []):
+        lines.append(f"| {row['feature_id']} {row['title']} | {'yes' if row['must_have'] else 'no'} | "
+                     f"{', '.join(row['apis']) or '-'} | {', '.join(row['tables']) or '-'} | "
+                     f"{', '.join(row['stories']) or '-'} |")
+    lines += ["", f"**Verdict recorded: {verdict}**", ""]
+    lines += [f"- Gap: {g}" for g in gaps] + [f"- Contradiction: {c}" for c in contradictions]
+    return "\n".join(lines)
+
+
 def run_readiness_review(
     session_id: str,
     force_provider: Optional[str] = None,
@@ -325,52 +357,68 @@ def run_readiness_review(
         "sample_chains": matrix_info["features"][:4]
     }, indent=2)
 
+    stories_digest = "\n".join(
+        f"- {st.get('id')} [{st.get('role')}, {st.get('points')} pts] {st.get('title')} | "
+        f"refs {json.dumps(st.get('refs', {}), separators=(',', ':'))} | after {st.get('depends_on', [])}"
+        for st in backlog_data.get("stories", [])[:30])
     prompt = f"""Conduct the pre-build readiness review for project '{session_id}'.
 
 INPUT DIGESTS:
 1. PRD Core:
-{prd_text[:4000]}
+{prd_text[:3000]}
 
 2. Architecture Overview & ADRs:
-{arch_text[:4000]}
+{arch_text[:3000]}
 
 3. Backlog Stories:
-{json.dumps(backlog_data.get('stories', [])[:10], indent=2)}
+{stories_digest}
 
 4. Orchestrator-Computed Traceability & Gaps:
-{matrix_summary_json}
+{matrix_summary_json[:2500]}
 
 Follow the seven handbook sections. Be thorough, cite specific IDs, and render your verdict ('ready' or 'not_ready').
+Only list a gap an engineer would truly have to guess; name the missing item and the story it blocks.
+End with the JSON block: {{"verdict": "...", "gaps": ["..."], "contradictions": ["..."]}}.
 """
 
     logger.info(f"Running Tech Lead high-tier LLM readiness review for {session_id}...")
 
-    raw_resp, meta = query_llm_with_meta(
-        prompt=prompt,
-        system=TECH_LEAD_READINESS_SYSTEM_PROMPT,
-        role="tech-lead",
-        session_id=session_id,
-        task_id="tech_lead_readiness_review",
-        temperature=0.1,
-        max_tokens=4000,
-        force_provider=force_provider,
-        force_model=force_model
-    )
+    raw_resp, meta, verdict, llm_gaps, llm_contradictions = "", {}, None, [], []
+    for attempt in range(2):
+        raw_resp, meta = query_llm_with_meta(
+            prompt=prompt + ("\nYour previous answer had no readable verdict. End with the JSON block." if attempt else ""),
+            system=TECH_LEAD_READINESS_SYSTEM_PROMPT,
+            role="tech-lead",
+            session_id=session_id,
+            task_id="tech_lead_readiness_review",
+            temperature=0.1,
+            max_tokens=3000,
+            force_provider=force_provider,
+            force_model=force_model
+        )
+        verdict, llm_gaps, llm_contradictions = _parse_verdict(raw_resp)
+        if verdict:
+            break
 
-    # Parse verdict from LLM output. Fail closed: no explicit "ready" means not ready.
-    verdict = "not_ready"
-    if re.search(r'"verdict":\s*"not_ready"', raw_resp, re.IGNORECASE) or "verdict: not_ready" in raw_resp.lower():
+    # Fail closed: no explicit "ready" means not ready, and the review says why.
+    if not verdict:
         verdict = "not_ready"
-    elif re.search(r'"verdict":\s*"ready"', raw_resp, re.IGNORECASE) or "verdict: ready" in raw_resp.lower():
-        verdict = "ready"
+        llm_gaps = ["The Tech Lead's answer had no readable verdict; run the readiness review again."]
     if meta.get("is_degraded"):
         verdict = "not_ready"  # a degraded reviewer cannot unlock the build
+        llm_gaps = llm_gaps + ["The review was answered by a fallback model, which cannot unlock the build."]
+    if verdict == "not_ready" and not (computed_gaps or computed_contradictions or llm_gaps or llm_contradictions):
+        llm_gaps = ["The Tech Lead said not ready without naming a gap; see docs/readiness.md."]
 
     # Enforce deterministic validator rule: If gaps or contradictions exist, verdict CANNOT be ready
     ok, v_errs = validate_readiness_review_verdict(verdict, computed_gaps, computed_contradictions)
     if not ok:
         logger.warning(f"Tech Lead LLM returned '{verdict}' but code detected unresolved gaps: {v_errs}")
         verdict = "not_ready"
+    if verdict == "not_ready":
+        computed_gaps = computed_gaps + [g for g in llm_gaps if g not in computed_gaps]
+        computed_contradictions = computed_contradictions + [c for c in llm_contradictions
+                                                             if c not in computed_contradictions]
 
     is_passed = 1 if verdict == "ready" else 0
     score = 1.0 if verdict == "ready" else 0.0
@@ -379,7 +427,8 @@ Follow the seven handbook sections. Be thorough, cite specific IDs, and render y
     readiness_file = os.path.join(docs_dir, "readiness.md")
     stamp = f"\n\n<!-- Assembled by Tech Lead LLM ({meta.get('provider', 'cloud')}:{meta.get('model', 'high-tier')}) at {datetime.now(timezone.utc).isoformat()} -->\n"
     with open(readiness_file, "w", encoding="utf-8") as f:
-        f.write(raw_resp.strip() + stamp)
+        f.write((raw_resp.strip() or "# Pre-Build Readiness Review\n\n(The Tech Lead returned no text.)")
+                + "\n\n" + _matrix_markdown(matrix_info, verdict, computed_gaps, computed_contradictions) + stamp)
 
     # 5. Persist to SQLite reviews table (Handbook 24.1)
     init_reviews_db(db_path)

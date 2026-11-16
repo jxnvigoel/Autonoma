@@ -19,6 +19,8 @@ interface ReadinessViewerProps {
   onExecuteReview?: () => void;
   canStartReview?: boolean;
   onProceedToBuild?: () => void;
+  /** Opens the Scrum Master, whose backlog this review needs first. */
+  onOpenBacklog?: () => void;
 }
 
 export const ReadinessViewer: React.FC<ReadinessViewerProps> = ({
@@ -28,6 +30,7 @@ export const ReadinessViewer: React.FC<ReadinessViewerProps> = ({
   onExecuteReview,
   canStartReview = false,
   onProceedToBuild,
+  onOpenBacklog,
 }) => {
   const [activeTab, setActiveTab] = useState<"summary" | "matrix" | "gaps" | "markdown">("summary");
   const [copied, setCopied] = useState(false);
@@ -61,6 +64,26 @@ export const ReadinessViewer: React.FC<ReadinessViewerProps> = ({
           The review validates complete traceability (Feature &rarr; Journey &rarr; Endpoint &rarr; Table &rarr; Story &rarr; Test),
           identifies missing specifications, and ensures zero architectural contradictions.
         </p>
+
+        {!canStartReview && (
+          <div className="mt-5 max-w-md rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-brand-body">
+            <p className="font-semibold text-amber-700 dark:text-amber-400">Waiting on the Scrum Master</p>
+            <p className="mt-1">
+              The review checks every feature against the backlog's stories, so it starts once the Scrum Master
+              has written docs/backlog.json.
+            </p>
+            {onOpenBacklog && (
+              <button
+                type="button"
+                onClick={onOpenBacklog}
+                className="mt-3 px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-medium flex items-center gap-1.5 mx-auto"
+              >
+                <span>Open the Scrum Master's backlog</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {canStartReview && onExecuteReview && (
           <button

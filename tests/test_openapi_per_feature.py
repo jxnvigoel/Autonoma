@@ -120,6 +120,74 @@ class ArchitectRejudgeTest(unittest.TestCase):
             self.assertEqual(json.load(f)["status"], "done")
 
 
+    def test_a_worse_rebuild_does_not_replace_the_best_round(self):
+        import json
+        import main
+        import judge
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        sid = "rejudge-best"
+        pdir = os.path.join(root, sid)
+        os.makedirs(os.path.join(pdir, "docs"))
+        best_doc = "".join(f"## {n}. Section {n}\nround 1 text\n" for n in range(1, 13))
+        for name, text in (("architecture.md", best_doc), ("schema.md", "x"), ("openapi.yaml", "# x\n"), ("prd.md", "x")):
+            with open(os.path.join(pdir, "docs", name), "w") as f:
+                f.write(text)
+        for name, data in (("intake.json", {}), ("qa_log.json", []), ("architect_state.json", {"status": "review_failed"})):
+            with open(os.path.join(pdir, name), "w") as f:
+                json.dump(data, f)
+        verdicts = iter([{"pass": False, "total": 21, "max": 24, "unsupported_claims": []},
+                         {"pass": False, "total": 18, "max": 24, "unsupported_claims": [{"text": "a"}]},
+                         {"pass": False, "total": 19, "max": 24, "unsupported_claims": []}])
+        rounds = iter(range(2, 4))
+
+        def rebuild(*a, **k):
+            with open(os.path.join(pdir, "docs", "architecture.md"), "w") as f:
+                f.write(f"round {next(rounds)} text\n")
+
+        with mock.patch.object(main, "DATA_PROJECTS_DIR", root), \
+                mock.patch.object(architect, "parse_ba_data", return_value={}), \
+                mock.patch.object(architect, "revise_from_findings", return_value=({1: ["fix"]}, None)), \
+                mock.patch.object(architect, "generate_architecture_trd", side_effect=rebuild), \
+                mock.patch.object(judge, "evaluate_architecture_with_judge", side_effect=lambda **k: next(verdicts)):
+            res = architect.rejudge_architect_endpoint(architect.ArchitectSessionRequest(session_id=sid))
+        self.assertEqual(res["judge_verdict"]["total"], 21)
+        with open(os.path.join(pdir, "docs", "architecture.md")) as f:
+            self.assertEqual(f.read(), best_doc)
+
+    def test_a_failed_rebuild_puts_back_the_best_rounds_files(self):
+        import json
+        import main
+        import judge
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        sid = "rejudge-fail"
+        pdir = os.path.join(root, sid)
+        os.makedirs(os.path.join(pdir, "docs"))
+        doc = "".join(f"## {n}. Section {n}\nround 1 text\n" for n in range(1, 13))
+        for name, text in (("architecture.md", doc), ("schema.md", "x"), ("openapi.yaml", "# x\n"), ("prd.md", "x")):
+            with open(os.path.join(pdir, "docs", name), "w") as f:
+                f.write(text)
+        for name, data in (("intake.json", {}), ("qa_log.json", []), ("architect_state.json", {"status": "review_failed"})):
+            with open(os.path.join(pdir, name), "w") as f:
+                json.dump(data, f)
+
+        def revise(*a, **k):  # the endpoint revision lands, then the TRD rebuild fails validation
+            with open(os.path.join(pdir, "docs", "openapi.yaml"), "w") as f:
+                f.write("# revised\n")
+            return {1: ["fix"]}, None
+
+        with mock.patch.object(main, "DATA_PROJECTS_DIR", root), \
+                mock.patch.object(architect, "parse_ba_data", return_value={}), \
+                mock.patch.object(architect, "revise_from_findings", side_effect=revise), \
+                mock.patch.object(architect, "generate_architecture_trd", side_effect=ValueError("Section 12 cites nothing")), \
+                mock.patch.object(judge, "evaluate_architecture_with_judge",
+                                  return_value={"pass": False, "total": 21, "max": 24, "unsupported_claims": []}):
+            res = architect.rejudge_architect_endpoint(architect.ArchitectSessionRequest(session_id=sid))
+        self.assertEqual((res["status"], res["judge_verdict"]["total"]), ("review_failed", 21))
+        with open(os.path.join(pdir, "docs", "openapi.yaml")) as f:
+            self.assertNotIn("revised", f.read())
+
 class ArchitectureFindingRoutingTest(unittest.TestCase):
     def test_findings_go_to_the_part_holding_their_text(self):
         doc = ("## 1. Constraints\nx\n## 3. Tech stack\nCelery 5.3 workers\n## 6. API\ny\n"
@@ -131,3 +199,17 @@ class ArchitectureFindingRoutingTest(unittest.TestCase):
         self.assertTrue(any("SendGrid" in n for n in routed[2]))
         self.assertTrue(any("Datadog" in n for n in routed[3]))
         self.assertTrue(all(any("not in doc" in n for n in routed[p]) for p in (1, 2, 3)))  # unlocated -> every part
+
+    def test_score_findings_go_to_the_part_their_criterion_or_section_names(self):
+        doc = "".join(f"## {n}. Section {n}\nbody {n}\n" for n in range(1, 13)) + "STRIDE row T-01 spoofing\n"
+        verdict = {"scores": [
+            {"criterion": "capacity_and_scaling", "score": 2, "max": 3, "evidence": "no arithmetic", "fix": "show it"},
+            {"criterion": "hallucination_and_grounding", "score": 1, "max": 3, "evidence": "Section 10 has no SLO source",
+             "fix": "cite"},
+            {"criterion": "hallucination_and_grounding", "score": 1, "max": 3, "evidence": "\"STRIDE row T-01 spoofing\" cites nothing",
+             "fix": "cite it"},
+            {"criterion": "nfr_coverage", "score": 3, "max": 3, "fix": "none"}]}
+        routed = architect.route_findings_to_parts(doc, verdict)
+        self.assertEqual(sorted(routed), [1, 3])
+        self.assertEqual(len(routed[3]), 2)
+        self.assertTrue(routed[1][0].startswith("capacity_and_scaling"))

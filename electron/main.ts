@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { spawn, ChildProcess } from "child_process";
+import { spawn, spawnSync, execSync, ChildProcess } from "child_process";
+import http from "http";
 import path from "path";
 import fs from "fs";
 import * as pty from "node-pty";
@@ -9,36 +10,144 @@ let pythonProcess: ChildProcess | null = null;
 const ENGINE_PORT = 8765;
 const ENGINE_URL = `http://127.0.0.1:${ENGINE_PORT}`;
 
+// Engine supervision: the app is useless without the engine, so it is restarted if it dies
+// and only stopped on purpose when the app quits.
+let engineStopping = false;
+let engineStartedAt = 0;
+let engineRestarts = 0;
+let cachedPython: string | null = null;
+const ENGINE_MODULES = "fastapi, uvicorn, requests, dotenv, pydantic, yaml";
+
 // Map of active terminal PTY sessions
 const ptySessions = new Map<string, pty.IPty>();
 
+function pythonHasEngineModules(bin: string): boolean {
+  try {
+    const probe = spawnSync(bin, ["-c", `import ${ENGINE_MODULES}`], { stdio: "ignore", timeout: 20000 });
+    return probe.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+// Picks the first Python that can actually import the engine's packages. Several Pythons are usually
+// installed (system, Homebrew, python.org) and only one of them has the requirements, so taking
+// whichever "python3" is first on PATH made the engine start in one terminal and fail in another.
 function getPythonExecutable(): string {
   if (process.env.PYTHON_PATH) {
     return process.env.PYTHON_PATH;
   }
+  if (cachedPython) return cachedPython;
 
   const rootDir = app.isPackaged
     ? process.resourcesPath
     : app.getAppPath();
 
-  const candidates = [
-    path.join(rootDir, ".venv", "bin", "python3"),
-    path.join(rootDir, "venv", "bin", "python3"),
-    path.join(rootDir, "engine", "venv", "bin", "python3"),
-    path.join(rootDir, ".venv", "Scripts", "python.exe"),
-    path.join(rootDir, "venv", "Scripts", "python.exe"),
-  ];
+  const isWin = process.platform === "win32";
+  const candidates = isWin
+    ? [
+        path.join(rootDir, ".venv", "Scripts", "python.exe"),
+        path.join(rootDir, "venv", "Scripts", "python.exe"),
+        "python",
+        "py",
+      ]
+    : [
+        path.join(rootDir, ".venv", "bin", "python3"),
+        path.join(rootDir, "venv", "bin", "python3"),
+        path.join(rootDir, "engine", "venv", "bin", "python3"),
+        "python3",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+        "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+        "/usr/bin/python3",
+      ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (path.isAbsolute(candidate) && !fs.existsSync(candidate)) continue;
+    if (pythonHasEngineModules(candidate)) {
+      cachedPython = candidate;
       return candidate;
     }
   }
 
-  return process.platform === "win32" ? "python" : "python3";
+  console.error(
+    `[Electron] No Python with the engine packages (${ENGINE_MODULES}) was found. ` +
+      `Run: python3 -m pip install -r requirements.txt`
+  );
+  return isWin ? "python" : "python3";
+}
+
+// A previous run that was force-quit can leave its engine holding the port; the new engine then fails
+// to bind and the app silently talks to the stale one. Such an orphan (its parent is gone) is stopped.
+// An engine whose parent is still alive belongs to someone (`npm run engine` in a terminal, or another
+// open Autonoma window): that one is used as it is, never fought over. Returns true in that case.
+function freeEnginePort(): boolean {
+  if (process.platform === "win32") return false;
+  let pids: string[] = [];
+  try {
+    pids = execSync(`lsof -nP -tiTCP:${ENGINE_PORT} -sTCP:LISTEN`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\s+/)
+      .filter(Boolean);
+  } catch {
+    return false; // nothing is listening
+  }
+  let adopted = false;
+  for (const pid of pids) {
+    if (Number(pid) === pythonProcess?.pid) continue;
+    try {
+      const info = execSync(`ps -p ${pid} -o ppid=,command=`, { encoding: "utf-8" }).trim();
+      const match = info.match(/^(\d+)\s+([\s\S]*)$/);
+      const parentPid = match ? Number(match[1]) : 0;
+      const command = match ? match[2] : info;
+      if (!/engine[\\/]main\.py/.test(command)) {
+        console.error(`[Electron] Port ${ENGINE_PORT} is in use by another program: ${command}`);
+      } else if (parentPid === 1) {
+        console.log(`[Electron] Stopping a leftover engine from an earlier run (pid ${pid})`);
+        process.kill(Number(pid), "SIGKILL");
+      } else {
+        console.log(`[Electron] An engine is already running on port ${ENGINE_PORT} (pid ${pid}); using it`);
+        adopted = true;
+      }
+    } catch {
+      // already gone
+    }
+  }
+  return adopted;
+}
+
+function pingEngine(timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(`${ENGINE_URL}/auth/me`, { timeout: timeoutMs }, (res) => {
+      res.resume();
+      resolve((res.statusCode ?? 500) < 500);
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on("error", () => resolve(false));
+  });
+}
+
+// Resolves once the engine answers, or after maxMs so the window still opens and shows the problem.
+async function waitForEngine(maxMs = 30000): Promise<boolean> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (await pingEngine()) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  console.error(`[Electron] Engine did not answer on ${ENGINE_URL} within ${maxMs / 1000}s`);
+  return false;
 }
 
 function startPythonEngine() {
+  if (pythonProcess) return;
+  engineStopping = false;
+  if (freeEnginePort()) return; // someone else's live engine already serves the port
+
   const pythonBin = getPythonExecutable();
   const rootDir = app.isPackaged
     ? path.join(process.resourcesPath, "engine")
@@ -50,7 +159,7 @@ function startPythonEngine() {
   console.log(`[Electron] Starting Python engine: ${pythonBin} ${scriptPath}`);
 
   try {
-    pythonProcess = spawn(pythonBin, [scriptPath], {
+    const child = spawn(pythonBin, [scriptPath], {
       cwd: workingDir,
       env: {
         ...process.env,
@@ -58,22 +167,38 @@ function startPythonEngine() {
         ENGINE_PORT: String(ENGINE_PORT),
       },
     });
+    pythonProcess = child;
+    engineStartedAt = Date.now();
 
-    pythonProcess.stdout?.on("data", (data) => {
+    child.stdout?.on("data", (data) => {
       console.log(`[Python Engine] ${data.toString().trim()}`);
     });
 
-    pythonProcess.stderr?.on("data", (data) => {
+    child.stderr?.on("data", (data) => {
       console.log(`[Python Engine] ${data.toString().trim()}`);
     });
 
-    pythonProcess.on("error", (err) => {
+    child.on("error", (err) => {
       console.error("[Electron] Failed to start Python engine:", err);
+      if (pythonProcess === child) pythonProcess = null;
     });
 
-    pythonProcess.on("exit", (code, signal) => {
+    child.on("exit", (code, signal) => {
       console.log(`[Electron] Python engine exited (code: ${code}, signal: ${signal})`);
-      pythonProcess = null;
+      if (pythonProcess === child) pythonProcess = null;
+      if (engineStopping) return;
+
+      // Unexpected exit: bring it back, unless it keeps dying right after start.
+      if (Date.now() - engineStartedAt > 60000) engineRestarts = 0;
+      if (engineRestarts < 5) {
+        engineRestarts += 1;
+        console.log(`[Electron] Restarting Python engine (attempt ${engineRestarts} of 5)...`);
+        setTimeout(() => {
+          if (!engineStopping) startPythonEngine();
+        }, 1000);
+      } else {
+        console.error("[Electron] Python engine keeps exiting; not restarting it again.");
+      }
     });
   } catch (err) {
     console.error("[Electron] Exception launching Python process:", err);
@@ -81,18 +206,24 @@ function startPythonEngine() {
 }
 
 function stopPythonEngine() {
-  if (pythonProcess && !pythonProcess.killed) {
-    console.log("[Electron] Terminating Python engine process...");
-    try {
-      pythonProcess.kill("SIGTERM");
-      setTimeout(() => {
-        if (pythonProcess && !pythonProcess.killed) {
-          pythonProcess.kill("SIGKILL");
+  engineStopping = true;
+  const child = pythonProcess;
+  if (!child) return;
+  console.log("[Electron] Terminating Python engine process...");
+  try {
+    child.kill("SIGTERM");
+    // `killed` only means a signal was sent, so check that it really exited before escalating.
+    setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already gone
         }
-      }, 2000);
-    } catch (e) {
-      console.error("[Electron] Error terminating Python process:", e);
-    }
+      }
+    }, 2000);
+  } catch (e) {
+    console.error("[Electron] Error terminating Python process:", e);
   }
 }
 
@@ -529,29 +660,32 @@ function createWindow() {
 }
 
 // App lifecycle
-app.whenReady().then(() => {
-  // Spawn Python FastAPI engine
-  startPythonEngine();
-
+app.whenReady().then(async () => {
   // Register all file system, dialog, and PTY terminal IPC handlers
   loadApprovedRoots();
   registerIpcHandlers();
 
+  // Spawn the Python FastAPI engine and open the window only once it answers, so the first
+  // screen never races the engine's startup (it used to load first and show "cannot reach engine").
+  startPythonEngine();
+  await waitForEngine();
   createWindow();
 
-  app.on("activate", () => {
+  app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      startPythonEngine(); // no-op while it is running
+      await waitForEngine();
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
     }
   });
 });
 
 app.on("window-all-closed", () => {
-  stopPythonEngine();
   closeAllPtySessions();
   if (process.platform !== "darwin") {
-    app.quit();
+    app.quit(); // before-quit stops the engine
   }
+  // On macOS the app stays in the Dock and reopens a window on click, so the engine keeps running.
 });
 
 app.on("before-quit", () => {

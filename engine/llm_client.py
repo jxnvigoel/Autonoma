@@ -268,6 +268,23 @@ class RateTracker:
 # MODEL ROUTER & CLIENT
 # ==============================================================================
 
+_THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.I)
+
+
+def strip_reasoning(text: str) -> str:
+    """Drop a thinking model's reasoning (<think>...</think>, as qwen3 and deepseek-r1 return it) so only the
+    answer reaches the parsers. An unclosed <think> means the answer never started: nothing is left."""
+    if not text or "think>" not in text.lower():
+        return text or ""
+    out = _THINK_RE.sub("", text)
+    low = out.lower()
+    if "</think>" in low:  # opening tag missing: everything before the close is reasoning
+        out = out[low.rindex("</think>") + len("</think>"):]
+    elif "<think>" in low:
+        out = out[:low.index("<think>")]
+    return out.strip()
+
+
 class LLMClient:
     def __init__(self):
         self._lock = threading.Lock()
@@ -882,6 +899,24 @@ class LLMClient:
                     continue
                 if res.status_code == 401:
                     raise GroqKeyMissingError("Groq API key is invalid or unauthorized (HTTP 401).")
+                if res.status_code == 400 and "tool_use_failed" in res.text:
+                    # gpt-oss sometimes calls its built-in tools (repo_browser.*) although none are offered.
+                    # The attempted call is the model's real answer: hand it on as text so the agent runtime
+                    # can map it onto its own JSON tool protocol instead of failing over to a weaker model.
+                    try:
+                        failed = (res.json().get("error") or {}).get("failed_generation") or ""
+                    except ValueError:
+                        failed = ""
+                    if failed.strip():
+                        p_tok = (len(system or "") + len(prompt)) // 4
+                        c_tok = max(1, len(failed) // 4)
+                        self.rates.record_call(model, c_tok)
+                        return {"text": failed, "provider": "groq", "model": model, "stop": "end",
+                                "usage": {"prompt_tokens": p_tok, "completion_tokens": c_tok,
+                                          "total_tokens": p_tok + c_tok},
+                                "cost_usd": calculate_cost_usd(model, p_tok, c_tok, provider="groq"),
+                                "request_ms": request_ms, "wait_ms": int(wait_s * 1000), "raw_response": {},
+                                "recovered_tool_call": True}
                 if res.status_code != 200:
                     if attempt < max_retries and res.status_code in (500, 502, 503, 504):
                         time.sleep(backoffs[attempt])
@@ -891,8 +926,14 @@ class LLMClient:
 
                 data = res.json()
                 choice = data.get("choices", [{}])[0]
-                content = choice.get("message", {}).get("content", "") or ""
+                raw_content = choice.get("message", {}).get("content", "") or ""
+                content = strip_reasoning(raw_content)
                 usage = data.get("usage", {})
+                if raw_content.strip() and not content.strip() and not payload.get("_grown"):
+                    # A thinking model (qwen3) spent its whole answer inside <think>: give it room once.
+                    payload["max_tokens"] = self.rates.max_output(model, int(payload["max_tokens"] * 2))
+                    payload["_grown"] = True
+                    continue
                 if not content.strip() and choice.get("finish_reason") == "length":
                     reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
                     bigger = self.rates.max_output(model, int(payload["max_tokens"] * 2.5))
@@ -978,7 +1019,7 @@ class LLMClient:
         if res.status_code != 200:
             raise RuntimeError(f"Ollama returned HTTP {res.status_code}: {res.text}")
         data = res.json()
-        content = data.get("response", "")
+        content = strip_reasoning(data.get("response", ""))
         p_tok = data.get("prompt_eval_count", len(prompt) // 4)
         if p_tok >= payload["options"]["num_ctx"] - 8:
             logger.warning(f"Ollama prompt filled the whole context window ({p_tok} tokens); input was likely truncated")

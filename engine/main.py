@@ -1,5 +1,10 @@
 import os
 import sys
+
+ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
+if ENGINE_DIR not in sys.path:
+    sys.path.insert(0, ENGINE_DIR)
+
 import time
 import logging
 import json
@@ -444,7 +449,9 @@ def get_status():
             version = v_res.json().get("version", "unknown")
     except Exception:
         pass
-    local_models = default_llm_client.list_ollama_models(force_refresh=True) if ollama_online else []
+    # The cached list (refreshed every 30 s) keeps /status fast; a forced refresh here could push it past the
+    # UI's timeout while Ollama is busy, and the header then wrongly said the engine was starting.
+    local_models = default_llm_client.list_ollama_models() if ollama_online else []
     model_ready = gen_route["provider"] != "none"
 
     if not ollama_online and not groq_online:
@@ -460,6 +467,12 @@ def get_status():
         status_val, msg = "ready", f"Running {where} (Generator: {gen_route['model']}, Judge: {judge_route['model']})"
     if cloud_on:
         msg += f" Cloud enabled (Groq {'online' if groq_online else 'unreachable'}); Ollama is the fallback."
+    # A stage button whose route is missing fails on click; say so here, where the UI shows engine problems.
+    missing_stages = office_jobs.missing_routes(app, _STAGE_ROUTES)
+    if missing_stages:
+        status_val = "error"
+        msg = (f"The engine is missing stage routes ({', '.join(missing_stages)}). Restart the engine; an older "
+               f"copy may still be running on port 8765.")
 
     return StatusResponse(
         status=status_val,
@@ -2173,6 +2186,12 @@ try:
 except ImportError:
     from engine import project_files as office_project_files
 app.include_router(office_project_files.router)
+
+try:
+    import agent_chat as office_agent_chat
+except ImportError:
+    from engine import agent_chat as office_agent_chat
+app.include_router(office_agent_chat.router)
 
 # =========================================================================
 # Background jobs for long agent stages: survive leaving the screen, no duplicates

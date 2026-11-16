@@ -100,6 +100,12 @@ export const BacklogViewer: React.FC<BacklogViewerProps> = ({
 
   return (
     <div className="h-full flex flex-col space-y-4">
+      {backlog.notes && backlog.notes.length > 0 && (
+        <div className="px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs text-brand-body">
+          <span className="font-semibold text-amber-700 dark:text-amber-400">Scrum Master notes: </span>
+          {backlog.notes.join(" ")}
+        </div>
+      )}
       {/* Top Bar with Metrics and Tabs */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-brand-card border border-brand-border shadow-xs">
         <div className="flex items-center gap-3">

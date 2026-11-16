@@ -139,5 +139,52 @@ class ArchitectureModelTest(unittest.TestCase):
             self.assertEqual(c.get("/architect/model/nope").status_code, 404)
 
 
+class ParserEdgeCasesTest(unittest.TestCase):
+    def test_labels_keep_their_own_parentheses(self):
+        md = "```mermaid\nflowchart LR\n    B[Browser (HTML/JS)] -->|HTTP| D[(SQLite file)]\n```\n"
+        self.assertEqual([n["label"] for n in am.parse_mermaid_flowchart(md)["nodes"]], ["Browser (HTML/JS)", "SQLite file"])
+
+    def test_build_slices_with_text_after_the_bold_title(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "docs"))
+        with open(os.path.join(tmp, "docs", "architecture.md"), "w") as f:
+            f.write("## 11. Build order\n\n1. **Walking skeleton** \u2013 minimal app and health check (ADR-001).\n"
+                    "2. **Slice 1 \u2013 Auth**\n   - sign in (F-002)\n3. **Slice 2 \u2013 To-dos**\n   - create (F-004)\n"
+                    "## 12. Team plan\n")
+        slices = am.build_model(tmp)["build_slices"]
+        self.assertEqual([s["title"] for s in slices], ["Walking skeleton", "Slice 1 \u2013 Auth", "Slice 2 \u2013 To-dos"])
+        self.assertEqual(slices[0]["items"], ["minimal app and health check (ADR-001)."])
+        self.assertEqual(slices[1]["refs"], ["F-002"])
+
+
+class AgentChatTest(unittest.TestCase):
+    def test_each_agent_answers_from_its_own_documents_in_its_own_thread(self):
+        import json
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "p1", "docs", "adr"))
+        with open(os.path.join(tmp, "p1", "docs", "architecture.md"), "w") as f:
+            f.write("## 3. Tech stack\nSQLite [ADR-002]\n")
+        prompts = []
+
+        def fake(prompt, system=None, role=None, **kw):
+            prompts.append((role, prompt, system))
+            return "We use SQLite [ADR-002].", {"model": "fake", "provider": "test"}
+
+        import llm_client
+        with mock.patch.object(main, "DATA_PROJECTS_DIR", tmp), mock.patch.object(llm_client, "query_llm_with_meta", side_effect=fake):
+            c = TestClient(main.app)
+            r = c.post("/agent/message", json={"session_id": "p1", "agent": "architect", "message": "Which database?"})
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual([m["role"] for m in r.json()["messages"]], ["user", "assistant"])
+            self.assertEqual(c.get("/agent/messages/p1/architect").json()["messages"][1]["content"], "We use SQLite [ADR-002].")
+            self.assertEqual(c.get("/agent/messages/p1/designer").json()["messages"], [])  # threads are separate
+            c.post("/agent/message", json={"session_id": "p1", "agent": "designer", "message": "Which screens?"})
+            self.assertEqual(c.post("/agent/message", json={"session_id": "p1", "agent": "ceo", "message": "x"}).status_code, 404)
+        self.assertEqual(prompts[0][0], "architect")
+        self.assertIn("SQLite [ADR-002]", prompts[0][1])
+        self.assertIn("has not produced its documents yet", prompts[1][2])  # the designer has no documents
+
 if __name__ == "__main__":
     unittest.main()

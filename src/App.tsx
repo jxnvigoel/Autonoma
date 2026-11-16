@@ -51,13 +51,50 @@ export const App: React.FC = () => {
   const [, setAccountsExist] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
+  // The engine starts alongside the window and needs a few seconds. Asking once and giving up left the
+  // app signed out and "unreachable" whenever the window won that race, so keep asking until it answers.
   useEffect(() => {
-    apiMe()
-      .then((me) => {
-        setUser(me.user);
-        setAccountsExist(me.accounts_exist);
-      })
-      .catch(() => undefined);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = async (attempt: number) => {
+      const reachable = await apiMe()
+        .then((me) => {
+          if (cancelled) return true;
+          setUser(me.user);
+          setAccountsExist(me.accounts_exist);
+          return true;
+        })
+        .catch(() => false);
+      if (cancelled) return;
+
+      if (reachable) {
+        const res = await checkEngineStatus();
+        if (!cancelled) {
+          setStatus(res);
+          setIsChecking(false);
+        }
+        return;
+      }
+
+      if (attempt >= 60) {
+        setStatus({
+          status: "error",
+          ollama_online: false,
+          model_ready: false,
+          message: "Unable to reach Python engine at http://127.0.0.1:8765",
+        });
+        setIsChecking(false);
+        return;
+      }
+      timer = setTimeout(() => connect(attempt + 1), 750);
+    };
+
+    connect(0);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // "Get Started": signed in -> your projects; otherwise log in / sign up first.
@@ -90,10 +127,6 @@ export const App: React.FC = () => {
       setIsChecking(false);
     }
   }, []);
-
-  useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
 
   const nav = {
     go: (screen: NavScreen) => {

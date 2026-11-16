@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import sqlite3
+from typing import Any
 
 ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "engine"))
 if ENGINE_DIR not in sys.path:

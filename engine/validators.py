@@ -1233,7 +1233,7 @@ def validate_backlog_must_have_ac_coverage(
         if not sec.strip().startswith("###"):
             continue
         # Check if priority is Must-have
-        is_must_have = bool(re.search(r"\*\*(?:Priority|MoSCoW)\*\*:\s*Must-have", sec, re.IGNORECASE))
+        is_must_have = bool(re.search(r"\*\*(?:Priority|MoSCoW)\*\*:\s*Must[- ]?have", sec, re.IGNORECASE))
         if is_must_have:
             found_must_have_sections = True
             acs_in_sec = re.findall(r"\b(AC-\d{2,4})\b", sec)

@@ -9,6 +9,7 @@ running job instead of starting a second copy.
 """
 
 import os
+import re
 import json
 import logging
 import threading
@@ -59,6 +60,7 @@ _TASK_LABELS = [
     (r"^hr_team_plan", "HR is planning the team"),
     (r"^judge_hr", "Judge is reviewing the staffing plan"),
     (r"^judge_recruiter", "Judge is reviewing the hires"),
+    (r"^scrum_backlog_(F-\d+)", "Scrum Master is splitting {0} into stories"),
     (r"^scrum_backlog", "Scrum Master is writing the backlog"),
     (r"^tech_lead_readiness", "Tech Lead is reviewing build readiness"),
 ]
@@ -133,18 +135,21 @@ def _write(session_id: str, kind: str, record: Dict[str, Any], path: Optional[st
 
 def _read(session_id: str, kind: str) -> Optional[Dict[str, Any]]:
     path = _path(session_id, kind)
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        record = json.load(f)
-    key = f"{session_id}:{kind}"
-    t = _threads.get(key)
-    if record.get("status") == "running" and not (t and t.is_alive()):
-        # The engine restarted while this ran: say so instead of pretending it is still running.
-        record.update({"status": "interrupted", "finished_at": _now(),
-                       "error": "The engine stopped while this was running; start it again."})
-        _write(session_id, kind, record)
-    return record
+    # Under the lock the job holds while writing its final status: otherwise a job finishing between the read
+    # and the liveness check looked "running" with a dead thread, and its real result was overwritten.
+    with _lock:
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            record = json.load(f)
+        key = f"{session_id}:{kind}"
+        t = _threads.get(key)
+        if record.get("status") == "running" and not (t and t.is_alive()):
+            # The engine restarted while this ran: say so instead of pretending it is still running.
+            record.update({"status": "interrupted", "finished_at": _now(),
+                           "error": "The engine stopped while this was running; start it again."})
+            _write(session_id, kind, record)
+        return record
 
 
 def status(session_id: str, kind: str, include_result: bool = True) -> Dict[str, Any]:
@@ -202,6 +207,31 @@ def start(session_id: str, kind: str) -> Dict[str, Any]:
     return {k: v for k, v in record.items() if k != "result"}
 
 
+def _post_routes(app) -> Dict[str, Any]:
+    """Every POST route on the app as path -> handler, including routes inside mounted or nested routers, so
+    the lookup does not depend on how a FastAPI version lays out app.routes."""
+    found: Dict[str, Any] = {}
+
+    def walk(routes, prefix: str = "") -> None:
+        for r in routes or []:
+            router_prefix = getattr(getattr(r, "include_context", None), "prefix", "") or ""
+            curr_prefix = prefix + (getattr(r, "path", "") or "") + router_prefix
+            if curr_prefix:
+                curr_prefix = re.sub(r"/+", "/", curr_prefix)
+            if getattr(r, "endpoint", None) is not None and "POST" in (getattr(r, "methods", None) or ()):
+                found.setdefault(curr_prefix, r.endpoint)
+            subroutes = getattr(r, "routes", None)
+            if subroutes is None and hasattr(r, "original_router"):
+                subroutes = getattr(r.original_router, "routes", None)
+            if subroutes is None and hasattr(r, "app"):
+                subroutes = getattr(r.app, "routes", None)
+            if subroutes is not None:
+                walk(subroutes, curr_prefix)
+
+    walk(getattr(app, "routes", []))
+    return found
+
+
 def register_from_routes(app, routes: Dict[str, str]) -> None:
     """
     kind -> POST route path. Each job calls that route's own handler, so a job does exactly what the
@@ -214,10 +244,11 @@ def register_from_routes(app, routes: Dict[str, str]) -> None:
     from pydantic import BaseModel
 
     def _resolve(path: str):
-        for r in app.routes:
-            if getattr(r, "path", None) == path and "POST" in (getattr(r, "methods", None) or ()):
-                return r.endpoint
-        raise HTTPException(status_code=500, detail=f"The engine has no POST {path} route for this stage")
+        endpoint = _post_routes(app).get(path)
+        if endpoint is None:
+            raise HTTPException(status_code=500, detail=f"The engine has no POST {path} route for this stage. "
+                                                        f"Restart the engine: an older copy may still be running.")
+        return endpoint
 
     for kind, path in routes.items():
         def _call(session_id: str, path=path):
@@ -233,5 +264,5 @@ def register_from_routes(app, routes: Dict[str, str]) -> None:
 
 def missing_routes(app, routes: Dict[str, str]) -> List[str]:
     """Stage paths with no POST route on the app (checked at startup and logged, never silent)."""
-    have = {r.path for r in app.routes if "POST" in (getattr(r, "methods", None) or ())}
+    have = _post_routes(app)
     return [f"{kind}: {path}" for kind, path in routes.items() if path not in have]

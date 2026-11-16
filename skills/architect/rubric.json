@@ -61,7 +61,7 @@
       "name": "API Design Standards & Error Handling",
       "max": 3,
       "must_pass": true,
-      "description": "REST endpoints use plural nouns, explicit authentication and authorization rules, and RFC 9457 Problem Details error models (400, 401, 403, 404, 409, 422, 500).",
+      "description": "REST endpoints use plural nouns, explicit authentication and authorization rules, and RFC 9457 Problem Details error models for the errors that apply to each endpoint: 400 and 500 on all, 422 where a body is validated, 401 and 403 only on authenticated endpoints, 404 only where a resource id is addressed, 409 on conflicts. A public endpoint is not expected to return 401 or 403.",
       "scale": {
         "3": "Endpoints specify auth rules, standard REST conventions, and comprehensive error schemas.",
         "2": "Endpoints specified with auth, but minor error status code omissions.",

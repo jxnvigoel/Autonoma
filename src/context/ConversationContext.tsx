@@ -322,11 +322,16 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({
       const target = targetSessionId || sessionId;
       if (!target) return;
       try {
+        // Gate 2 status says whether HR's plan and the staffing report exist; asking for them before then
+        // only produces 404s.
+        const gate2 = await apiGetGate2Status(target).catch(() => null);
+        const notYet = Promise.reject(new Error("not produced yet"));
+        notYet.catch(() => undefined);
         const [planRes, reportRes, agentsRes, gate2Res, budgetRes] = await Promise.allSettled([
-          apiGetHrTeamPlan(target),
-          apiGetRecruiterReport(target),
+          gate2?.has_team_plan ? apiGetHrTeamPlan(target) : notYet,
+          gate2?.has_staffing_report ? apiGetRecruiterReport(target) : notYet,
           apiGetRecruiterAgents(target),
-          apiGetGate2Status(target),
+          gate2 ? Promise.resolve(gate2) : apiGetGate2Status(target),
           apiGetBudgetStatus(target),
         ]);
         if (planRes.status === "fulfilled") setTeamPlanData(planRes.value);

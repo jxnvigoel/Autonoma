@@ -16,6 +16,9 @@ interface PlanViewerProps {
   loadBalance?: LoadBalanceInfo | null;
   gantt?: GanttData | null;
   onProceedToReadiness?: () => void;
+  /** False until the Scrum Master has written docs/backlog.json; the plan is computed from it. */
+  hasBacklog?: boolean;
+  onOpenBacklog?: () => void;
 }
 
 export const PlanViewer: React.FC<PlanViewerProps> = ({
@@ -24,6 +27,8 @@ export const PlanViewer: React.FC<PlanViewerProps> = ({
   loadBalance,
   gantt,
   onProceedToReadiness,
+  hasBacklog = true,
+  onOpenBacklog,
 }) => {
   const [activeTab, setActiveTab] = useState<"gantt" | "critical_path" | "load" | "markdown">("gantt");
   const [copied, setCopied] = useState(false);
@@ -37,6 +42,29 @@ export const PlanViewer: React.FC<PlanViewerProps> = ({
 
   const tasks = gantt?.tasks || [];
   const totalDays = gantt?.total_days || criticalPath?.estimated_days || 1;
+
+  if (!hasBacklog) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-brand-card/50 rounded-2xl border border-brand-border">
+        <Calendar className="w-8 h-8 text-indigo-500 mb-3" />
+        <h3 className="text-sm font-bold text-brand-headline">No plan yet</h3>
+        <p className="text-xs text-brand-body max-w-sm mt-1.5 leading-relaxed">
+          The schedule, critical path and Gantt chart are computed by code from the backlog. They appear once the
+          Scrum Master has written the stories.
+        </p>
+        {onOpenBacklog && (
+          <button
+            type="button"
+            onClick={onOpenBacklog}
+            className="mt-4 px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium flex items-center gap-1.5"
+          >
+            <span>Go to the backlog</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col space-y-4">
